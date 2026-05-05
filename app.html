@@ -144,7 +144,12 @@
             50% { opacity: 0.8; transform: scale(1.05); }
         }
         .pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
-        
+
+        @keyframes toast-slide-in {
+            from { transform: translateX(110%); opacity: 0; }
+            to   { transform: translateX(0);    opacity: 1; }
+        }
+
         @keyframes ripple {
             0% { transform: scale(0.8); opacity: 1; }
             100% { transform: scale(2.5); opacity: 0; }
@@ -2447,7 +2452,15 @@
               (Date.now() - new Date(notif.created_at).getTime() > 120000);
             if (isExpiredInvite) return;
             if (notif.type === 'private_message') {
-              // Estrae il nickname del mittente dal messaggio e apre il profilo
+              // Forza reload immediato dei messaggi privati prima di aprire il profilo,
+              // così la conversazione non appare vuota anche se il poll (8s) non è ancora scattato.
+              try {
+                const { data: sent } = await supabase.from('private_messages').select('*').eq('sender_name', nickname);
+                const { data: received } = await supabase.from('private_messages').select('*').eq('receiver_name', nickname);
+                const all = [...(sent || []), ...(received || [])];
+                all.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+                setPrivateMessages(all);
+              } catch (err) { console.warn('reload private_messages failed', err); }
               const senderMatch = notif.message.match(/^(.+) ti ha inviato/);
               if (senderMatch) openProfile(senderMatch[1]);
             } else {
@@ -3885,164 +3898,177 @@
                 <div className="modal-overlay" onClick={() => setViewingProfile(null)}>
                   <div className="modal-content" onClick={(e) => e.stopPropagation()}>
                     <button onClick={() => setViewingProfile(null)} style={{position:'absolute',top:'1rem',right:'1rem',background:'rgba(255,255,255,0.15)',border:'none',borderRadius:'50%',width:'2rem',height:'2rem',cursor:'pointer',color:'#fff',fontSize:'1.1rem',display:'flex',alignItems:'center',justifyContent:'center',zIndex:10}}>✕</button>
-                    {viewingProfile.empty ? (
-                      <div className="text-center py-6">
-                        <div style={{fontSize: '4rem'}} className="mb-4">👤</div>
-                        <p className="text-white text-xl font-bold mb-2">{viewingProfile.nickname}</p>
-                        <p className="text-primary">{t.social.noProfile}</p>
-                        <button onClick={() => setViewingProfile(null)} className="btn-secondary mt-4">
-                          {t.social.close}
-                        </button>
-                      </div>
-                    ) : (
-                      <div style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
-                        {/* Avatar + Name */}
-                        <div className="text-center">
-                          <div style={{fontSize: '4rem'}} className="mb-2">{viewingProfile.avatar || '👤'}</div>
-                          <h2 className="text-2xl font-bold text-white">{viewingProfile.nickname}</h2>
+                    <div style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
+                      {viewingProfile.empty ? (
+                        <div className="text-center py-4">
+                          <div style={{fontSize: '4rem'}} className="mb-3">👤</div>
+                          <p className="text-white text-xl font-bold mb-2">{viewingProfile.nickname}</p>
+                          <p className="text-primary text-sm">{t.social.noProfile}</p>
                         </div>
-
-                        {/* Bio */}
-                        {viewingProfile.bio && (
-                          <div className="bg-glass-dark rounded-xl p-4">
-                            <p className="text-white" style={{whiteSpace: 'pre-wrap'}}>{viewingProfile.bio}</p>
+                      ) : (
+                        <>
+                          <div className="text-center">
+                            <div style={{fontSize: '4rem'}} className="mb-2">{viewingProfile.avatar || '👤'}</div>
+                            <h2 className="text-2xl font-bold text-white">{viewingProfile.nickname}</h2>
                           </div>
-                        )}
 
-                        {/* Country */}
-                        {viewingProfile.country && (
-                          <div className="bg-glass-dark rounded-xl p-3 text-center">
-                            <p className="text-secondary text-xs mb-1">{t.profile.country}</p>
-                            <p className="text-white font-bold">{viewingProfile.country}</p>
-                          </div>
-                        )}
-
-                        {/* Interests */}
-                        {viewingProfile.interests && viewingProfile.interests.length > 0 && (
-                          <div>
-                            <p className="text-secondary text-xs mb-2">{t.profile.interests}</p>
-                            <div style={{display: 'flex', flexWrap: 'wrap', gap: '0.5rem'}}>
-                              {viewingProfile.interests.map(key => (
-                                <span
-                                  key={key}
-                                  style={{
-                                    padding: '0.35rem 0.85rem',
-                                    borderRadius: '9999px',
-                                    border: '1px solid rgba(167,139,250,0.5)',
-                                    background: 'rgba(139, 92, 246, 0.3)',
-                                    color: '#e9d5ff',
-                                    fontSize: '0.8rem'
-                                  }}
-                                >
-                                  {t.profile.interestsList[key] || key}
-                                </span>
-                              ))}
+                          {viewingProfile.bio && (
+                            <div className="bg-glass-dark rounded-xl p-4">
+                              <p className="text-white" style={{whiteSpace: 'pre-wrap'}}>{viewingProfile.bio}</p>
                             </div>
-                          </div>
-                        )}
+                          )}
 
-                        {/* Telepathy Scores — only if user allows visibility */}
-                        {viewingProfile.showTelepathyScore !== false && (
-                          <div className="grid grid-cols-2 gap-3">
+                          {viewingProfile.country && (
                             <div className="bg-glass-dark rounded-xl p-3 text-center">
-                              <p className="text-secondary text-xs mb-1">{t.social.telepathyScore}</p>
-                              <p className="text-2xl font-bold" style={{color: '#fbbf24'}}>{viewingProfile.telepathyScore}</p>
+                              <p className="text-secondary text-xs mb-1">{t.profile.country}</p>
+                              <p className="text-white font-bold">{viewingProfile.country}</p>
                             </div>
-                            <div className="bg-glass-dark rounded-xl p-3 text-center">
-                              <p className="text-secondary text-xs mb-1">{t.social.bestScore}</p>
-                              <p className="text-2xl font-bold" style={{color: '#4ade80'}}>{viewingProfile.telepathyScore > 0 ? Math.round((viewingProfile.telepathyBest / viewingProfile.telepathyScore) * 100) : 0}%</p>
-                            </div>
-                          </div>
-                        )}
+                          )}
 
-                        {/* Private Messages Section */}
-                        {viewingProfile.nickname !== nickname && (
-                          <div>
-                            <p className="text-secondary text-xs mb-2">{t.messages.title}</p>
-                            <div className="bg-glass-dark rounded-xl" style={{maxHeight: '250px', display: 'flex', flexDirection: 'column'}}>
-                              {/* Messages list */}
-                              <div style={{flex: 1, overflowY: 'auto', padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '180px'}}>
-                                {getConversationMessages(viewingProfile.nickname).length === 0 ? (
-                                  <p className="text-secondary text-sm text-center" style={{padding: '1rem 0'}}>{t.messages.noConversations}</p>
-                                ) : (
-                                  getConversationMessages(viewingProfile.nickname).map(msg => {
-                                    const isMe = msg.sender_name === nickname;
-                                    return (
-                                      <div key={msg.id} style={{
-                                        alignSelf: isMe ? 'flex-end' : 'flex-start',
-                                        maxWidth: '80%'
-                                      }}>
-                                        <div style={{
-                                          padding: '0.4rem 0.75rem',
-                                          borderRadius: isMe ? '0.75rem 0.75rem 0.15rem 0.75rem' : '0.75rem 0.75rem 0.75rem 0.15rem',
-                                          background: isMe ? 'rgba(139, 92, 246, 0.5)' : 'rgba(255, 255, 255, 0.1)',
-                                          border: isMe ? '1px solid rgba(139, 92, 246, 0.6)' : '1px solid rgba(255, 255, 255, 0.15)'
-                                        }}>
-                                          <p className="text-white" style={{fontSize: '0.8rem'}}>{msg.content}</p>
-                                        </div>
-                                        <p style={{fontSize: '0.6rem', color: '#c4b5fd', marginTop: '0.1rem', textAlign: isMe ? 'right' : 'left'}}>
-                                          {new Date(msg.created_at).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'})}
-                                        </p>
-                                      </div>
-                                    );
-                                  })
-                                )}
-                              </div>
-                              {/* Send input */}
-                              <div style={{padding: '0.5rem 0.75rem', borderTop: '1px solid rgba(255,255,255,0.1)'}}>
-                                <div className="flex gap-2">
-                                  <input
-                                    type="text"
-                                    value={newPrivateMessage}
-                                    onChange={(e) => setNewPrivateMessage(e.target.value)}
-                                    onKeyPress={(e) => {
-                                      if (e.key === 'Enter' && newPrivateMessage.trim()) {
-                                        sendPrivateMessage(viewingProfile.nickname, newPrivateMessage);
-                                        setNewPrivateMessage('');
-                                        markAsRead(viewingProfile.nickname);
-                                      }
+                          {viewingProfile.interests && viewingProfile.interests.length > 0 && (
+                            <div>
+                              <p className="text-secondary text-xs mb-2">{t.profile.interests}</p>
+                              <div style={{display: 'flex', flexWrap: 'wrap', gap: '0.5rem'}}>
+                                {viewingProfile.interests.map(key => (
+                                  <span
+                                    key={key}
+                                    style={{
+                                      padding: '0.35rem 0.85rem',
+                                      borderRadius: '9999px',
+                                      border: '1px solid rgba(167,139,250,0.5)',
+                                      background: 'rgba(139, 92, 246, 0.3)',
+                                      color: '#e9d5ff',
+                                      fontSize: '0.8rem'
                                     }}
-                                    placeholder={t.messages.placeholder}
-                                    style={{flex: 1, padding: '0.5rem 0.75rem', fontSize: '0.85rem'}}
-                                  />
-                                  <button
-                                    onClick={() => {
-                                      if (newPrivateMessage.trim()) {
-                                        sendPrivateMessage(viewingProfile.nickname, newPrivateMessage);
-                                        setNewPrivateMessage('');
-                                        markAsRead(viewingProfile.nickname);
-                                      }
-                                    }}
-                                    className="btn-primary"
-                                    style={{padding: '0.5rem 1rem'}}
                                   >
-                                    <Send style={{width: '1rem', height: '1rem'}} />
-                                  </button>
-                                </div>
+                                    {t.profile.interestsList[key] || key}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {viewingProfile.showTelepathyScore !== false && (
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="bg-glass-dark rounded-xl p-3 text-center">
+                                <p className="text-secondary text-xs mb-1">{t.social.telepathyScore}</p>
+                                <p className="text-2xl font-bold" style={{color: '#fbbf24'}}>{viewingProfile.telepathyScore}</p>
+                              </div>
+                              <div className="bg-glass-dark rounded-xl p-3 text-center">
+                                <p className="text-secondary text-xs mb-1">{t.social.bestScore}</p>
+                                <p className="text-2xl font-bold" style={{color: '#4ade80'}}>{viewingProfile.telepathyScore > 0 ? Math.round((viewingProfile.telepathyBest / viewingProfile.telepathyScore) * 100) : 0}%</p>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      {/* Private Messages Section — visibile anche per profili guest senza riga in `profiles` */}
+                      {viewingProfile.nickname !== nickname && (
+                        <div>
+                          <p className="text-secondary text-xs mb-2">{t.messages.title}</p>
+                          <div className="bg-glass-dark rounded-xl" style={{maxHeight: '250px', display: 'flex', flexDirection: 'column'}}>
+                            <div style={{flex: 1, overflowY: 'auto', padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '180px'}}>
+                              {getConversationMessages(viewingProfile.nickname).length === 0 ? (
+                                <p className="text-secondary text-sm text-center" style={{padding: '1rem 0'}}>{t.messages.noConversations}</p>
+                              ) : (
+                                getConversationMessages(viewingProfile.nickname).map(msg => {
+                                  const isMe = msg.sender_name === nickname;
+                                  return (
+                                    <div key={msg.id} style={{
+                                      alignSelf: isMe ? 'flex-end' : 'flex-start',
+                                      maxWidth: '80%'
+                                    }}>
+                                      <div style={{
+                                        padding: '0.4rem 0.75rem',
+                                        borderRadius: isMe ? '0.75rem 0.75rem 0.15rem 0.75rem' : '0.75rem 0.75rem 0.75rem 0.15rem',
+                                        background: isMe ? 'rgba(139, 92, 246, 0.5)' : 'rgba(255, 255, 255, 0.1)',
+                                        border: isMe ? '1px solid rgba(139, 92, 246, 0.6)' : '1px solid rgba(255, 255, 255, 0.15)'
+                                      }}>
+                                        <p className="text-white" style={{fontSize: '0.8rem'}}>{msg.content}</p>
+                                      </div>
+                                      <p style={{fontSize: '0.6rem', color: '#c4b5fd', marginTop: '0.1rem', textAlign: isMe ? 'right' : 'left'}}>
+                                        {new Date(msg.created_at).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'})}
+                                      </p>
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+                            <div style={{padding: '0.5rem 0.75rem', borderTop: '1px solid rgba(255,255,255,0.1)'}}>
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  value={newPrivateMessage}
+                                  onChange={(e) => setNewPrivateMessage(e.target.value)}
+                                  onKeyPress={(e) => {
+                                    if (e.key === 'Enter' && newPrivateMessage.trim()) {
+                                      sendPrivateMessage(viewingProfile.nickname, newPrivateMessage);
+                                      setNewPrivateMessage('');
+                                      markAsRead(viewingProfile.nickname);
+                                    }
+                                  }}
+                                  placeholder={t.messages.placeholder}
+                                  style={{flex: 1, padding: '0.5rem 0.75rem', fontSize: '0.85rem'}}
+                                />
+                                <button
+                                  onClick={() => {
+                                    if (newPrivateMessage.trim()) {
+                                      sendPrivateMessage(viewingProfile.nickname, newPrivateMessage);
+                                      setNewPrivateMessage('');
+                                      markAsRead(viewingProfile.nickname);
+                                    }
+                                  }}
+                                  className="btn-primary"
+                                  style={{padding: '0.5rem 1rem'}}
+                                >
+                                  <Send style={{width: '1rem', height: '1rem'}} />
+                                </button>
                               </div>
                             </div>
                           </div>
-                        )}
+                        </div>
+                      )}
 
-                        <button onClick={() => { setViewingProfile(null); setNewPrivateMessage(''); }} className="btn-secondary w-full mt-2">
-                          {t.social.close}
-                        </button>
-                      </div>
-                    )}
+                      <button onClick={() => { setViewingProfile(null); setNewPrivateMessage(''); }} className="btn-secondary w-full mt-2">
+                        {t.social.close}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
 
               {incomingInvite && (!partner || sessionEnded) && (
-                <div className="modal-overlay">
-                  <div className="modal-content" style={{maxWidth: '360px', textAlign: 'center'}}>
-                    <div style={{fontSize: '3rem', marginBottom: '0.75rem'}}>🧠</div>
-                    <p className="text-white font-bold text-xl mb-2">{t.telepathy.inviteModalTitle}</p>
-                    <p className="text-primary mb-6">✨ <strong>{incomingInvite.from_name}</strong> {t.telepathy.inviteModalBody}</p>
-                    <div style={{display: 'flex', gap: '0.75rem'}}>
-                      <button onClick={acceptInvite} className="btn-primary" style={{flex: 1}}>{t.telepathy.acceptBtn}</button>
-                      <button onClick={declineInvite} className="btn-secondary" style={{flex: 1}}>{t.telepathy.declineBtn}</button>
+                <div
+                  className="invite-toast"
+                  style={{
+                    position: 'fixed',
+                    top: '1rem',
+                    right: '1rem',
+                    width: 'min(360px, calc(100vw - 2rem))',
+                    background: 'linear-gradient(135deg, rgba(124,58,237,0.95) 0%, rgba(167,139,250,0.92) 100%)',
+                    border: '1px solid rgba(255,255,255,0.25)',
+                    boxShadow: '0 12px 40px rgba(124,58,237,0.5), 0 0 24px rgba(167,139,250,0.4)',
+                    borderRadius: '0.85rem',
+                    padding: '0.9rem 1rem',
+                    zIndex: 9999,
+                    animation: 'toast-slide-in 0.35s ease-out'
+                  }}
+                >
+                  <div style={{display: 'flex', alignItems: 'center', gap: '0.7rem', marginBottom: '0.6rem'}}>
+                    <span style={{fontSize: '1.6rem'}}>🧠</span>
+                    <div style={{flex: 1, minWidth: 0}}>
+                      <p className="text-white font-bold" style={{fontSize: '0.95rem', margin: 0, lineHeight: 1.2}}>
+                        ✨ <strong>{incomingInvite.from_name}</strong>
+                      </p>
+                      <p className="text-white" style={{fontSize: '0.78rem', margin: 0, opacity: 0.9, lineHeight: 1.3}}>
+                        {t.telepathy.inviteModalBody}
+                      </p>
                     </div>
+                  </div>
+                  <div style={{display: 'flex', gap: '0.5rem'}}>
+                    <button onClick={acceptInvite} className="btn-primary" style={{flex: 1, fontSize: '0.85rem', padding: '0.4rem 0.6rem'}}>{t.telepathy.acceptBtn}</button>
+                    <button onClick={declineInvite} className="btn-secondary" style={{flex: 1, fontSize: '0.85rem', padding: '0.4rem 0.6rem'}}>{t.telepathy.declineBtn}</button>
                   </div>
                 </div>
               )}
