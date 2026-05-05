@@ -184,6 +184,17 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
     ]);
     pass('Match trovato — entrambi vedono il partner');
 
+    // ── Test 4b: Banda status partner visibile e prominente ─────────────────
+    console.log('\n📋 Test 4b: Banda status partner');
+    const statusBandA = pageA.locator('p').filter({ hasText: /(aspetta|waiting|sta scegliendo|is choosing|is guessing|sta indovinando|simbolo inviato|symbol sent)/i }).first();
+    await statusBandA.waitFor({ timeout: 8000 });
+    const fontSize = await statusBandA.evaluate(el => parseFloat(getComputedStyle(el).fontSize));
+    if (fontSize >= 16) {
+      pass(`Status banner ben visibile (font ${fontSize}px ≥ 16px)`);
+    } else {
+      fail(`Status banner troppo piccolo (font ${fontSize}px < 16px)`);
+    }
+
     // ── Test 5: Gioco (sender invia, receiver indovina) ───────────────────
     console.log('\n📋 Test 5: Round di telepatia');
 
