@@ -761,6 +761,10 @@
               resonance: "Resonance ✨",
               again: "Again",
               endSessionBtn: "End Session",
+              endSessionConfirmTitle: "Leave session?",
+              endSessionConfirmBody: "Your partner will be notified. This cannot be undone.",
+              endSessionConfirmYes: "Leave",
+              endSessionConfirmNo: "Stay",
               sessionComplete: "Session Complete!",
               roundsPlayed: "Rounds played",
               correctMatches: "Correct matches",
@@ -982,6 +986,10 @@
               resonance: "Sintonia ✨",
               again: "Ancora",
               endSessionBtn: "Termina Sessione",
+              endSessionConfirmTitle: "Uscire dalla sessione?",
+              endSessionConfirmBody: "Il tuo partner riceverà la notifica. Non si può tornare indietro.",
+              endSessionConfirmYes: "Esci",
+              endSessionConfirmNo: "Resta",
               sessionComplete: "Sessione Completata!",
               roundsPlayed: "Round giocati",
               correctMatches: "Match corretti",
@@ -1039,6 +1047,7 @@
           const [currentLevel, setCurrentLevel] = useState('shapes'); // 'shapes' | 'numbers' | 'words'
           const [roundCount, setRoundCount] = useState(0);
           const [sessionMatches, setSessionMatches] = useState(0);
+          const [showEndSessionConfirm, setShowEndSessionConfirm] = useState(false);
           // Ref aggiornata per leggere il valore corrente dentro pollResult
           // senza dover ricreare l'effect ad ogni round (e quindi perdere fino a 2s di polling).
           const sessionMatchesRef = React.useRef(0);
@@ -1843,8 +1852,32 @@
           const proposeLevelChange = async (choice) => {
             setMyLevelChoice(choice);
             myLevelChoiceRef.current = choice;
-            const field = role === 'sender' ? 'level_change_choice_sender' : 'level_change_choice_receiver';
-            await supabase.from('telepathy_matches').update({ [field]: choice }).eq('id', matchId);
+            const { data, error } = await supabase.rpc('apply_level_change_if_both_agree', {
+              p_match_id: matchId,
+              p_choice: choice,
+              p_role: role
+            });
+            if (error) {
+              console.warn('apply_level_change_if_both_agree failed', error);
+              return;
+            }
+            const result = Array.isArray(data) ? data[0] : data;
+            if (!result) return;
+            if (result.out_status === 'agreed') {
+              setCurrentLevel(result.out_new_level);
+              setShowLevelBanner(false);
+              setMyLevelChoice(null);
+              myLevelChoiceRef.current = null;
+              lastProcessedRoundRef.current = -1;
+            } else if (result.out_status === 'disagreement') {
+              const myChoice = role === 'sender' ? result.out_sender_choice : result.out_receiver_choice;
+              const theirChoice = role === 'sender' ? result.out_receiver_choice : result.out_sender_choice;
+              setLevelDisagreement({ myChoice, theirChoice });
+              setShowLevelBanner(false);
+              setMyLevelChoice(null);
+              myLevelChoiceRef.current = null;
+            }
+            // 'pending' → l'altro non ha ancora scelto, banner resta per chi ha già scelto.
           };
 
           // Poll for telepathy result when waiting
@@ -1863,41 +1896,22 @@
               }
               const match = data[0];
 
-              // Sincronizza livello dal match
+              // Sincronizza livello dal match (la RPC dell'altro client può aver cambiato level)
               if (match.level && match.level !== currentLevel) {
                 setCurrentLevel(match.level);
+                lastProcessedRoundRef.current = -1;
+                setShowLevelBanner(false);
+                setMyLevelChoice(null);
+                myLevelChoiceRef.current = null;
               }
 
-              // Gestisci proposta cambio livello (entrambi hanno scelto)
-              const senderChoice = match.level_change_choice_sender;
-              const receiverChoice = match.level_change_choice_receiver;
-              if (senderChoice && receiverChoice) {
-                if (senderChoice === receiverChoice && senderChoice !== 'continue') {
-                  setCurrentLevel(senderChoice);
-                  setRoundCount(0);
-                  setShowLevelBanner(false);
-                  setMyLevelChoice(null);
-                  await supabase.from('telepathy_matches').update({
-                    level: senderChoice,
-                    round_count: 0,
-                    level_change_choice_sender: null,
-                    level_change_choice_receiver: null
-                  }).eq('id', matchId);
-                } else {
-                  // Disaccordo — mostra messaggio e resetta round_count
-                  const myChoice = role === 'sender' ? senderChoice : receiverChoice;
-                  const theirChoice = role === 'sender' ? receiverChoice : senderChoice;
-                  setLevelDisagreement({ myChoice, theirChoice });
-                  setShowLevelBanner(false);
-                  setMyLevelChoice(null);
-                  setRoundCount(0);
-                  await supabase.from('telepathy_matches').update({
-                    level_change_choice_sender: null,
-                    level_change_choice_receiver: null,
-                    round_count: 0
-                  }).eq('id', matchId);
-                }
-                return;
+              // Se le choices sono state azzerate dalla RPC (consenso/disaccordo già processato)
+              // e avevo un banner aperto, dismiss
+              if (!match.level_change_choice_sender && !match.level_change_choice_receiver
+                  && myLevelChoiceRef.current !== null) {
+                setShowLevelBanner(false);
+                setMyLevelChoice(null);
+                myLevelChoiceRef.current = null;
               }
 
               // Risultato round — processa solo se è un round nuovo (round_count avanzato)
@@ -1972,54 +1986,30 @@
             if (!matchId || !showLevelBanner) return;
 
             const pollLevelChange = async () => {
+              // Read-only: tutta la scrittura del consenso passa dalla RPC apply_level_change_if_both_agree.
+              // Qui sincronizziamo solo lo stato UI dell'altro client.
               const { data } = await supabase.from('telepathy_matches').select('*').eq('id', matchId);
               if (!data || data.length === 0) return;
               const match = data[0];
-              const senderChoice = match.level_change_choice_sender;
-              const receiverChoice = match.level_change_choice_receiver;
 
-              if (!senderChoice || !receiverChoice) {
-                // Bug-fix B: race condition — se io avevo già scelto ma le choices sono
-                // state cancellate dall'altro utente (che ha processato per primo):
-                // 1) livello cambiato → sync + dismiss
-                if (match.level && match.level !== currentLevel) {
-                  setCurrentLevel(match.level);
-                  setRoundCount(0);
-                  lastProcessedRoundRef.current = -1;
-                  setShowLevelBanner(false);
-                  setMyLevelChoice(null);
-                  myLevelChoiceRef.current = null;
-                }
-                // 2) livello invariato (disaccordo/continua) → se avevo già scelto, dismiss
-                else if (myLevelChoiceRef.current !== null) {
-                  setShowLevelBanner(false);
-                  setMyLevelChoice(null);
-                  myLevelChoiceRef.current = null;
-                }
+              // Caso 1: livello cambiato → la RPC dell'altro è andata a buon fine, sync e dismiss
+              if (match.level && match.level !== currentLevel) {
+                setCurrentLevel(match.level);
+                lastProcessedRoundRef.current = -1;
+                setShowLevelBanner(false);
+                setMyLevelChoice(null);
+                myLevelChoiceRef.current = null;
                 return;
               }
 
-              const agreed = senderChoice === receiverChoice && senderChoice !== 'continue';
-              const newLevel = agreed ? senderChoice : currentLevel;
-
-              if (agreed) {
-                setCurrentLevel(newLevel);
-                setRoundCount(0);
-                // Bug-fix A: resetta il ref così i round successivi vengono processati
-                lastProcessedRoundRef.current = -1;
+              // Caso 2: choices azzerate (RPC ha processato disagreement o 'continue') → dismiss banner
+              if (!match.level_change_choice_sender
+                  && !match.level_change_choice_receiver
+                  && myLevelChoiceRef.current !== null) {
+                setShowLevelBanner(false);
+                setMyLevelChoice(null);
+                myLevelChoiceRef.current = null;
               }
-              setShowLevelBanner(false);
-              setMyLevelChoice(null);
-              myLevelChoiceRef.current = null;
-
-              const updatePayload = {
-                level: newLevel,
-                level_change_choice_sender: null,
-                level_change_choice_receiver: null
-              };
-              if (agreed) updatePayload.round_count = 0;
-
-              await supabase.from('telepathy_matches').update(updatePayload).eq('id', matchId);
             };
 
             pollLevelChange();
@@ -2298,6 +2288,13 @@
               if (senderHasSent) return `${partner.nickname} ${t.telepathy.statusSent}`;
               return `${partner.nickname} ${t.telepathy.statusChoosing}`;
             }
+          };
+
+          const isMyTurn = () => {
+            if (!partner || showResult || sessionEnded || waitingForPartner || showLevelBanner) return false;
+            if (role === 'sender') return true;
+            if (role === 'receiver') return senderHasSent;
+            return false;
           };
 
           const endSession = async () => {
@@ -3436,7 +3433,30 @@
                     )}
 
                     {(partner || sessionEnded) && (
-                      <div style={{display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'flex-start'}}>
+                      <div style={{display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'flex-start', position: 'relative'}}>
+                        {partner && !sessionEnded && (
+                          <button
+                            onClick={() => setShowEndSessionConfirm(true)}
+                            aria-label={t.telepathy.endSessionBtn}
+                            title={t.telepathy.endSessionBtn}
+                            style={{
+                              position: 'absolute',
+                              top: '0.5rem',
+                              right: '0.5rem',
+                              width: '2rem',
+                              height: '2rem',
+                              borderRadius: '50%',
+                              border: '1px solid rgba(255,255,255,0.2)',
+                              background: 'rgba(0,0,0,0.45)',
+                              color: 'white',
+                              fontSize: '1rem',
+                              cursor: 'pointer',
+                              lineHeight: 1,
+                              padding: 0,
+                              zIndex: 5
+                            }}
+                          >✕</button>
+                        )}
                         {partnerDisconnected && (
                           <div style={{width: '100%', background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.4)', borderRadius: '0.75rem', padding: '1.25rem', textAlign: 'center', marginBottom: '0.5rem'}}>
                             <div style={{fontSize: '2rem', marginBottom: '0.4rem'}}>📡</div>
@@ -3483,16 +3503,31 @@
                               </div>
                             )}
                           </div>
-                          {partner && !sessionEnded && (
-                            <div className="bg-glass-dark rounded-xl p-3">
-                              <p className="text-secondary text-xs mb-1">{t.telepathy.statusLabel}</p>
-                              <p className="text-white text-xs">{getPartnerStatus()}</p>
-                            </div>
-                          )}
                         </div>
 
                         {/* CENTRO: area di gioco */}
                         <div style={{flex: '1 1 280px', minWidth: '260px', display: 'flex', flexDirection: 'column', gap: '1.5rem'}}>
+                          {partner && !sessionEnded && (
+                            <div
+                              className={`bg-glass-dark rounded-xl ${isMyTurn() ? 'pulse-glow' : ''}`}
+                              style={{
+                                padding: '0.9rem 1.1rem',
+                                border: '1px solid rgba(167,139,250,0.45)',
+                                background: 'rgba(167,139,250,0.12)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.75rem'
+                              }}
+                            >
+                              <span style={{fontSize: '1.5rem'}}>🔮</span>
+                              <p
+                                className="text-white"
+                                style={{fontSize: '1.05rem', fontWeight: 500, margin: 0, lineHeight: 1.3}}
+                              >
+                                {getPartnerStatus()}
+                              </p>
+                            </div>
+                          )}
                           {partner && !showResult && !sessionEnded && (
                             <div style={{display: 'flex', flexDirection: 'column', gap: '1.5rem'}}>
                               {/* Banner proposta cambio livello */}
@@ -4007,6 +4042,30 @@
                     <div style={{display: 'flex', gap: '0.75rem'}}>
                       <button onClick={acceptInvite} className="btn-primary" style={{flex: 1}}>{t.telepathy.acceptBtn}</button>
                       <button onClick={declineInvite} className="btn-secondary" style={{flex: 1}}>{t.telepathy.declineBtn}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showEndSessionConfirm && (
+                <div className="modal-overlay" onClick={() => setShowEndSessionConfirm(false)}>
+                  <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{maxWidth: '400px'}}>
+                    <h3 className="text-white font-bold mb-2" style={{fontSize: '1.1rem'}}>
+                      {t.telepathy.endSessionConfirmTitle}
+                    </h3>
+                    <p className="text-secondary mb-4" style={{fontSize: '0.9rem'}}>
+                      {t.telepathy.endSessionConfirmBody}
+                    </p>
+                    <div style={{display: 'flex', gap: '0.5rem', justifyContent: 'flex-end'}}>
+                      <button onClick={() => setShowEndSessionConfirm(false)} className="btn-secondary">
+                        {t.telepathy.endSessionConfirmNo}
+                      </button>
+                      <button
+                        onClick={() => { setShowEndSessionConfirm(false); endSession(); }}
+                        className="btn-primary"
+                      >
+                        {t.telepathy.endSessionConfirmYes}
+                      </button>
                     </div>
                   </div>
                 </div>
