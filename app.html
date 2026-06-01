@@ -634,6 +634,10 @@
             registeredBadge: "Registered",
             registerInvite: "Register to save your profile permanently",
             logout: "Logout",
+            logoutConfirmTitle: "Log out?",
+            logoutConfirmBody: "You'll return to the welcome screen.",
+            logoutConfirmYes: "Log out",
+            logoutConfirmNo: "Cancel",
             tabs: { rituals: "Rituals", telepathy: "Telepathy", consciousness: "Consciousness" },
             showTelepathyScore: "Show telepathy score",
             editProfile: "Edit Profile",
@@ -868,6 +872,10 @@
             registeredBadge: "Registrato",
             registerInvite: "Registrati per salvare il profilo in modo permanente",
             logout: "Esci",
+            logoutConfirmTitle: "Vuoi uscire?",
+            logoutConfirmBody: "Tornerai alla schermata di accesso.",
+            logoutConfirmYes: "Esci",
+            logoutConfirmNo: "Annulla",
             tabs: { rituals: "Rituali", telepathy: "Telepatia", consciousness: "Coscienza" },
             showTelepathyScore: "Mostra punteggio telepatia",
             editProfile: "Modifica Profilo",
@@ -1093,6 +1101,7 @@
           const [roundCount, setRoundCount] = useState(0);
           const [sessionMatches, setSessionMatches] = useState(0);
           const [showEndSessionConfirm, setShowEndSessionConfirm] = useState(false);
+          const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
           // Ref aggiornata per leggere il valore corrente dentro pollResult
           // senza dover ricreare l'effect ad ogni round (e quindi perdere fino a 2s di polling).
           const sessionMatchesRef = React.useRef(0);
@@ -1222,6 +1231,7 @@
           useEffect(() => {
             const onKeyDown = (e) => {
               if (e.key !== 'Escape') return;
+              if (showLogoutConfirm) { setShowLogoutConfirm(false); return; }
               if (showEndSessionConfirm) { setShowEndSessionConfirm(false); return; }
               if (showCreateRitual) { setShowCreateRitual(false); return; }
               if (showEditProfile) { setShowEditProfile(false); return; }
@@ -1230,7 +1240,7 @@
             };
             document.addEventListener('keydown', onKeyDown);
             return () => document.removeEventListener('keydown', onKeyDown);
-          }, [showEndSessionConfirm, showCreateRitual, showEditProfile, viewingProfile, showNotifPanel]);
+          }, [showLogoutConfirm, showEndSessionConfirm, showCreateRitual, showEditProfile, viewingProfile, showNotifPanel]);
 
           // Pulizia stato remoto alla chiusura del tab.
           // sendBeacon non supporta DELETE: usiamo fetch con keepalive=true che il browser
@@ -3111,7 +3121,7 @@
                           </div>
                         )}
                       </div>
-                      <button onClick={handleLogout} className="btn-secondary px-3 py-2" style={{fontSize: '0.8rem'}}>
+                      <button onClick={() => setShowLogoutConfirm(true)} className="btn-secondary px-3 py-2" style={{fontSize: '0.8rem'}}>
                         {t.logout}
                       </button>
                     </div>
@@ -4229,6 +4239,30 @@
                         className="btn-primary"
                       >
                         {t.telepathy.endSessionConfirmYes}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showLogoutConfirm && (
+                <div className="modal-overlay" onClick={() => setShowLogoutConfirm(false)}>
+                  <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{maxWidth: '400px'}}>
+                    <h3 className="text-white font-bold mb-2" style={{fontSize: '1.1rem'}}>
+                      {t.logoutConfirmTitle}
+                    </h3>
+                    <p className="text-secondary mb-4" style={{fontSize: '0.9rem'}}>
+                      {t.logoutConfirmBody}
+                    </p>
+                    <div style={{display: 'flex', gap: '0.5rem', justifyContent: 'flex-end'}}>
+                      <button onClick={() => setShowLogoutConfirm(false)} className="btn-secondary">
+                        {t.logoutConfirmNo}
+                      </button>
+                      <button
+                        onClick={() => { setShowLogoutConfirm(false); handleLogout(); }}
+                        className="btn-primary"
+                      >
+                        {t.logoutConfirmYes}
                       </button>
                     </div>
                   </div>

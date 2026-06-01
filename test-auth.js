@@ -118,6 +118,7 @@ async function openAuthTab(page, tab) {
     // ── Test 4: Logout ───────────────────────────────────────────────────
     console.log('\n📋 Test 4: Logout');
     await page.locator(':text("Logout")').first().click({ timeout: TIMEOUT });
+    await page.locator('.modal-content button.btn-primary').click({ timeout: TIMEOUT });
     await page.waitForSelector(':text("Guest")', { timeout: TIMEOUT });
     pass('Logout eseguito — schermata auth di nuovo visibile');
 
@@ -137,6 +138,7 @@ async function openAuthTab(page, tab) {
     // ── Test 6: Login con password errata ───────────────────────────────
     console.log('\n📋 Test 6: Login con password errata');
     await page.locator(':text("Logout")').first().click({ timeout: TIMEOUT });
+    await page.locator('.modal-content button.btn-primary').click({ timeout: TIMEOUT });
     await page.waitForSelector(':text("Guest")', { timeout: TIMEOUT });
     await page.locator(':text("Login")').first().click({ timeout: TIMEOUT });
     await page.waitForSelector('input[type="email"]', { timeout: TIMEOUT });

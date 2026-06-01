@@ -256,6 +256,7 @@ async function closeModal(page) {
     // ── Test 9: Logout e login ─────────────────────────────────────────────
     console.log('\n📋 Test 9: Logout e re-login');
     await pageA.locator(':text("Logout")').first().click();
+    await pageA.locator('.modal-content button.btn-primary').click({ timeout: TIMEOUT });
     await pageA.waitForSelector(':text("Guest")', { timeout: TIMEOUT });
     log(NICK_A, 'Logout eseguito');
 

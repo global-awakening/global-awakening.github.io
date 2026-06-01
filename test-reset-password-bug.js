@@ -91,6 +91,7 @@ async function cleanup() {
     // Step 2 — Logout
     console.log('\nStep 2: Logout');
     await page.locator('button:has-text("Logout"), button:has-text("Esci")').click();
+    await page.locator('.modal-content button.btn-primary').click({ timeout: TIMEOUT });
     await page.waitForSelector('button:has-text("Guest"), button:has-text("Ospite")', { timeout: TIMEOUT });
     pass('logout completato');
 
