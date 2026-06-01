@@ -295,11 +295,11 @@ async function cleanup() {
     // Aspetta che la card appaia nella lista (real-time o poll)
     log(NICK_A, `Aspetto card "${MODAL_RITUAL_NAME.substring(0, 20)}" (max ${POLL_WAIT / 1000}s)...`);
     try {
-      await pageA.locator('.ritual-card').filter({ hasText: MODAL_RITUAL_NAME.substring(0, 20) }).waitFor({ timeout: POLL_WAIT });
+      await pageA.locator('.ritual-card').filter({ hasText: MODAL_RITUAL_NAME }).waitFor({ timeout: POLL_WAIT });
       pass(`Rituale "${MODAL_RITUAL_NAME.substring(0, 30)}" appare in lista`);
 
       // Verifica status futuro ("Inizia tra" / "Starts in")
-      const futureCard = pageA.locator('.ritual-card').filter({ hasText: MODAL_RITUAL_NAME.substring(0, 20) }).first();
+      const futureCard = pageA.locator('.ritual-card').filter({ hasText: MODAL_RITUAL_NAME }).first();
       const futureStatus = await futureCard.locator('span').filter({ hasText: /Inizia tra|Starts in/ }).count();
       if (futureStatus > 0) {
         pass('Rituale futuro mostra status "Inizia tra..."');
