@@ -137,6 +137,9 @@
     </script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        /* Fallback scuro: lo sfondo visibile è dipinto dal canvas starfield (z-index:-1).
+           Se il canvas non si disegna, questo evita testo chiaro su bianco (contrasto/robustezza, H1). */
+        html, body { background: #0c0f14; }
         body { font-family: system-ui, -apple-system, sans-serif; overflow-x: hidden; }
         
         @keyframes pulse-glow {
