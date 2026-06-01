@@ -715,6 +715,11 @@
               close: "Close",
               notifications: "Notifications"
             },
+            stats: {
+              activeRituals: "Active Rituals",
+              roundsPlayed: "Rounds Played",
+              onlineNow: "Online Now"
+            },
             messages: {
               title: "Messages",
               subtitle: "Private conversations",
@@ -942,6 +947,11 @@
               noProfile: "Nessun profilo ancora",
               close: "Chiudi",
               notifications: "Notifiche"
+            },
+            stats: {
+              activeRituals: "Rituali Attivi",
+              roundsPlayed: "Round Giocati",
+              onlineNow: "Online Ora"
             },
             messages: {
               title: "Messaggi",
@@ -3092,11 +3102,11 @@
                   <div className="grid grid-cols-3 gap-4 text-center stats-grid">
                     <div>
                       <div className="text-2xl font-bold text-white">{rituals.length}</div>
-                      <div className="text-secondary text-xs">Active Rituals</div>
+                      <div className="text-secondary text-xs">{t.stats.activeRituals}</div>
                     </div>
                     <div>
                       <div className="text-2xl font-bold" style={{color: '#fbbf24'}}>{totalRounds}</div>
-                      <div className="text-secondary text-xs">Rounds Played</div>
+                      <div className="text-secondary text-xs">{t.stats.roundsPlayed}</div>
                     </div>
                     <div
                       onClick={() => {
@@ -3110,7 +3120,7 @@
                       title="Vedi gli utenti online (Community)"
                     >
                       <div className="text-2xl font-bold" style={{color: '#4ade80', textDecoration: 'underline', textDecorationColor: 'rgba(74,222,128,0.4)', textUnderlineOffset: '0.2rem'}}>{onlineUsers.length}</div>
-                      <div className="text-secondary text-xs">Online Now</div>
+                      <div className="text-secondary text-xs">{t.stats.onlineNow}</div>
                     </div>
                   </div>
                 </div>
