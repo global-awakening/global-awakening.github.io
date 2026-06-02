@@ -1810,18 +1810,22 @@
             if (!isValidEmail(email)) { setLoginError(t.invalidEmail); return; }
             setLoginError('');
             setLoginSuccess('');
+            setAuthLoading(true);
             try {
               const token = crypto.randomUUID();
               const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
               await supabase.from('password_resets').delete().eq('email', email);
-              await supabase.from('password_resets').insert({ email, token, expires_at: expiresAt });
+              const { error: insErr } = await supabase.from('password_resets').insert({ email, token, expires_at: expiresAt });
+              if (insErr) { setLoginError(t.connectionError); setAuthLoading(false); return; }
               const appUrl = window.location.origin + window.location.pathname;
               const resetUrl = `${appUrl}?reset=${token}`;
               await emailjs.send('service_rk97p6m', 'template_i5i06pl', { to_email: email, reset_url: resetUrl });
               setLoginSuccess(t.resetEmailSent);
               setResetEmail('');
             } catch (err) {
-              setLoginError('Errore invio email. Riprova.');
+              setLoginError(t.connectionError);
+            } finally {
+              setAuthLoading(false);
             }
           };
 
@@ -1833,14 +1837,17 @@
             setLoginError('');
             setLoginSuccess('');
             try {
+              setAuthLoading(true);
               const { data: rows, error: selErr } = await supabase
                 .from('password_resets')
                 .select('email, expires_at')
                 .eq('token', resetToken);
+              if (selErr) { setLoginError(t.connectionError); setAuthLoading(false); return; }
               const row = rows && rows[0];
-              if (selErr || !row || new Date(row.expires_at) < new Date()) {
+              if (!row || new Date(row.expires_at) < new Date()) {
                 setLoginError(t.resetTokenInvalid);
                 setResetToken('');
+                setAuthLoading(false);
                 return;
               }
               const hash = await hashPassword(pw);
@@ -1849,11 +1856,13 @@
                 .update({ password_hash: hash })
                 .eq('email', row.email);
               if (updErr) {
-                setLoginError('Errore aggiornamento password: ' + (updErr.message || updErr.code || JSON.stringify(updErr)));
+                setLoginError(t.connectionError);
+                setAuthLoading(false);
                 return;
               }
               if (!updData || updData.length === 0) {
                 setLoginError('Nessun account trovato per questa email.');
+                setAuthLoading(false);
                 return;
               }
               await supabase.from('password_resets').delete().eq('token', resetToken);
@@ -1863,7 +1872,9 @@
               setResetToken('');
               setTimeout(() => { setAuthTab('login'); setLoginSuccess(''); }, 2500);
             } catch (err) {
-              setLoginError('Errore: ' + (err.message || String(err)));
+              setLoginError(t.connectionError);
+            } finally {
+              setAuthLoading(false);
             }
           };
 
@@ -1873,13 +1884,16 @@
             if (!isValidEmail(email)) { setLoginError(t.invalidEmail); return; }
             setLoginError('');
             setLoginSuccess('');
-            const { data } = await supabase.from('profiles').select('email').eq('email', email);
-            if (!data || data.length === 0) { setLoginError(t.emailNotFound); return; }
+            setAuthLoading(true);
+            const { data, error: lookErr } = await supabase.from('profiles').select('email').eq('email', email);
+            if (lookErr) { setLoginError(t.connectionError); setAuthLoading(false); return; }
+            if (!data || data.length === 0) { setLoginError(t.emailNotFound); setAuthLoading(false); return; }
             try {
               const token = crypto.randomUUID();
               const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
               await supabase.from('magic_links').delete().eq('email', email);
-              await supabase.from('magic_links').insert({ email, token, expires_at: expiresAt });
+              const { error: insErr } = await supabase.from('magic_links').insert({ email, token, expires_at: expiresAt });
+              if (insErr) { setLoginError(t.connectionError); setAuthLoading(false); return; }
               const appUrl = window.location.origin + window.location.pathname;
               const magicUrl = `${appUrl}?magic=${token}`;
               await emailjs.send('service_rk97p6m', 'template_gy8gdkg', {
@@ -1895,7 +1909,9 @@
               setShowMagicLink(false);
             } catch(err) {
               console.error('EmailJS error:', JSON.stringify(err));
-              setLoginError('Errore: ' + (err.text || err.message || JSON.stringify(err)));
+              setLoginError(t.connectionError);
+            } finally {
+              setAuthLoading(false);
             }
           };
 
