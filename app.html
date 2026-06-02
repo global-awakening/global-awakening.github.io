@@ -1224,6 +1224,8 @@
           const [passwordHash, setPasswordHash] = useState(null);
           const [loginError, setLoginError] = useState('');
           const [authLoading, setAuthLoading] = useState(false);
+          const [errorToast, setErrorToast] = useState(null);
+          const [savingContent, setSavingContent] = useState(false);
           const [loginSuccess, setLoginSuccess] = useState('');
           const [profilePassword, setProfilePassword] = useState('');
           const [profilePasswordMsg, setProfilePasswordMsg] = useState('');
@@ -1291,6 +1293,13 @@
             document.addEventListener('keydown', onKeyDown);
             return () => document.removeEventListener('keydown', onKeyDown);
           }, [showPrivacy, showLogoutConfirm, showEndSessionConfirm, showCreateRitual, showEditProfile, viewingProfile, showNotifPanel]);
+
+          // Toast d'errore: auto-dismiss dopo 4s.
+          useEffect(() => {
+            if (!errorToast) return;
+            const tmr = setTimeout(() => setErrorToast(null), 4000);
+            return () => clearTimeout(tmr);
+          }, [errorToast]);
 
           // Pulizia stato remoto alla chiusura del tab.
           // sendBeacon non supporta DELETE: usiamo fetch con keepalive=true che il browser
@@ -2658,6 +2667,8 @@
               (m.sender_name === otherUser && m.receiver_name === nickname)
             ).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
           };
+
+          const showErrorToast = (msg) => setErrorToast(msg || t.connectionError);
 
           const sendPrivateMessage = async (receiverName, text) => {
             if (!text.trim() || !receiverName) return;
@@ -4276,6 +4287,20 @@
                       </button>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {errorToast && (
+                <div role="alert" style={{
+                  position: 'fixed', bottom: '1rem', left: '50%', transform: 'translateX(-50%)',
+                  width: 'min(360px, calc(100vw - 2rem))',
+                  background: 'linear-gradient(135deg, rgba(220,38,38,0.96) 0%, rgba(248,113,113,0.93) 100%)',
+                  border: '1px solid rgba(255,255,255,0.25)',
+                  boxShadow: '0 12px 40px rgba(220,38,38,0.45)',
+                  borderRadius: '0.85rem', padding: '0.85rem 1rem', zIndex: 9999,
+                  animation: 'toast-slide-in 0.35s ease-out'
+                }}>
+                  <p className="text-white font-bold" style={{fontSize: '0.9rem', margin: 0, textAlign: 'center'}}>⚠️ {errorToast}</p>
                 </div>
               )}
 
