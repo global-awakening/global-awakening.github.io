@@ -197,13 +197,15 @@ async function closeModal(page) {
       fail('Messaggio NON visibile nella UI del mittente dopo il poll');
     }
 
-    // ── Test 5: Messaggio salvato in Supabase ──────────────────────────────
-    console.log('\n📋 Test 5: Messaggio salvato in Supabase');
-    const msgs = await sbFetch(`private_messages?sender_name=eq.${encodeURIComponent(NICK_A)}&receiver_name=eq.${encodeURIComponent(NICK_B)}&select=content,is_read`);
-    if (msgs && msgs.length > 0) {
-      pass(`Messaggio trovato in DB — content: "${msgs[0].content.substring(0, 30)}..."`);
+    // ── Test 5: Privacy Step B — i messaggi NON sono leggibili via SELECT diretta anon ──
+    // (Prima di Step B questa SELECT esponeva i messaggi in chiaro = VULN-1. Ora RLS la blocca:
+    //  la lettura legittima passa solo da get_my_messages. La persistenza è coperta da Test 6/8.)
+    console.log('\n📋 Test 5: Privacy — SELECT diretta anon non espone i messaggi (Step B)');
+    const leaked = await sbFetch(`private_messages?sender_name=eq.${encodeURIComponent(NICK_A)}&receiver_name=eq.${encodeURIComponent(NICK_B)}&select=content`);
+    if (Array.isArray(leaked) && leaked.length === 0) {
+      pass('SELECT diretta anon ritorna 0 righe — lettura pubblica chiusa (VULN-1)');
     } else {
-      fail('Messaggio NON trovato in Supabase');
+      fail(`SELECT diretta anon espone ancora ${leaked ? leaked.length : '?'} messaggi — VULN-1 NON chiusa`);
     }
 
     await closeModal(pageA);
