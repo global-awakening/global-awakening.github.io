@@ -67,7 +67,10 @@ async function testNetworkErrorOnLogin() {
     await page.route('**/rest/v1/**', route => route.abort());
     await page.locator('input[type=email]').first().fill('chiunque@test.com');
     await page.locator('input[type=password]').first().fill('qualsiasi');
-    await page.locator('button', { hasText: /^Login$|^Accedi$/ }).first().click();
+    // NB: il submit è il button.btn-primary; senza il filtro .btn-primary
+    // il regex /^Login$/ matcherebbe anche il TAB "Login" (primo nel DOM)
+    // e il click non invocherebbe handleLogin.
+    await page.locator('button.btn-primary', { hasText: /^Login$|^Accedi$/ }).first().click();
     const errBox = page.locator('text=/Problema di connessione|Connection problem/');
     await errBox.waitFor({ state: 'visible', timeout: 6000 });
     passLocal('Mostra messaggio di connessione su guasto di rete');
