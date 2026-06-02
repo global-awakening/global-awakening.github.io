@@ -2680,24 +2680,21 @@
 
           const sendPrivateMessage = async (receiverName, text) => {
             if (!text.trim() || !receiverName) return false;
-            const { data, error } = await supabase.from('private_messages').insert({
-              sender_id: sessionId,
-              sender_name: nickname || 'Anonymous',
-              receiver_name: receiverName,
-              content: text.trim(),
-              is_read: false
+            // Scrittura via RPC SECURITY DEFINER (Messaggi Step A): l'insert diretto è
+            // bloccato da RLS. La RPC valida l'input, inserisce il messaggio E crea la
+            // notifica server-side (niente più insert separato lato client).
+            const { data, error } = await supabase.rpc('send_private_message', {
+              p_sender_id: sessionId,
+              p_sender_name: nickname || 'Anonymous',
+              p_receiver_name: receiverName,
+              p_content: text.trim()
             });
             if (error) return false;
-            // Optimistic UI: aggiungi subito il messaggio allo stato locale cosi'
-            // il mittente lo vede senza aspettare il prossimo poll (ogni 8s).
-            if (Array.isArray(data) && data.length > 0) {
-              setPrivateMessages(prev => [...prev, data[0]]);
+            // Optimistic UI: la RPC ritorna la riga inserita (oggetto singolo o array).
+            const row = Array.isArray(data) ? data[0] : data;
+            if (row && row.id) {
+              setPrivateMessages(prev => [...prev, row]);
             }
-            await supabase.from('notifications').insert({
-              user_nickname: receiverName,
-              type: 'private_message',
-              message: `${nickname} ti ha inviato un messaggio privato`
-            });
             return true;
           };
 
@@ -2719,7 +2716,7 @@
           const markAsRead = async (otherUser) => {
             const unreadMsgs = privateMessages.filter(m => m.sender_name === otherUser && m.receiver_name === nickname && !m.is_read);
             for (const msg of unreadMsgs) {
-              await supabase.from('private_messages').update({ is_read: true }).eq('id', msg.id);
+              await supabase.rpc('mark_message_read', { p_message_id: msg.id, p_receiver_name: nickname });
             }
           };
 
