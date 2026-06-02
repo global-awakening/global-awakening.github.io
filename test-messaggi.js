@@ -255,6 +255,24 @@ async function closeModal(page) {
     }
     await closeModal(pageA);
 
+    // ── Test 8b: B ricarica la pagina → i messaggi restano leggibili (passwordHash persistito) ──
+    // Regressione Step B: passwordHash deve sopravvivere al reload (localStorage ga_pwhash),
+    // altrimenti get_my_messages non parte e l'utente di ritorno non vede i messaggi.
+    console.log('\n📋 Test 8b: B ricarica la pagina → messaggi ancora leggibili (Step B reload)');
+    await pageB.reload({ waitUntil: 'domcontentloaded' });
+    await pageB.waitForSelector(':text("Logout"), :text("Esci")', { timeout: TIMEOUT });
+    await pageB.locator('button').filter({ hasText: /Coscienza|Consciousness/ }).first().click();
+    await pageB.waitForTimeout(11000); // ripopolamento community list (presence polling)
+    await openProfileOf(pageB, NICK_A);
+    await pageB.waitForTimeout(6000); // un ciclo di get_my_messages
+    const msgAfterReload = (await pageB.locator(`.modal-content :text("${MSG_A.substring(0, 20)}")`).count()) > 0;
+    if (msgAfterReload) {
+      pass(`${NICK_B} vede ancora i messaggi dopo il reload (passwordHash persistito)`);
+    } else {
+      fail(`${NICK_B} NON vede i messaggi dopo reload — passwordHash non persistito (regressione Step B)`);
+    }
+    await closeModal(pageB);
+
     // ── Test 9: Logout e login ─────────────────────────────────────────────
     console.log('\n📋 Test 9: Logout e re-login');
     await pageA.locator(':text("Logout")').first().click();

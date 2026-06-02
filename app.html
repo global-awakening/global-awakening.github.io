@@ -1232,7 +1232,7 @@
           const [sessionId, setSessionId] = useState(() => localStorage.getItem('ga_session_id') || (Date.now() + '-' + Math.random()));
           const [tempPassword, setTempPassword] = useState('');
           const [tempEmail, setTempEmail] = useState('');
-          const [passwordHash, setPasswordHash] = useState(null);
+          const [passwordHash, setPasswordHash] = useState(() => localStorage.getItem('ga_pwhash') || null);
           const [loginError, setLoginError] = useState('');
           const [authLoading, setAuthLoading] = useState(false);
           const [errorToast, setErrorToast] = useState(null);
@@ -1693,6 +1693,7 @@
             setSessionId(existing.session_id);
             localStorage.setItem('ga_session_id', existing.session_id);
             setPasswordHash(hash);
+            localStorage.setItem('ga_pwhash', hash);
             setUserEmail(email);
             setIsGuest(false);
             const loaded = {
@@ -1779,6 +1780,7 @@
               return;
             }
             setPasswordHash(hash);
+            localStorage.setItem('ga_pwhash', hash);
             const newSid = Date.now() + '-' + Math.random();
             setSessionId(newSid);
             localStorage.setItem('ga_session_id', newSid);
@@ -1962,6 +1964,10 @@
               localStorage.setItem('ga_session_id', existing.session_id);
               setUserEmail(email);
               setIsGuest(false);
+              // Magic-link: nessuna password digitata → prendi l'hash memorizzato dal profilo,
+              // così Step B (get_my_messages) può autenticare la lettura dei messaggi.
+              setPasswordHash(existing.password_hash || null);
+              if (existing.password_hash) localStorage.setItem('ga_pwhash', existing.password_hash);
               const loaded = {
                 bio: existing.bio || '',
                 starseedType: existing.starseed_type || '',
@@ -2008,6 +2014,7 @@
             setUserEmail('');
             setIsGuest(false);
             setPasswordHash(null);
+            localStorage.removeItem('ga_pwhash');
             setTempNickname('');
             setTempEmail('');
             setTempPassword('');
@@ -4152,6 +4159,7 @@
                               onClick={async () => {
                                 const hash = await hashPassword(profilePassword.trim());
                                 setPasswordHash(hash);
+                                localStorage.setItem('ga_pwhash', hash);
                                 await supabase.from('profiles').upsert({
                                   session_id: sessionId,
                                   nickname: nickname || 'Anonymous',
