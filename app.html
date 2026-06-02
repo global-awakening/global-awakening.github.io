@@ -2847,22 +2847,24 @@
           const createRitualComment = async (ritualId) => {
             const content = (newRitualCommentContents[ritualId] || '').trim();
             if (!content) return;
-            const { data } = await supabase.rpc('create_ritual_comment', {
+            const { data, error } = await supabase.rpc('create_ritual_comment', {
               p_ritual_id: ritualId,
               p_author_nickname: nickname,
               p_content: content
             });
-            if (data && data.length > 0) {
-              setRitualCommentsMap(prev => ({ ...prev, [ritualId]: [...(prev[ritualId] || []), ...data] }));
-              setNewRitualCommentContents(prev => ({ ...prev, [ritualId]: '' }));
-              const ritual = rituals.find(r => r.id === ritualId);
-              if (ritual && ritual.creator && ritual.creator !== nickname) {
-                await supabase.from('notifications').insert({
-                  user_nickname: ritual.creator,
-                  type: 'ritual_comment',
-                  message: `${nickname} ha commentato il tuo rituale "${ritual.name}"`
-                });
-              }
+            if (error || !data || data.length === 0) {
+              showErrorToast();
+              return;
+            }
+            setRitualCommentsMap(prev => ({ ...prev, [ritualId]: [...(prev[ritualId] || []), ...data] }));
+            setNewRitualCommentContents(prev => ({ ...prev, [ritualId]: '' }));
+            const ritual = rituals.find(r => r.id === ritualId);
+            if (ritual && ritual.creator && ritual.creator !== nickname) {
+              await supabase.from('notifications').insert({
+                user_nickname: ritual.creator,
+                type: 'ritual_comment',
+                message: `${nickname} ha commentato il tuo rituale "${ritual.name}"`
+              });
             }
           };
 
