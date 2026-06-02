@@ -292,7 +292,20 @@
         .left-0 { left: 0; }
         .bottom-0 { bottom: 0; }
         .z-50 { z-index: 50; }
-        
+        .app-footer {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            text-align: center; padding: 0.5rem 1rem;
+            font-size: 0.8rem;
+            background: rgba(12, 15, 20, 0.85);
+            backdrop-filter: blur(4px);
+            z-index: 40;
+        }
+        .app-footer button {
+            background: none; border: none; color: #a78bfa;
+            cursor: pointer; text-decoration: underline;
+            font-size: 0.8rem; min-height: 40px; padding: 0 0.5rem;
+        }
+
         .overflow-y-auto { overflow-y: auto; }
         .flex-1 { flex: 1; }
         .shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
@@ -2827,6 +2840,35 @@
             }
           };
 
+          const renderFooter = () => (
+            <footer className="app-footer text-secondary">
+              <span>Global Awakening · {new Date().getFullYear()}</span>
+              <span style={{margin: '0 0.4rem'}}>·</span>
+              <button onClick={() => setShowPrivacy(true)} aria-label={t.privacy.linkLabel}>
+                {t.privacy.linkLabel}
+              </button>
+            </footer>
+          );
+
+          const renderPrivacyModal = () => showPrivacy && (
+            <div className="modal-overlay" onClick={() => setShowPrivacy(false)}>
+              <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{maxWidth: '560px', maxHeight: '80vh', overflowY: 'auto'}}>
+                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem'}}>
+                  <h2 className="text-white font-bold" style={{fontSize: '1.3rem'}}>{t.privacy.title}</h2>
+                  <button onClick={() => setShowPrivacy(false)} aria-label={t.privacy.close} className="btn-secondary" style={{minWidth: '40px', minHeight: '40px', padding: '0.25rem 0.6rem'}}>✕</button>
+                </div>
+                <p className="text-secondary" style={{fontSize: '0.8rem', marginBottom: '1rem'}}>{t.privacy.lastUpdated}</p>
+                <p className="text-secondary" style={{fontSize: '0.9rem', marginBottom: '1rem'}}>{t.privacy.intro}</p>
+                {t.privacy.sections.map((s, i) => (
+                  <div key={i} style={{marginBottom: '1rem'}}>
+                    <h3 className="text-white font-bold mb-2" style={{fontSize: '1rem'}}>{s.heading}</h3>
+                    <p className="text-secondary" style={{fontSize: '0.9rem', lineHeight: '1.5'}}>{s.body}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+
           if (showNicknamePrompt) {
             return (
               <div className="min-h-screen bg-gradient flex items-center justify-center p-4">
@@ -3039,6 +3081,8 @@
                     )}
                   </div>
                 </div>
+              {renderFooter()}
+              {renderPrivacyModal()}
               </div>
             );
           }
@@ -4394,6 +4438,8 @@
                   </div>
                 </div>
               )}
+              {renderFooter()}
+              {renderPrivacyModal()}
             </div>
           );
         }
