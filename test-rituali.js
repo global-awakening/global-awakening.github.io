@@ -77,6 +77,7 @@ async function cleanup() {
   try {
     await sbFetch(`rituals?creator=eq.${encodeURIComponent(NICK_A)}`, { method: 'DELETE' });
     await sbFetch(`rituals?creator=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
+    await sbFetch(`rituals?creator=eq.${encodeURIComponent('NetTestRitCmt_' + TS)}`, { method: 'DELETE' });
     await sbFetch(`ritual_comments?author_nickname=eq.${encodeURIComponent(NICK_A)}`, { method: 'DELETE' });
     await sbFetch(`ritual_comments?author_nickname=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
   } catch (e) {
@@ -141,6 +142,69 @@ async function testNetworkErrorOnCreateRitual() {
     await page.unroute('**/rpc/create_ritual');
   } catch (e) {
     okFail('Eccezione nel test guasto rete: ' + e.message);
+  } finally {
+    await browser.close();
+  }
+  return ok;
+}
+
+// ── Test guasto rete su commento rituale → toast, nessun commento fantasma ──
+// Caso indipendente: crea un Test Ritual (serve backend live), apre i commenti
+// (la SELECT deve riuscire), POI abilita l'abort sull'RPC create_ritual_comment
+// e invia il commento → toast + nessun commento aggiunto.
+async function testNetworkErrorOnRitualComment() {
+  console.log('\n📋 Test 10: Guasto rete su commento rituale → toast + nessun fantasma');
+  const browser = await chromium.launch({ headless: false, slowMo: 100 });
+  const page = await browser.newPage();
+  let ok = true;
+  const okPass = (m) => { pass(m); };
+  const okFail = (m) => { fail(m); ok = false; };
+  const NICK = `NetTestRitCmt_${TS}`;
+  try {
+    // Login ospite (stesso flow di loginAsGuest)
+    await page.goto(APP_URL);
+    await page.waitForSelector('button:has-text("Ospite"), button:has-text("Guest")', { timeout: TIMEOUT });
+    await page.locator('button:has-text("Ospite"), button:has-text("Guest")').first().click();
+    await page.locator('input[placeholder*="username"], input[placeholder*="Username"]').first().fill(NICK);
+    await page.locator('button:has-text("Entra come Ospite"), button:has-text("Enter as Guest")').click();
+    await page.waitForSelector('button:has-text("Logout"), button:has-text("Esci")', { timeout: TIMEOUT });
+    // Tab Rituali
+    await page.locator('button').filter({ hasText: /Rituali|Rituals/ }).first().click();
+    await page.waitForSelector('h2:has-text("Rituali Globali"), h2:has-text("Global Rituals")', { timeout: TIMEOUT });
+
+    // Crea un Test Ritual (⚡ LIVE) per avere qualcosa da commentare (serve backend)
+    await page.locator('button').filter({ hasText: /Test.*3.*min/ }).first().click();
+    const card = page.locator('.ritual-card').filter({ hasText: NICK }).first();
+    await card.waitFor({ state: 'visible', timeout: POLL_WAIT });
+
+    // Apri la sezione commenti del rituale (la SELECT iniziale deve riuscire ORA)
+    const commentsToggle = card.locator('button.btn-secondary').filter({ hasText: /commenti|comments/ }).first();
+    await commentsToggle.click();
+    const cmtInput = card.locator('input[placeholder*="commento"], input[placeholder*="comment"]').first();
+    await cmtInput.waitFor({ timeout: TIMEOUT });
+
+    const cmt = 'RIT COMMENTO NETFAIL ' + Date.now();
+    // ORA blocca l'RPC create_ritual_comment
+    await page.route('**/rpc/create_ritual_comment', r => r.abort());
+    await cmtInput.fill(cmt);
+    await cmtInput.press('Enter');
+
+    // Toast appare
+    try {
+      await page.locator('text=/Problema di connessione|Connection problem/').first().waitFor({ state: 'visible', timeout: 6000 });
+      okPass('Toast d\'errore mostrato su guasto rete in commento rituale');
+    } catch {
+      okFail('Toast d\'errore NON mostrato su guasto rete in commento rituale');
+    }
+
+    // Nessun commento fantasma aggiunto (il commento sarebbe reso come <p> nella card)
+    const ghost = await card.locator('p').filter({ hasText: cmt }).count();
+    if (ghost === 0) okPass('Commento rituale non aggiunto su errore');
+    else okFail('Commento rituale fantasma comparso');
+
+    await page.unroute('**/rpc/create_ritual_comment');
+  } catch (e) {
+    okFail('Eccezione nel test guasto rete commento rituale: ' + e.message);
   } finally {
     await browser.close();
   }
@@ -382,6 +446,13 @@ async function testNetworkErrorOnCreateRitual() {
       await testNetworkErrorOnCreateRitual();
     } catch (e) {
       fail(`Errore nel caso guasto rete: ${e.message}`);
+    }
+
+    // Caso guasto rete su commento rituale (richiede backend live per creare il rituale)
+    try {
+      await testNetworkErrorOnRitualComment();
+    } catch (e) {
+      fail(`Errore nel caso guasto rete commento rituale: ${e.message}`);
     }
 
     console.log('\n  (Pulizia rituali e commenti test da Supabase...)');
