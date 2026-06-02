@@ -2980,8 +2980,8 @@
                           placeholder="Password"
                           aria-label="Password"
                         />
-                        <button onClick={handleLogin} className="btn-primary" style={{width: '100%', fontSize: '1.125rem'}} disabled={!tempEmail.trim() || !tempPassword.trim()}>
-                          {t.login}
+                        <button onClick={handleLogin} className="btn-primary" style={{width: '100%', fontSize: '1.125rem'}} disabled={!tempEmail.trim() || !tempPassword.trim() || authLoading}>
+                          {authLoading ? '…' : t.login}
                         </button>
                         <p
                           onClick={() => { setShowResetForm(true); setLoginError(''); setLoginSuccess(''); }}
@@ -3010,8 +3010,8 @@
                               placeholder={t.emailPlaceholder}
                               aria-label={t.emailPlaceholder}
                             />
-                            <button onClick={handleSendMagicLink} className="btn-primary" style={{width: '100%'}} disabled={!magicLinkEmail.trim()}>
-                              {t.sendMagicLink}
+                            <button onClick={handleSendMagicLink} className="btn-primary" style={{width: '100%'}} disabled={!magicLinkEmail.trim() || authLoading}>
+                              {authLoading ? '…' : t.sendMagicLink}
                             </button>
                           </div>
                         )}
@@ -3030,8 +3030,8 @@
                           placeholder={t.emailPlaceholder}
                           aria-label={t.emailPlaceholder}
                         />
-                        <button onClick={handleSendResetEmail} className="btn-primary" style={{width: '100%', fontSize: '1.125rem'}} disabled={!resetEmail.trim()}>
-                          {t.resetPassword}
+                        <button onClick={handleSendResetEmail} className="btn-primary" style={{width: '100%', fontSize: '1.125rem'}} disabled={!resetEmail.trim() || authLoading}>
+                          {authLoading ? '…' : t.resetPassword}
                         </button>
                         <p
                           onClick={() => { setShowResetForm(false); setLoginError(''); setLoginSuccess(''); }}
@@ -3060,8 +3060,8 @@
                           placeholder={t.confirmPasswordPlaceholder}
                           aria-label={t.confirmPasswordPlaceholder}
                         />
-                        <button onClick={handleSetNewPassword} className="btn-primary" style={{width: '100%', fontSize: '1.125rem'}} disabled={!resetNewPassword.trim() || !resetConfirmPassword.trim()}>
-                          {t.setNewPassword}
+                        <button onClick={handleSetNewPassword} className="btn-primary" style={{width: '100%', fontSize: '1.125rem'}} disabled={!resetNewPassword.trim() || !resetConfirmPassword.trim() || authLoading}>
+                          {authLoading ? '…' : t.setNewPassword}
                         </button>
                       </>
                     )}
@@ -3091,8 +3091,8 @@
                           placeholder="Password"
                           aria-label="Password"
                         />
-                        <button onClick={handleRegister} className="btn-primary" style={{width: '100%', fontSize: '1.125rem'}} disabled={!tempNickname.trim() || !tempEmail.trim() || !tempPassword.trim()}>
-                          {t.register}
+                        <button onClick={handleRegister} className="btn-primary" style={{width: '100%', fontSize: '1.125rem'}} disabled={!tempNickname.trim() || !tempEmail.trim() || !tempPassword.trim() || authLoading}>
+                          {authLoading ? '…' : t.register}
                         </button>
                         <p
                           onClick={() => { setAuthTab('login'); setLoginError(''); setLoginSuccess(''); }}
