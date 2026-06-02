@@ -1134,6 +1134,7 @@
           const [sessionMatches, setSessionMatches] = useState(0);
           const [showEndSessionConfirm, setShowEndSessionConfirm] = useState(false);
           const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+          const [showPrivacy, setShowPrivacy] = useState(false);
           // Ref aggiornata per leggere il valore corrente dentro pollResult
           // senza dover ricreare l'effect ad ogni round (e quindi perdere fino a 2s di polling).
           const sessionMatchesRef = React.useRef(0);
@@ -1263,6 +1264,7 @@
           useEffect(() => {
             const onKeyDown = (e) => {
               if (e.key !== 'Escape') return;
+              if (showPrivacy) { setShowPrivacy(false); return; }
               if (showLogoutConfirm) { setShowLogoutConfirm(false); return; }
               if (showEndSessionConfirm) { setShowEndSessionConfirm(false); return; }
               if (showCreateRitual) { setShowCreateRitual(false); return; }
@@ -1272,7 +1274,7 @@
             };
             document.addEventListener('keydown', onKeyDown);
             return () => document.removeEventListener('keydown', onKeyDown);
-          }, [showLogoutConfirm, showEndSessionConfirm, showCreateRitual, showEditProfile, viewingProfile, showNotifPanel]);
+          }, [showPrivacy, showLogoutConfirm, showEndSessionConfirm, showCreateRitual, showEditProfile, viewingProfile, showNotifPanel]);
 
           // Pulizia stato remoto alla chiusura del tab.
           // sendBeacon non supporta DELETE: usiamo fetch con keepalive=true che il browser
