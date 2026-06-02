@@ -37,17 +37,19 @@ function fail(msg) {
 }
 
 async function sbFetch(path, opts = {}) {
+  const { headers: optHeaders, ...rest } = opts; // estrai headers: altrimenti ...rest sovrascriverebbe l'oggetto headers (perdendo apikey)
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     headers: {
       'apikey': SUPABASE_KEY,
       'Authorization': `Bearer ${SUPABASE_KEY}`,
       'Content-Type': 'application/json',
-      ...opts.headers,
+      ...optHeaders,
     },
-    ...opts,
+    ...rest,
   });
   if (res.status === 204) return null;
-  return res.json();
+  const text = await res.text();
+  return text ? JSON.parse(text) : null; // tollera body vuoto (es. return=minimal)
 }
 
 async function cleanupProfile(email) {
@@ -81,6 +83,69 @@ async function testNetworkErrorOnLogin() {
   } catch (e) {
     failLocal('Eccezione: ' + e.message);
   } finally {
+    await browser.close();
+  }
+  return ok;
+}
+
+const nodeCrypto = require('crypto');
+const sha256hex = (s) => nodeCrypto.createHash('sha256').update(s, 'utf8').digest('hex'); // = hashPassword legacy
+
+// C1: account legacy (hash SHA-256) → login deve riuscire (dual-path) e migrare a PBKDF2
+async function testLegacyMigration() {
+  const ts = Date.now();
+  const nick = `LegacyMig_${ts}`;
+  const email = `legacymig_${ts}@test.com`;
+  const pass = 'LegacyPass123!';
+  const legacyHash = sha256hex(pass);
+  let ok = true;
+  const passL = (m) => console.log('  ✓ ' + m);
+  const failL = (m) => { console.log('  ✗ ' + m); ok = false; };
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  try {
+    // Semina un profilo legacy nel DB (hash SHA-256, formato vecchio)
+    const seedResp = await sbFetch('profiles', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({
+        session_id: `legacy-${ts}`, nickname: nick, email, password_hash: legacyHash,
+        bio: '', starseed_type: '', avatar: '', country: '', interests: [],
+        experience_level: '', telepathy_score: 0, telepathy_best: 0, show_telepathy_score: true
+      })
+    });
+    // Verifica che il seed sia andato (sbFetch non controlla res.ok → potrebbe aver fallito)
+    const seeded = await sbFetch(`profiles?email=eq.${encodeURIComponent(email)}&select=email,password_hash`);
+    if (!Array.isArray(seeded) || seeded.length === 0) {
+      failL('Seed INSERT fallito → ' + JSON.stringify(seedResp));
+      return ok;
+    }
+    // Login via UI con la password legacy
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector(':text("Login")', { timeout: TIMEOUT });
+    await page.locator(':text("Login")').first().click();
+    await page.waitForSelector('input[type="email"]', { timeout: TIMEOUT });
+    await page.locator('input[type="email"]').fill(email);
+    await page.locator('input[type="password"]').fill(pass);
+    await page.locator('button.btn-primary', { hasText: /^Login$|^Accedi$/ }).first().click();
+    try {
+      await page.waitForSelector(':text("Logout"), :text("Esci")', { timeout: TIMEOUT });
+    } catch (e) {
+      const onscreen = await page.locator('.result-try-again, [class*="result"]').allInnerTexts().catch(() => []);
+      failL('Login legacy NON completato. Errore a schermo: ' + JSON.stringify(onscreen));
+      return ok;
+    }
+    passL('Login con account legacy (SHA-256) riuscito');
+    // Verifica migrazione: il password_hash memorizzato ora è PBKDF2
+    await page.waitForTimeout(1500); // attendi l'UPDATE di migrazione
+    const rows = await sbFetch(`profiles?email=eq.${encodeURIComponent(email)}&select=password_hash`);
+    const stored = rows && rows[0] && rows[0].password_hash;
+    if (stored && stored.indexOf('pbkdf2$') === 0) passL('Hash migrato a PBKDF2 dopo il login');
+    else failL('Hash NON migrato (ancora: ' + (stored ? String(stored).substring(0, 12) : 'null') + ')');
+  } catch (e) {
+    failL('Eccezione: ' + e.message);
+  } finally {
+    await sbFetch(`profiles?email=eq.${encodeURIComponent(email)}`, { method: 'DELETE' });
     await browser.close();
   }
   return ok;
@@ -232,6 +297,15 @@ async function openAuthTab(page, tab) {
       pass('Guasto di rete → messaggio di connessione, non "nessun account"');
     } else {
       fail('Guasto di rete NON gestito correttamente');
+    }
+
+    // ── Test 11: Migrazione legacy SHA-256 → PBKDF2 al login (C1) ─────────
+    console.log('\n📋 Test 11: Account legacy SHA-256 → login + migrazione PBKDF2 (C1)');
+    const migOk = await testLegacyMigration();
+    if (migOk) {
+      pass('Account legacy migrato a PBKDF2 al primo login');
+    } else {
+      fail('Migrazione legacy NON funzionante (rischio lock-out / mancata migrazione)');
     }
 
     console.log('\n═══════════════════════════════════════');

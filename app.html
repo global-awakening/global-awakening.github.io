@@ -547,12 +547,46 @@
 
         // Supabase is initialized in the script tag above
 
+        // Hash legacy (SHA-256 semplice). Mantenuto SOLO per verificare account vecchi
+        // e migrarli a PBKDF2 al primo login (vedi verifyPassword / handleLogin). Non usarlo
+        // più per memorizzare nuove password: usare deriveStrongHash.
         async function hashPassword(password) {
           const encoder = new TextEncoder();
           const data = encoder.encode(password);
           const hashBuffer = await crypto.subtle.digest('SHA-256', data);
           const hashArray = Array.from(new Uint8Array(hashBuffer));
           return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        // C1: hash robusto PBKDF2-SHA256 con salt (16 byte) e 100k iterazioni.
+        // Formato autodescrittivo: "pbkdf2$<iter>$<saltB64>$<hashB64>".
+        // Per un nuovo hash: salt random. Per verifica: passare salt+iter dell'hash memorizzato
+        // (ricostruisce la stessa stringa se la password combacia).
+        async function deriveStrongHash(password, saltBytes, iterations) {
+          const enc = new TextEncoder();
+          const salt = saltBytes || crypto.getRandomValues(new Uint8Array(16));
+          const iter = iterations || 100000;
+          const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
+          const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' }, keyMaterial, 256);
+          const b64 = (arr) => btoa(String.fromCharCode.apply(null, new Uint8Array(arr)));
+          return `pbkdf2$${iter}$${b64(salt)}$${b64(bits)}`;
+        }
+
+        // Verifica password contro l'hash memorizzato. Dual-path:
+        //  - "pbkdf2$..." → ricalcola con lo stesso salt/iter e confronta.
+        //  - altrimenti (SHA-256 hex legacy) → confronta con hashPassword, ok ma legacy=true
+        //    (il chiamante deve ri-hashare a PBKDF2 = migrazione).
+        async function verifyPassword(password, stored) {
+          if (!stored) return { ok: false };
+          if (stored.indexOf('pbkdf2$') === 0) {
+            const parts = stored.split('$'); // ['pbkdf2', iter, saltB64, hashB64]
+            const iter = parseInt(parts[1], 10);
+            const salt = Uint8Array.from(atob(parts[2]), c => c.charCodeAt(0));
+            const candidate = await deriveStrongHash(password, salt, iter);
+            return { ok: candidate === stored };
+          }
+          const legacy = await hashPassword(password);
+          return { ok: legacy === stored, legacy: true };
         }
 
         // Validazione formato email lato client (A8): blocca submit con email malformate.
@@ -1666,8 +1700,6 @@
             const prevGuestSid = sessionId;
             const wasGuest = !userEmail;
 
-            const hash = await hashPassword(pw);
-
             // Search profile by email
             setAuthLoading(true);
             const { data, error } = await supabase.from('profiles').select('*').eq('email', email);
@@ -1683,17 +1715,37 @@
             }
 
             const existing = data[0];
-            if (existing.password_hash && existing.password_hash !== hash) {
+            // C1: verifica dual-path (PBKDF2 nuovo schema, fallback SHA-256 legacy).
+            let verify;
+            try {
+              verify = await verifyPassword(pw, existing.password_hash);
+            } catch (e) {
+              setLoginError(t.connectionError);
+              setAuthLoading(false);
+              return;
+            }
+            if (existing.password_hash && !verify.ok) {
               setLoginError(t.wrongPassword);
               setAuthLoading(false);
               return;
+            }
+            // Hash da tenere lato client (deve combaciare con lo stored: serve a Step B).
+            // Se l'account era legacy (SHA-256) e la password combacia → ri-hash PBKDF2 = migrazione.
+            let effectiveHash = existing.password_hash;
+            if (verify.ok && verify.legacy) {
+              try {
+                effectiveHash = await deriveStrongHash(pw);
+                await supabase.from('profiles').update({ password_hash: effectiveHash }).eq('session_id', existing.session_id);
+              } catch (e) {
+                effectiveHash = existing.password_hash; // upgrade fallito: non bloccare il login
+              }
             }
 
             // Match — load session_id and profile
             setSessionId(existing.session_id);
             localStorage.setItem('ga_session_id', existing.session_id);
-            setPasswordHash(hash);
-            localStorage.setItem('ga_pwhash', hash);
+            setPasswordHash(effectiveHash);
+            if (effectiveHash) localStorage.setItem('ga_pwhash', effectiveHash);
             setUserEmail(email);
             setIsGuest(false);
             const loaded = {
@@ -1773,7 +1825,7 @@
 
             let hash;
             try {
-              hash = await hashPassword(pw);
+              hash = await deriveStrongHash(pw);
             } catch (e) {
               setLoginError(t.connectionError);
               setAuthLoading(false);
@@ -1879,7 +1931,7 @@
                 setAuthLoading(false);
                 return;
               }
-              const hash = await hashPassword(pw);
+              const hash = await deriveStrongHash(pw);
               const { data: updData, error: updErr } = await supabase
                 .from('profiles')
                 .update({ password_hash: hash })
@@ -4157,7 +4209,7 @@
                               className="btn-secondary px-4"
                               disabled={!profilePassword.trim()}
                               onClick={async () => {
-                                const hash = await hashPassword(profilePassword.trim());
+                                const hash = await deriveStrongHash(profilePassword.trim());
                                 setPasswordHash(hash);
                                 localStorage.setItem('ga_pwhash', hash);
                                 await supabase.from('profiles').upsert({
