@@ -282,8 +282,8 @@ async function closeModal(page) {
       fail('Storico messaggi perso dopo logout/re-login');
     }
 
-    // ── Test 10: Messaggi privati tra DUE GUEST (no registrazione) ─────────
-    console.log('\n📋 Test 10: Messaggi privati guest-to-guest (#8/#2)');
+    // ── Test 10: Step B — i guest NON possono usare i messaggi privati ─────
+    console.log('\n📋 Test 10: Guest → prompt registrazione (Step B, messaggi solo registrati)');
     // Nuovi context per due guest separati
     const ctxGuestA = await browser.newContext();
     const ctxGuestB = await browser.newContext();
@@ -310,33 +310,22 @@ async function closeModal(page) {
     // Aspetta che il polling popoli online_users
     await pageGA.waitForTimeout(11000);
 
-    // GuestA apre il profilo di GuestB (= profilo "empty" perché GuestB non ha riga in `profiles`)
+    // GuestA apre il profilo di GuestB
     await openProfileOf(pageGA, GUEST_B);
     log(GUEST_A, `Aperto profilo di ${GUEST_B}`);
 
-    // Verifica che la sezione messaggi sia visibile (fix #2 → #8: presente anche per profili empty)
-    const inputBox = pageGA.locator('input[placeholder="Type a message..."]');
-    const inputVisible = await inputBox.count();
-    if (inputVisible > 0) {
-      pass('Sezione messaggi visibile anche per profilo guest senza riga in profiles');
+    // Step B: i guest NON possono usare i messaggi privati → prompt registrazione, niente casella
+    const promptVisible = await pageGA.locator('.modal-content').locator('text=/Registrati|Register/').count();
+    const inputVisible = await pageGA.locator('input[placeholder="Type a message..."], input[placeholder="Scrivi un messaggio..."]').count();
+    if (promptVisible > 0) {
+      pass('Guest vede il prompt "Registrati per inviare messaggi privati"');
     } else {
-      fail('Sezione messaggi NON visibile per profilo guest — bug #2/#8 ancora presente');
+      fail('Guest NON vede il prompt di registrazione (gating Step B mancante)');
     }
-
-    // GuestA invia messaggio
-    const guestMsg = `Ciao ${GUEST_B}, sono guest!`;
-    await sendMessage(pageGA, guestMsg);
-    log(GUEST_A, `Messaggio inviato: "${guestMsg}"`);
-
-    // GuestB apre profilo GuestA e verifica di vedere il messaggio
-    await pageGB.waitForTimeout(2000);
-    await openProfileOf(pageGB, GUEST_A);
-    await pageGB.waitForTimeout(9000); // attendi un ciclo di polling 8s
-    const msgVisibleOnB = await pageGB.locator(`.modal-content :text("${guestMsg.substring(0, 20)}")`).count();
-    if (msgVisibleOnB > 0) {
-      pass('GuestB riceve il messaggio di GuestA (guest-to-guest funziona)');
+    if (inputVisible === 0) {
+      pass('Guest NON ha la casella messaggi (invio/lettura riservati ai registrati)');
     } else {
-      fail('GuestB NON vede il messaggio di GuestA — bug #8 confermato');
+      fail('Guest vede ancora la casella messaggi — gating Step B mancante');
     }
 
     await ctxGuestA.close();

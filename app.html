@@ -775,6 +775,7 @@
               title: "Messages",
               subtitle: "Private conversations",
               noConversations: "No conversations yet. Visit a profile and send a message!",
+              guestPrompt: "Register to send private messages",
               placeholder: "Type a message...",
               send: "Send",
               sendMessage: "Send Message",
@@ -1031,6 +1032,7 @@
               title: "Messaggi",
               subtitle: "Conversazioni private",
               noConversations: "Nessuna conversazione. Visita un profilo e invia un messaggio!",
+              guestPrompt: "Registrati per inviare messaggi privati",
               placeholder: "Scrivi un messaggio...",
               send: "Invia",
               sendMessage: "Invia Messaggio",
@@ -2598,26 +2600,27 @@
             setNewMessage('');
           };
 
-          // Load private messages
+          // Load private messages (registered-only, Step B: lettura via RPC autenticata)
           useEffect(() => {
-            if (!nickname) return;
+            if (!nickname || isGuest || !passwordHash) {
+              setPrivateMessages([]);
+              setUnreadCount(0);
+              return;
+            }
             const loadMessages = async () => {
-              try {
-                const { data: sent } = await supabase.from('private_messages').select('*').eq('sender_name', nickname);
-                const { data: received } = await supabase.from('private_messages').select('*').eq('receiver_name', nickname);
-                const all = [...(sent || []), ...(received || [])];
-                all.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-                setPrivateMessages(all);
-                const unread = (received || []).filter(m => !m.is_read).length;
-                setUnreadCount(unread);
-              } catch (err) {
-                console.warn('Failed to load messages:', err);
-              }
+              const { data, error } = await supabase.rpc('get_my_messages', {
+                p_nickname: nickname,
+                p_password_hash: passwordHash
+              });
+              if (error || !Array.isArray(data)) return;  // auth fallita / rete: non tocca lo stato
+              const all = [...data].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+              setPrivateMessages(all);
+              setUnreadCount(all.filter(m => m.receiver_name === nickname && !m.is_read).length);
             };
             loadMessages();
             const interval = setInterval(loadMessages, 8000);
             return () => clearInterval(interval);
-          }, [nickname]);
+          }, [nickname, isGuest, passwordHash]);
 
           useEffect(() => {
             if (!nickname) return;
@@ -2687,7 +2690,8 @@
               p_sender_id: sessionId,
               p_sender_name: nickname || 'Anonymous',
               p_receiver_name: receiverName,
-              p_content: text.trim()
+              p_content: text.trim(),
+              p_sender_password_hash: passwordHash
             });
             if (error) return false;
             // Optimistic UI: la RPC ritorna la riga inserita (oggetto singolo o array).
@@ -4254,8 +4258,13 @@
                         </>
                       )}
 
-                      {/* Private Messages Section — visibile anche per profili guest senza riga in `profiles` */}
-                      {viewingProfile.nickname !== nickname && (
+                      {/* Messaggi privati — solo per utenti registrati (Step B); i guest vedono il prompt */}
+                      {viewingProfile.nickname !== nickname && isGuest && (
+                        <div className="bg-glass-dark rounded-xl p-3 text-center">
+                          <p className="text-secondary text-sm">{t.messages.guestPrompt}</p>
+                        </div>
+                      )}
+                      {viewingProfile.nickname !== nickname && !isGuest && (
                         <div>
                           <p className="text-secondary text-xs mb-2">{t.messages.title}</p>
                           <div className="bg-glass-dark rounded-xl" style={{maxHeight: '250px', display: 'flex', flexDirection: 'column'}}>
