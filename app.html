@@ -628,6 +628,7 @@
             fillAllFields: "Please fill in all fields",
             invalidEmail: "Please enter a valid email address",
             connectionError: "Connection problem. Check your network and try again.",
+            reportIssue: "Report a problem",
             setPassword: "Set Password",
             changePassword: "Change Password",
             passwordSet: "Password set!",
@@ -883,6 +884,7 @@
             fillAllFields: "Compila tutti i campi",
             invalidEmail: "Inserisci un indirizzo email valido",
             connectionError: "Problema di connessione. Controlla la rete e riprova.",
+            reportIssue: "Segnala un problema",
             setPassword: "Imposta Password",
             changePassword: "Cambia Password",
             passwordSet: "Password impostata!",
@@ -2936,6 +2938,11 @@
               <button onClick={() => setShowPrivacy(true)}>
                 {t.privacy.linkLabel}
               </button>
+              <span style={{margin: '0 0.4rem'}}>·</span>
+              <a href="https://github.com/ireneacqua/global-awakening/issues" target="_blank" rel="noopener noreferrer"
+                 style={{color: '#a78bfa', textDecoration: 'underline', cursor: 'pointer', minHeight: '40px', display: 'inline-flex', alignItems: 'center'}}>
+                {t.reportIssue}
+              </a>
             </footer>
           );
 
