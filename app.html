@@ -158,6 +158,13 @@
             to   { transform: translateY(0);    opacity: 1; }
         }
 
+        /* Toast centrato in basso: sale verticalmente mantenendo il centraggio
+           orizzontale (translateX(-50%) in entrambi i frame, altrimenti scatto). */
+        @keyframes toast-rise {
+            from { transform: translateX(-50%) translateY(120%); opacity: 0; }
+            to   { transform: translateX(-50%) translateY(0);    opacity: 1; }
+        }
+
         @keyframes ripple {
             0% { transform: scale(0.8); opacity: 1; }
             100% { transform: scale(2.5); opacity: 0; }
@@ -2695,7 +2702,7 @@
 
           const submitPrivateMessage = async () => {
             const txt = newPrivateMessage;
-            if (!txt.trim() || !viewingProfile) return;
+            if (!txt.trim() || !viewingProfile || savingContent) return;
             setNewPrivateMessage('');
             setSavingContent(true);
             const ok = await sendPrivateMessage(viewingProfile.nickname, txt);
@@ -4315,7 +4322,7 @@
                   border: '1px solid rgba(255,255,255,0.25)',
                   boxShadow: '0 12px 40px rgba(220,38,38,0.45)',
                   borderRadius: '0.85rem', padding: '0.85rem 1rem', zIndex: 9999,
-                  animation: 'toast-slide-in 0.35s ease-out'
+                  animation: 'toast-rise 0.35s ease-out'
                 }}>
                   <p className="text-white font-bold" style={{fontSize: '0.9rem', margin: 0, textAlign: 'center'}}>⚠️ {errorToast}</p>
                 </div>
