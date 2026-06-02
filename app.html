@@ -1223,6 +1223,7 @@
           const [tempEmail, setTempEmail] = useState('');
           const [passwordHash, setPasswordHash] = useState(null);
           const [loginError, setLoginError] = useState('');
+          const [authLoading, setAuthLoading] = useState(false);
           const [loginSuccess, setLoginSuccess] = useState('');
           const [profilePassword, setProfilePassword] = useState('');
           const [profilePasswordMsg, setProfilePasswordMsg] = useState('');
@@ -1648,16 +1649,23 @@
             const hash = await hashPassword(pw);
 
             // Search profile by email
-            const { data } = await supabase.from('profiles').select('*').eq('email', email);
-
+            setAuthLoading(true);
+            const { data, error } = await supabase.from('profiles').select('*').eq('email', email);
+            if (error) {
+              setLoginError(t.connectionError);
+              setAuthLoading(false);
+              return;
+            }
             if (!data || data.length === 0) {
               setLoginError(t.emailNotFound);
+              setAuthLoading(false);
               return;
             }
 
             const existing = data[0];
             if (existing.password_hash && existing.password_hash !== hash) {
               setLoginError(t.wrongPassword);
+              setAuthLoading(false);
               return;
             }
 
@@ -1700,6 +1708,7 @@
                 }).eq('email', email);
               }
             }
+            setAuthLoading(false);
           };
 
           const handleRegister = async () => {
@@ -1717,22 +1726,27 @@
 
             setLoginError('');
             setLoginSuccess('');
+            setAuthLoading(true);
 
             // Cattura il sid guest prima della sovrascrittura, per fondere i dati telepatia
             const prevGuestSid = sessionId;
             const wasGuest = !userEmail;
 
             // Check if email already exists
-            const { data: emailCheck } = await supabase.from('profiles').select('*').eq('email', email);
+            const { data: emailCheck, error: emailErr } = await supabase.from('profiles').select('*').eq('email', email);
+            if (emailErr) { setLoginError(t.connectionError); setAuthLoading(false); return; }
             if (emailCheck && emailCheck.length > 0) {
               setLoginError(t.emailAlreadyUsed);
+              setAuthLoading(false);
               return;
             }
 
             // Check if nickname already exists
-            const { data: nickCheck } = await supabase.from('profiles').select('*').eq('nickname', name);
+            const { data: nickCheck, error: nickErr } = await supabase.from('profiles').select('*').eq('nickname', name);
+            if (nickErr) { setLoginError(t.connectionError); setAuthLoading(false); return; }
             if (nickCheck && nickCheck.length > 0) {
               setLoginError(t.usernameAlreadyUsed);
+              setAuthLoading(false);
               return;
             }
 
@@ -1760,6 +1774,7 @@
 
             if (insertError) {
               setLoginError(t.registrationError || 'Registration failed. Please try again.');
+              setAuthLoading(false);
               return;
             }
 
@@ -1786,6 +1801,7 @@
                 }).eq('email', email);
               }
             }
+            setAuthLoading(false);
           };
 
           const handleSendResetEmail = async () => {
