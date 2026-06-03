@@ -2184,7 +2184,7 @@
             const { data, error } = await supabase.rpc('apply_level_change_if_both_agree', {
               p_match_id: matchId,
               p_choice: choice,
-              p_role: role
+              p_role: effectiveRole
             });
             if (error) {
               console.warn('apply_level_change_if_both_agree failed', error);
@@ -2199,8 +2199,8 @@
               myLevelChoiceRef.current = null;
               lastProcessedRoundRef.current = -1;
             } else if (result.out_status === 'disagreement') {
-              const myChoice = role === 'sender' ? result.out_sender_choice : result.out_receiver_choice;
-              const theirChoice = role === 'sender' ? result.out_receiver_choice : result.out_sender_choice;
+              const myChoice = effectiveRole === 'sender' ? result.out_sender_choice : result.out_receiver_choice;
+              const theirChoice = effectiveRole === 'sender' ? result.out_receiver_choice : result.out_sender_choice;
               setLevelDisagreement({ myChoice, theirChoice });
               setShowLevelBanner(false);
               setMyLevelChoice(null);
@@ -2248,7 +2248,7 @@
               if (match.sender_symbol && match.receiver_guess && dbRound > lastProcessedRoundRef.current) {
                 lastProcessedRoundRef.current = dbRound;
                 const isTelepathicMatch = match.sender_symbol === match.receiver_guess;
-                setPartnerSymbol(role === 'sender' ? match.receiver_guess : match.sender_symbol);
+                setPartnerSymbol(effectiveRole === 'sender' ? match.receiver_guess : match.sender_symbol);
                 setIsMatch(isTelepathicMatch);
                 setShowResult(true);
                 setWaitingForPartner(false);
@@ -2261,7 +2261,7 @@
                 // Solo il sender esegue la write al DB per evitare doppia scrittura.
                 // Aspetta 4s prima di cancellare i simboli, cosi' il receiver ha tempo
                 // di pollare e vedere il risultato (e il guard round_count funziona).
-                if (role === 'sender') {
+                if (effectiveRole === 'sender') {
                   setTimeout(async () => {
                     await supabase.from('telepathy_matches').update({
                       round_count: newRound,
@@ -2281,7 +2281,7 @@
             pollResult();
             const interval = setInterval(pollResult, 2000);
             return () => clearInterval(interval);
-          }, [matchId, waitingForPartner, role, currentLevel]);
+          }, [matchId, waitingForPartner, role, effectiveRole, currentLevel]);
 
           // Rileva se il partner ha abbandonato la sessione:
           // 1. match eliminato (ha cliccato Termina o chiusura tab con sendBeacon)
@@ -2382,7 +2382,7 @@
 
           // Receiver: controlla se il sender ha già inviato il simbolo
           useEffect(() => {
-            if (!matchId || role !== 'receiver' || waitingForPartner || showResult) return;
+            if (!matchId || effectiveRole !== 'receiver' || waitingForPartner || showResult) return;
 
             const checkSenderSent = async () => {
               const { data } = await supabase.from('telepathy_matches').select('sender_symbol').eq('id', matchId);
@@ -2394,7 +2394,7 @@
             checkSenderSent();
             const interval = setInterval(checkSenderSent, 2000);
             return () => clearInterval(interval);
-          }, [matchId, role, waitingForPartner, showResult]);
+          }, [matchId, role, effectiveRole, waitingForPartner, showResult]);
 
           const resetTelepathy = () => {
             // Se l'utente abbandona una sessione attiva (non terminata via endSession),
@@ -2609,7 +2609,7 @@
             if (!partner) return '';
             if (showLevelBanner) return t.telepathy.statusChoosingLevel;
             if (showResult) return t.telepathy.statusRoundDone;
-            if (role === 'sender') {
+            if (effectiveRole === 'sender') {
               if (waitingForPartner) return `${partner.nickname} ${t.telepathy.statusGuessing}`;
               return `${partner.nickname} ${t.telepathy.statusWaitingSymbol}`;
             } else {
@@ -2621,8 +2621,8 @@
 
           const isMyTurn = () => {
             if (!partner || showResult || sessionEnded || waitingForPartner || showLevelBanner) return false;
-            if (role === 'sender') return true;
-            if (role === 'receiver') return senderHasSent;
+            if (effectiveRole === 'sender') return true;
+            if (effectiveRole === 'receiver') return senderHasSent;
             return false;
           };
 
