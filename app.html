@@ -1253,9 +1253,6 @@
             return telepathySymbols;
           };
 
-          const [chatMessages, setChatMessages] = useState([]);
-          const [newMessage, setNewMessage] = useState('');
-          
           const [privateMessages, setPrivateMessages] = useState([]);
           const [newPrivateMessage, setNewPrivateMessage] = useState('');
           const [unreadCount, setUnreadCount] = useState(0);
@@ -1498,9 +1495,6 @@
           // Load data from Supabase
           useEffect(() => {
             const loadData = async () => {
-              const { data: messages } = await supabase.from('chat_messages').select('*').order('created_at', { ascending: true }).limit(50);
-              if (messages) setChatMessages(messages);
-              
               const { data: ritualsData } = await supabase.from('rituals').select('*').order('created_at', { ascending: false });
               if (ritualsData) {
                 const now = new Date();
@@ -1532,12 +1526,10 @@
             
             // Subscribe to real-time updates
             const ritualsChannel = supabase.channel('rituals-channel').on('postgres_changes', { event: '*', schema: 'public', table: 'rituals' }, () => loadData()).subscribe();
-            const chatChannel = supabase.channel('chat-channel').on('postgres_changes', { event: '*', schema: 'public', table: 'chat_messages' }, () => loadData()).subscribe();
-            
+
             return () => {
               clearInterval(interval);
               ritualsChannel.unsubscribe();
-              chatChannel.unsubscribe();
             };
           }, []);
 
@@ -2711,16 +2703,6 @@
             } catch (err) {
               console.warn('Failed to load profile:', err);
             }
-          };
-
-          const sendChatMessage = async () => {
-            if (!newMessage.trim()) return;
-            const { error } = await supabase.from('chat_messages').insert({
-              user_name: nickname || 'Anonymous',
-              content: newMessage
-            });
-            if (error) { showErrorToast(); return; }  // testo resta nell'input per riprovare
-            setNewMessage('');
           };
 
           // Load private messages (registered-only, Step B: lettura via RPC autenticata)
