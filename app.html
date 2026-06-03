@@ -5,6 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Global Awakening Platform</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⭐</text></svg>">
+    <link rel="manifest" href="manifest.webmanifest">
+    <meta name="theme-color" content="#a78bfa">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Awakening">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('sw.js').catch(() => { /* PWA non disponibile: app invariata */ });
+        });
+      }
+    </script>
     <script crossorigin="anonymous" integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z" src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
     <script crossorigin="anonymous" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1" src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
     <script crossorigin="anonymous" integrity="sha384-dqDn4UOhYWNxmtwnMX6yC3WtZZ6Li8rF6rLB7cu0i/R7btvb+p+kObgEHto7VsJK" src="https://unpkg.com/@babel/standalone@7.29.2/babel.min.js"></script>
@@ -663,6 +676,10 @@
             invalidEmail: "Please enter a valid email address",
             connectionError: "Connection problem. Check your network and try again.",
             reportIssue: "Report a problem",
+            pwaInstall: "📲 Install app",
+            pwaIosTitle: "Install on iPhone",
+            pwaIosBody: "Tap Share ⬆️ then \"Add to Home Screen\".",
+            pwaIosClose: "Got it",
             setPassword: "Set Password",
             changePassword: "Change Password",
             passwordSet: "Password set!",
@@ -936,6 +953,10 @@
             invalidEmail: "Inserisci un indirizzo email valido",
             connectionError: "Problema di connessione. Controlla la rete e riprova.",
             reportIssue: "Segnala un problema",
+            pwaInstall: "📲 Installa app",
+            pwaIosTitle: "Installa su iPhone",
+            pwaIosBody: "Tocca Condividi ⬆️ poi \"Aggiungi alla schermata Home\".",
+            pwaIosClose: "Ho capito",
             setPassword: "Imposta Password",
             changePassword: "Cambia Password",
             passwordSet: "Password impostata!",
@@ -1233,6 +1254,25 @@
           const [showEndSessionConfirm, setShowEndSessionConfirm] = useState(false);
           const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
           const [showPrivacy, setShowPrivacy] = useState(false);
+          const [deferredPrompt, setDeferredPrompt] = useState(null);
+          const [showIosInstall, setShowIosInstall] = useState(false);
+          const isStandalone = (typeof window !== 'undefined') &&
+            (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true);
+          const isIos = (typeof navigator !== 'undefined') && /iphone|ipad|ipod/i.test(navigator.userAgent);
+          useEffect(() => {
+            const onBip = (e) => { e.preventDefault(); setDeferredPrompt(e); };
+            window.addEventListener('beforeinstallprompt', onBip);
+            return () => window.removeEventListener('beforeinstallprompt', onBip);
+          }, []);
+          const handleInstall = async () => {
+            if (deferredPrompt) {
+              deferredPrompt.prompt();
+              await deferredPrompt.userChoice.catch(() => {});
+              setDeferredPrompt(null);
+            } else if (isIos) {
+              setShowIosInstall(true);
+            }
+          };
           // Ref aggiornata per leggere il valore corrente dentro pollResult
           // senza dover ricreare l'effect ad ogni round (e quindi perdere fino a 2s di polling).
           const sessionMatchesRef = React.useRef(0);
@@ -3082,6 +3122,15 @@
                  style={{color: '#a78bfa', textDecoration: 'underline', cursor: 'pointer', minHeight: '40px', display: 'inline-flex', alignItems: 'center'}}>
                 {t.reportIssue}
               </a>
+              {!isStandalone && (deferredPrompt || isIos) && (
+                <>
+                  <span style={{margin: '0 0.4rem'}}>·</span>
+                  <button onClick={handleInstall}
+                    style={{background: 'none', border: 'none', color: '#a78bfa', textDecoration: 'underline', cursor: 'pointer', fontSize: 'inherit', padding: 0, minHeight: '40px'}}>
+                    {t.pwaInstall}
+                  </button>
+                </>
+              )}
             </footer>
           );
 
@@ -4638,6 +4687,16 @@
                         {t.logoutConfirmYes}
                       </button>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {showIosInstall && (
+                <div className="modal-overlay" onClick={() => setShowIosInstall(false)} style={{zIndex: 70}}>
+                  <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{maxWidth: '22rem'}}>
+                    <h3 className="text-xl font-bold text-white mb-2">{t.pwaIosTitle}</h3>
+                    <p className="text-secondary text-sm mb-4">{t.pwaIosBody}</p>
+                    <button className="btn-primary w-full" onClick={() => setShowIosInstall(false)}>{t.pwaIosClose}</button>
                   </div>
                 </div>
               )}
