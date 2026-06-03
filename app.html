@@ -2258,6 +2258,13 @@
                 setRoundCount(newRound);
                 setSessionMatches(newSessionMatches);
 
+                // Alternanza ruoli ogni 3 round (Batch C #5): al cambio blocco avvisa.
+                if (newRound % 3 === 0) {
+                  const nextRole = roleForRound(role, newRound);
+                  setRoleSwapNotice(nextRole);
+                  setTimeout(() => setRoleSwapNotice(null), 6000);
+                }
+
                 // Solo il sender esegue la write al DB per evitare doppia scrittura.
                 // Aspetta 4s prima di cancellare i simboli, cosi' il receiver ha tempo
                 // di pollare e vedere il risultato (e il guard round_count funziona).
@@ -3917,6 +3924,12 @@
                             <div style={{fontSize: '2rem', marginBottom: '0.4rem'}}>📡</div>
                             <p className="text-white font-bold mb-2">{partner?.nickname || t.telepathy.yourPartnerFallback} {t.telepathy.partnerLeftSuffix}</p>
                             <button onClick={resetTelepathy} className="btn-primary">{t.telepathy.backToLobby}</button>
+                          </div>
+                        )}
+
+                        {roleSwapNotice && (
+                          <div role="status" style={{width: '100%', background: 'rgba(167,139,250,0.18)', border: '1px solid rgba(167,139,250,0.5)', borderRadius: '0.75rem', padding: '0.7rem 0.9rem', marginBottom: '0.5rem', color: '#fff', fontSize: '0.9rem', textAlign: 'center'}}>
+                            {roleSwapNotice === 'sender' ? t.telepathy.roleSwappedSender : t.telepathy.roleSwappedReceiver}
                           </div>
                         )}
 
