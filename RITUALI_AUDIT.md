@@ -4,6 +4,10 @@
 **Metodo:** black-box, REST anon key, replica del pattern audit telepatia (#23/#24).
 **Stato:** report-only, nessuna modifica al DB applicata. SQL pronti in fondo.
 
+> **AGGIORNAMENTO 2026-06-03 — TUTTE LE VULN CHIUSE.**
+> - VULN-1/2/3/5 chiuse da **Rituali Step A** (2026-05-04): drop policy aperte + RPC SECURITY DEFINER, scritture dirette anon negate da RLS.
+> - **VULN-4 (impersonazione INSERT) CHIUSA da Rituali Step B** (2026-06-03, SQL `supabase/sql/07_rituali_step_b.sql`): `create_ritual`/`create_ritual_comment` ora validano in modo **condizionale** — se il nickname dichiarato è un account registrato, l'hash deve combaciare (`Auth failed` altrimenti); i guest con nick libero procedono. Firme vecchie senza hash droppate. Test `test-rituali-impersonation.js` 7/7, rituali 18/18, live.
+
 ---
 
 ## TL;DR
