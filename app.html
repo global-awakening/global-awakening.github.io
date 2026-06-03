@@ -3936,7 +3936,7 @@
                             <p className="text-secondary text-xs mb-1">{t.telepathy.partner}</p>
                             <p className="text-white font-bold">{partner?.nickname}</p>
                             <p className="text-secondary text-xs mt-2">{t.telepathy.yourRole}</p>
-                            <p className="text-white font-bold">{role === 'sender' ? t.telepathy.roleSender : t.telepathy.roleReceiver}</p>
+                            <p className="text-white font-bold">{effectiveRole === 'sender' ? t.telepathy.roleSender : t.telepathy.roleReceiver}</p>
                           </div>
                           <div className="bg-glass-dark rounded-xl p-4" style={{display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
                             <div style={{display: 'flex', justifyContent: 'space-between'}}>
@@ -4001,7 +4001,7 @@
                                 </div>
                               )}
 
-                              {role === 'sender' && !waitingForPartner && (
+                              {effectiveRole === 'sender' && !waitingForPartner && (
                                 <div>
                                   <p className="text-white text-center mb-4 font-medium">{t.telepathy.pickSymbol}</p>
                                   <div className="grid grid-cols-3 gap-4 mb-6">
@@ -4015,7 +4015,7 @@
                                 </div>
                               )}
 
-                              {role === 'receiver' && !waitingForPartner && (
+                              {effectiveRole === 'receiver' && !waitingForPartner && (
                                 <div>
                                   {senderHasSent ? (
                                     <p className="text-white text-center mb-4 font-medium">{t.telepathy.symbolSentGuess}</p>
@@ -4037,7 +4037,7 @@
                                 <div className="text-center">
                                   <div style={{fontSize: '4rem'}} className="pulse-glow mb-4">🔮</div>
                                   <p className="text-primary">
-                                    {role === 'sender' ? t.telepathy.senderWaiting : t.telepathy.receiverWaiting}
+                                    {effectiveRole === 'sender' ? t.telepathy.senderWaiting : t.telepathy.receiverWaiting}
                                   </p>
                                 </div>
                               )}
@@ -4054,11 +4054,11 @@
                                 <div className="flex justify-center gap-6 mb-3" style={{marginTop: '0.5rem'}}>
                                   <div className="text-center">
                                     <p className="text-secondary text-sm mb-1">{t.telepathy.sentLabel}</p>
-                                    <span style={{fontSize: '2.5rem'}}>{getCurrentSymbols(currentLevel).find(s => s.id === (role === 'sender' ? selectedSymbol : partnerSymbol))?.icon}</span>
+                                    <span style={{fontSize: '2.5rem'}}>{getCurrentSymbols(currentLevel).find(s => s.id === (effectiveRole === 'sender' ? selectedSymbol : partnerSymbol))?.icon}</span>
                                   </div>
                                   <div className="text-center">
                                     <p className="text-secondary text-sm mb-1">{t.telepathy.guessedLabel}</p>
-                                    <span style={{fontSize: '2.5rem'}}>{getCurrentSymbols(currentLevel).find(s => s.id === (role === 'receiver' ? guessedSymbol : partnerSymbol))?.icon}</span>
+                                    <span style={{fontSize: '2.5rem'}}>{getCurrentSymbols(currentLevel).find(s => s.id === (effectiveRole === 'receiver' ? guessedSymbol : partnerSymbol))?.icon}</span>
                                   </div>
                                 </div>
                                 {isMatch && <p className="text-white">{t.telepathy.resonance}</p>}
