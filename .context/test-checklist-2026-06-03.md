@@ -44,6 +44,14 @@ Servono **2 dispositivi** (o 2 browser diversi / 2 finestre in incognito).
 
 ---
 
+## 6. Installazione app (PWA) 📲 (novità)
+- [ ] In fondo all'app c'è il pulsante **"📲 Installa app"**.
+- [ ] **Android (Chrome)**: premilo → deve partire l'installazione vera. Dopo, l'app appare come **icona a stella** nella home e si apre **a tutto schermo** (senza barra del browser).
+- [ ] **iPhone (Safari)**: premilo → deve comparire un mini-popup con le istruzioni "Condividi ⬆️ → Aggiungi alla schermata Home". Seguile e verifica che l'icona a stella finisca in home.
+- [ ] Apri l'app **dall'icona** (non dal browser): deve sembrare un'app vera.
+- [ ] Prova ad aprirla **senza rete** (modalità aereo): la schermata iniziale deve comparire comunque (i dati ovviamente no, ma non deve dare pagina bianca/errore del browser).
+- [ ] Controlla che l'**icona** (stella dorata su viola) ti piaccia — è facile cambiarla.
+
 ## Come segnalare i problemi
 - In fondo all'app c'è il link **"Segnala un problema"** → apre le GitHub issues.
 - Oppure annotate qui cosa non torna (schermata + cosa stavate facendo) e me lo passate.
