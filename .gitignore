@@ -1,0 +1,10 @@
+# Dipendenze e artefatti locali (non vanno versionati)
+node_modules/
+.gstack/
+serve.log
+
+# Screenshot e script di debug/anteprima (artefatti locali)
+email-preview-*.png
+visual-c3-*.png
+visual-check-c3.js
+screenshot-emails.js
