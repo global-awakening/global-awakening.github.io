@@ -11,6 +11,7 @@
  */
 
 const { chromium } = require('playwright');
+const { purge, loginAsGuest: guestLogin } = require('./test-helpers');
 
 const APP_URL = 'http://localhost:4321/app.html';
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
@@ -25,22 +26,28 @@ function log(user, msg) {
 function pass(msg) { console.log(`  ✅ ${msg}`); }
 function fail(msg) { console.log(`  ❌ ${msg}`); process.exitCode = 1; }
 
+// Nickname FISSI del test. La pulizia pre-run azzera lo stato lasciato da un run
+// precedente interrotto (code in telepathy_queue, inviti pending, sessioni, presence):
+// è la causa più probabile dei "capricci" di questo test. La post-run evita accumulo.
+// Usa la service_role key via test-helpers; senza chiave degrada con un warning.
+const NICK_A = 'TestUserA';
+const NICK_B = 'TestUserB';
+
+async function cleanupTelepathy(label) {
+  const enc = encodeURIComponent;
+  const paths = [];
+  for (const n of [NICK_A, NICK_B]) {
+    paths.push(`online_users?nickname=eq.${enc(n)}`);
+    paths.push(`telepathy_queue?nickname=eq.${enc(n)}`);
+    paths.push(`telepathy_scores?nickname=eq.${enc(n)}`);
+    paths.push(`telepathy_invites?from_name=eq.${enc(n)}`);
+    paths.push(`telepathy_invites?to_name=eq.${enc(n)}`);
+  }
+  await purge(SUPABASE_URL, paths, { label: `telepathy-${label}` });
+}
+
 async function loginAsGuest(page, nickname) {
-  await page.goto(APP_URL);
-  await page.waitForSelector('button:has-text("Ospite"), button:has-text("Guest")', { timeout: TIMEOUT });
-
-  // Clicca tab Ospite (potrebbe già essere attivo)
-  const guestTab = page.locator('button:has-text("Ospite"), button:has-text("Guest")').first();
-  await guestTab.click();
-
-  // Inserisci nickname
-  await page.locator('input[placeholder*="username"], input[placeholder*="Username"]').first().fill(nickname);
-
-  // Entra
-  await page.locator('button:has-text("Entra come Ospite"), button:has-text("Enter as Guest")').click();
-
-  // Aspetta che la schermata di login sparisca
-  await page.waitForSelector('button:has-text("Logout"), button:has-text("Esci")', { timeout: TIMEOUT });
+  await guestLogin(page, nickname, { appUrl: APP_URL, timeout: TIMEOUT });
   log(nickname, `Login come ospite completato`);
 }
 
@@ -102,6 +109,19 @@ async function waitForResult(page, nickname) {
   return matched;
 }
 
+// Attende il completamento dell'auto-avanzamento dopo un risultato (sostituisce le
+// vecchie attese fisse da 8s). Picker e schermata risultato sono mutuamente esclusivi
+// nell'app (render `!showResult` vs `showResult`): il picker ricompare solo a
+// auto-avanzamento avvenuto, quindi è un segnale affidabile. Al 7° round compare invece
+// il banner cambio-livello → si accetta l'uno o l'altro. Promise.any: niente rejection
+// orfane (ignora il ramo che va in timeout finché l'altro si risolve).
+async function waitAutoAdvance(page, timeout = TIMEOUT) {
+  await Promise.any([
+    page.waitForSelector('.symbol-btn', { state: 'visible', timeout }),
+    page.waitForSelector(':text("Vuoi cambiare tipo di telepatia"), :text("Want to change telepathy mode")', { state: 'visible', timeout }),
+  ]);
+}
+
 async function clickTerminaSessione(page, nickname) {
   await page.locator('button:has-text("Termina Sessione"), button:has-text("End Session")').first().click();
   log(nickname, `Cliccato "Termina Sessione"`);
@@ -141,6 +161,10 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
   pageB.on('console', msg => { if (msg.type() === 'warning' || msg.type() === 'error') log('BROWSER-B', `${msg.type()}: ${msg.text()}`); });
 
   try {
+    // ── Pre-run: slate pulito (rimuove stato di run precedenti interrotti) ──
+    console.log('🧹 Pre-run: pulizia stato residuo di TestUserA/TestUserB');
+    await cleanupTelepathy('pre');
+
     // ── Test 1: Login ──────────────────────────────────────────────────────
     console.log('📋 Test 1: Login come ospite');
     await Promise.all([
@@ -159,8 +183,11 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
 
     // ── Test 3: Lista utenti online ────────────────────────────────────────
     console.log('\n📋 Test 3: Lista utenti online');
-    // Aspetta che il polling popoli la lista (10s intervallo)
-    await pageA.waitForTimeout(11000);
+    // Aspetta che il polling popoli la lista (intervallo 10s): attende il bottone "Proponi"
+    // invece di un fisso, così procede appena la lista è pronta (e attende fino a TIMEOUT se lenta).
+    try {
+      await pageA.waitForSelector('button:has-text("Proponi"), button:has-text("Invite")', { timeout: TIMEOUT });
+    } catch { /* se non appare, l'assertion sotto fallisce con messaggio chiaro */ }
     const onlineList = await pageA.locator('button:has-text("Proponi"), button:has-text("Invite")').count();
     if (onlineList > 0) {
       pass(`TestUserA vede ${onlineList} utente/i con bottone "Proponi"`);
@@ -287,8 +314,11 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
     } catch { /* già in lobby */ }
     await waitForLobby(pageA, 'TestUserA');
 
-    // Aspetta che la lista utenti si aggiorni (fino a 12s)
-    await pageA.waitForTimeout(12000);
+    // Aspetta che la lista utenti mostri TestUserB (invece di un fisso da 12s): exact-match
+    // sullo stesso span usato dall'evaluate sotto. Procede appena appare, fino a TIMEOUT se lento.
+    try {
+      await pageA.waitForSelector('span.text-white.text-sm.font-medium:text-is("TestUserB")', { timeout: TIMEOUT });
+    } catch { /* se non appare, l'evaluate restituirà "span not found" → fail con messaggio chiaro */ }
     // Trova e clicca il bottone Proponi per TestUserB
     // Usiamo dispatchEvent con MouseEvent (bubbles:true) per triggerare React event delegation
     const clickResult = await pageA.evaluate((targetNick) => {
@@ -459,9 +489,9 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
         waitForResult(pageB, 'TestUserB'),
       ]);
       log('TestUserA', `Round ${i}/7 completato (ruolo A: ${roleA})`);
-      // Auto-avanzamento: il gioco riparte da solo dopo ~4s (niente click "Ancora").
-      // Al 7° round appare invece il banner cambio livello e l'auto-avanzamento è bloccato (atteso).
-      await pageA.waitForTimeout(8000);
+      // Auto-avanzamento: il gioco riparte da solo (niente click "Ancora"). Al 7° round
+      // appare invece il banner cambio livello: si attende il picker O il banner.
+      await waitAutoAdvance(pageA);
     }
     if (!swapVerified) fail('Atteso swap dei ruoli al round 4, non rilevato');
 
@@ -535,8 +565,8 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
       await sendSymbol(sp, sName);
       await guessSymbol(rp, rName);
       await Promise.all([waitForResult(pageA, 'TestUserA'), waitForResult(pageB, 'TestUserB')]);
-      // Auto-avanzamento dopo ~4s (niente click "Ancora")
-      await pageA.waitForTimeout(8000);
+      // Auto-avanzamento: attende il picker O il banner cambio-livello (no attesa fissa)
+      await waitAutoAdvance(pageA);
     }
 
     await Promise.all([
@@ -626,6 +656,9 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
     fail(`Errore imprevisto: ${err.message}`);
     console.error(err);
   } finally {
+    console.log('\n  (Pulizia stato telepatia di test da Supabase...)');
+    await cleanupTelepathy('post');
+
     console.log('\n═══════════════════════════════════════');
     console.log(process.exitCode === 1 ? '  RISULTATO: ❌ FALLITO' : '  RISULTATO: ✅ PASSATO');
     console.log('═══════════════════════════════════════\n');

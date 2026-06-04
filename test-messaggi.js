@@ -14,6 +14,7 @@
  */
 
 const { chromium } = require('playwright');
+const { purge, loginAsGuest: guestLogin } = require('./test-helpers');
 
 const APP_URL      = 'http://localhost:4321/app.html';
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
@@ -54,16 +55,25 @@ async function sbFetch(path, opts = {}) {
 }
 
 async function cleanup() {
-  await sbFetch(`profiles?email=eq.${encodeURIComponent(EMAIL_A)}`, { method: 'DELETE' });
-  await sbFetch(`profiles?email=eq.${encodeURIComponent(EMAIL_B)}`, { method: 'DELETE' });
-  await sbFetch(`private_messages?sender_name=eq.${encodeURIComponent(NICK_A)}`, { method: 'DELETE' });
-  await sbFetch(`private_messages?sender_name=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
-  await sbFetch(`private_messages?sender_name=eq.${encodeURIComponent(GUEST_A)}`, { method: 'DELETE' });
-  await sbFetch(`private_messages?sender_name=eq.${encodeURIComponent(GUEST_B)}`, { method: 'DELETE' });
-  await sbFetch(`online_users?nickname=eq.${encodeURIComponent(NICK_A)}`, { method: 'DELETE' });
-  await sbFetch(`online_users?nickname=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
-  await sbFetch(`online_users?nickname=eq.${encodeURIComponent(GUEST_A)}`, { method: 'DELETE' });
-  await sbFetch(`online_users?nickname=eq.${encodeURIComponent(GUEST_B)}`, { method: 'DELETE' });
+  // Usa la service_role key (vedi test-helpers.js): con la sola anon key le DELETE
+  // su tabelle RLS rispondono 2xx ma non cancellano nulla. I filtri sono tutti
+  // specifici sui nick/email di questo run (TS) → nessun rischio su dati veri.
+  const enc = encodeURIComponent;
+  await purge(SUPABASE_URL, [
+    `profiles?email=eq.${enc(EMAIL_A)}`,
+    `profiles?email=eq.${enc(EMAIL_B)}`,
+    `private_messages?sender_name=eq.${enc(NICK_A)}`,
+    `private_messages?sender_name=eq.${enc(NICK_B)}`,
+    `private_messages?sender_name=eq.${enc(GUEST_A)}`,
+    `private_messages?sender_name=eq.${enc(GUEST_B)}`,
+    // receiver_name copre i messaggi ricevuti dai guest/registrati di questo run
+    `private_messages?receiver_name=eq.${enc(NICK_A)}`,
+    `private_messages?receiver_name=eq.${enc(NICK_B)}`,
+    `online_users?nickname=eq.${enc(NICK_A)}`,
+    `online_users?nickname=eq.${enc(NICK_B)}`,
+    `online_users?nickname=eq.${enc(GUEST_A)}`,
+    `online_users?nickname=eq.${enc(GUEST_B)}`,
+  ], { label: 'messaggi' });
 }
 
 /** Registra un nuovo utente e aspetta il badge "Registered" */
@@ -311,12 +321,7 @@ async function closeModal(page) {
     const pageGB = await ctxGuestB.newPage();
 
     async function loginGuest(p, nick) {
-      await p.goto(APP_URL);
-      await p.waitForSelector('button:has-text("Ospite"), button:has-text("Guest")', { timeout: TIMEOUT });
-      await p.locator('button:has-text("Ospite"), button:has-text("Guest")').first().click();
-      await p.locator('input[placeholder*="username"], input[placeholder*="Username"]').first().fill(nick);
-      await p.locator('button:has-text("Entra come Ospite"), button:has-text("Enter as Guest")').click();
-      await p.waitForSelector('button:has-text("Logout"), button:has-text("Esci")', { timeout: TIMEOUT });
+      await guestLogin(p, nick, { appUrl: APP_URL, timeout: TIMEOUT });
       log(nick, 'Login guest ok');
     }
 

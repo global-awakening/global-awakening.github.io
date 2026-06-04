@@ -2,6 +2,10 @@
 node_modules/
 .gstack/
 serve.log
+*.run*.log
+
+# Segreti dei test E2E (service_role key) — mai versionare
+.env.test
 
 # Screenshot e script di debug/anteprima (artefatti locali)
 email-preview-*.png

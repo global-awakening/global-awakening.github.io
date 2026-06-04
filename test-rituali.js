@@ -21,6 +21,7 @@
  */
 
 const { chromium } = require('playwright');
+const { purge, loginAsGuest: guestLogin } = require('./test-helpers');
 
 const APP_URL      = 'http://localhost:4321/app.html';
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
@@ -58,12 +59,7 @@ async function sbFetch(path, opts = {}) {
 }
 
 async function loginAsGuest(page, nick) {
-  await page.goto(APP_URL);
-  await page.waitForSelector('button:has-text("Ospite"), button:has-text("Guest")', { timeout: TIMEOUT });
-  await page.locator('button:has-text("Ospite"), button:has-text("Guest")').first().click();
-  await page.locator('input[placeholder*="username"], input[placeholder*="Username"]').first().fill(nick);
-  await page.locator('button:has-text("Entra come Ospite"), button:has-text("Enter as Guest")').click();
-  await page.waitForSelector('button:has-text("Logout"), button:has-text("Esci")', { timeout: TIMEOUT });
+  await guestLogin(page, nick, { appUrl: APP_URL, timeout: TIMEOUT });
   log(nick, 'Login come ospite completato');
 }
 
@@ -74,15 +70,20 @@ async function goToRituals(page, nick) {
 }
 
 async function cleanup() {
-  try {
-    await sbFetch(`rituals?creator=eq.${encodeURIComponent(NICK_A)}`, { method: 'DELETE' });
-    await sbFetch(`rituals?creator=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
-    await sbFetch(`rituals?creator=eq.${encodeURIComponent('NetTestRitCmt_' + TS)}`, { method: 'DELETE' });
-    await sbFetch(`ritual_comments?author_nickname=eq.${encodeURIComponent(NICK_A)}`, { method: 'DELETE' });
-    await sbFetch(`ritual_comments?author_nickname=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
-  } catch (e) {
-    console.warn('  Cleanup parzialmente fallito:', e.message);
-  }
+  // Usa la service_role key (vedi test-helpers.js): con la sola anon key le DELETE
+  // su tabelle RLS rispondono 2xx ma non cancellano nulla. I filtri sono tutti
+  // specifici sui nick/creator di questo run (TS) → nessun rischio su dati veri.
+  const enc = encodeURIComponent;
+  const guests = [NICK_A, NICK_B, `NetTestRit_${TS}`, `NetTestRitCmt_${TS}`];
+  await purge(SUPABASE_URL, [
+    `rituals?creator=eq.${enc(NICK_A)}`,
+    `rituals?creator=eq.${enc(NICK_B)}`,
+    `rituals?creator=eq.${enc('NetTestRitCmt_' + TS)}`,
+    `ritual_comments?author_nickname=eq.${enc(NICK_A)}`,
+    `ritual_comments?author_nickname=eq.${enc(NICK_B)}`,
+    // online_users dei guest di questo run (incluse le pagine dei sotto-test "guasto rete")
+    ...guests.map((g) => `online_users?nickname=eq.${enc(g)}`),
+  ], { label: 'rituali' });
 }
 
 // ── Test guasto rete su crea-rituale → toast, modale aperto, nessun fantasma ──
