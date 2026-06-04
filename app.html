@@ -891,6 +891,9 @@
               youChose: "You chose",
               waitingDots: "Waiting...",
               continueLevel: "Continue",
+              levelChooseTitle: "Choose the new mode",
+              levelKeep: "Keep current",
+              levelWaiting: "is choosing the new game mode…",
               pickSymbol: "Pick the symbol to send:",
               sendTelepathically: "Send Telepathically",
               symbolSentGuess: "✨ Symbol sent! Which one do you receive?",
@@ -1169,6 +1172,9 @@
               youChose: "Hai scelto",
               waitingDots: "Aspettando...",
               continueLevel: "Continua",
+              levelChooseTitle: "Scegli la nuova modalità",
+              levelKeep: "Resta così",
+              levelWaiting: "sta scegliendo la nuova modalità di gioco…",
               pickSymbol: "Scegli il simbolo da inviare:",
               sendTelepathically: "Invia Telepaticamente",
               symbolSentGuess: "✨ Simbolo inviato! Quale ricevi?",
@@ -1236,10 +1242,9 @@
           const [resultCountdown, setResultCountdown] = useState(null);
           // Tiene traccia dell'ultimo round_count processato per evitare doppio processing
           const lastProcessedRoundRef = React.useRef(-1);
-          // Tiene traccia della scelta livello fatta (senza stale-closure nei poll)
-          const myLevelChoiceRef = React.useRef(null);
           const [isMatch, setIsMatch] = useState(false);
           const [matchId, setMatchId] = useState(null);
+          const [matchUser1Id, setMatchUser1Id] = useState(null); // user1 del match = primo chooser (cambio-modalità a turni)
           const [partnerSymbol, setPartnerSymbol] = useState(null);
 
           // Telepatia v2 — nuovi state
@@ -1247,7 +1252,6 @@
           const [directInviteTarget, setDirectInviteTarget] = useState(null); // utente a cui abbiamo inviato invito
           const [currentLevel, setCurrentLevel] = useState('shapes'); // 'shapes' | 'numbers' | 'words'
           const [roundCount, setRoundCount] = useState(0);
-          const [roleSwapNotice, setRoleSwapNotice] = useState(null);
           const swapRole = (r) => r === 'sender' ? 'receiver' : 'sender';
           // round 0-based: 0,1,2 -> base; 3,4,5 -> swap; ... (alternanza ogni 3 round)
           const roleForRound = (baseRole, round) =>
@@ -1281,14 +1285,6 @@
           const sessionMatchesRef = React.useRef(0);
           React.useEffect(() => { sessionMatchesRef.current = sessionMatches; }, [sessionMatches]);
           const [showLevelBanner, setShowLevelBanner] = useState(false);
-          const [levelDisagreement, setLevelDisagreement] = useState(null); // { myChoice, theirChoice }
-          // Auto-dismiss del banner "scelte diverse" dopo 6s per non restare sopra i round successivi
-          React.useEffect(() => {
-            if (!levelDisagreement) return;
-            const timer = setTimeout(() => setLevelDisagreement(null), 6000);
-            return () => clearTimeout(timer);
-          }, [levelDisagreement]);
-          const [myLevelChoice, setMyLevelChoice] = useState(null); // scelta fatta dall'utente locale
           const [sessionEnded, setSessionEnded] = useState(false); // mostra schermata fine sessione
           const [partnerDisconnected, setPartnerDisconnected] = useState(false); // partner ha chiuso il tab
           const [onlineUsersForTelepathy, setOnlineUsersForTelepathy] = useState([]); // utenti con status
@@ -1342,6 +1338,10 @@
           React.useEffect(() => { expandedRitualIdRef.current = expandedRitualId; }, [expandedRitualId]);
 
           const [sessionId, setSessionId] = useState(() => localStorage.getItem('ga_session_id') || (Date.now() + '-' + Math.random()));
+          // Cambio-modalità a turni: "primo chooser" = user1 del match; poi alterna a ogni cambio (round 7,14,...).
+          const mySlot = (matchUser1Id != null) ? (sessionId === matchUser1Id ? 'user1' : 'user2') : null;
+          const levelChangeIndex = Math.floor(roundCount / 7); // k: 1 al round 7, 2 al 14, ...
+          const amIChooser = (mySlot !== null) && (mySlot === ((levelChangeIndex % 2 === 1) ? 'user1' : 'user2'));
           const [tempPassword, setTempPassword] = useState('');
           const [tempEmail, setTempEmail] = useState('');
           const [passwordHash, setPasswordHash] = useState(() => localStorage.getItem('ga_pwhash') || null);
@@ -2228,34 +2228,17 @@
           };
 
           const proposeLevelChange = async (choice) => {
-            setMyLevelChoice(choice);
-            myLevelChoiceRef.current = choice;
-            const { data, error } = await supabase.rpc('apply_level_change_if_both_agree', {
-              p_match_id: matchId,
-              p_choice: choice,
-              p_role: effectiveRole
-            });
-            if (error) {
-              console.warn('apply_level_change_if_both_agree failed', error);
-              return;
-            }
-            const result = Array.isArray(data) ? data[0] : data;
-            if (!result) return;
-            if (result.out_status === 'agreed') {
-              setCurrentLevel(result.out_new_level);
-              setShowLevelBanner(false);
-              setMyLevelChoice(null);
-              myLevelChoiceRef.current = null;
-              lastProcessedRoundRef.current = -1;
-            } else if (result.out_status === 'disagreement') {
-              const myChoice = effectiveRole === 'sender' ? result.out_sender_choice : result.out_receiver_choice;
-              const theirChoice = effectiveRole === 'sender' ? result.out_receiver_choice : result.out_sender_choice;
-              setLevelDisagreement({ myChoice, theirChoice });
-              setShowLevelBanner(false);
-              setMyLevelChoice(null);
-              myLevelChoiceRef.current = null;
-            }
-            // 'pending' → l'altro non ha ancora scelto, banner resta per chi ha già scelto.
+            // Cambio-modalità a turni: solo il chooser scrive; la scelta si applica subito.
+            // choice ∈ 'shapes'|'numbers'|'words'|'keep'. 'keep' = resta sulla modalità attuale.
+            const bannerRound = Math.floor(roundCount / 7) * 7; // 7,14,...
+            const newLevel = (choice === 'keep') ? currentLevel : choice;
+            setCurrentLevel(newLevel);
+            setShowLevelBanner(false);
+            lastProcessedRoundRef.current = -1;
+            await supabase.from('telepathy_matches').update({
+              level: newLevel,
+              level_change_choice_sender: 'r' + bannerRound, // marcatore "scelta fatta" (vale anche per 'keep')
+            }).eq('id', matchId);
           };
 
           // Poll for telepathy result when waiting
@@ -2274,23 +2257,8 @@
               }
               const match = data[0];
 
-              // Sincronizza livello dal match (la RPC dell'altro client può aver cambiato level)
-              if (match.level && match.level !== currentLevel) {
-                setCurrentLevel(match.level);
-                lastProcessedRoundRef.current = -1;
-                setShowLevelBanner(false);
-                setMyLevelChoice(null);
-                myLevelChoiceRef.current = null;
-              }
-
-              // Se le choices sono state azzerate dalla RPC (consenso/disaccordo già processato)
-              // e avevo un banner aperto, dismiss
-              if (!match.level_change_choice_sender && !match.level_change_choice_receiver
-                  && myLevelChoiceRef.current !== null) {
-                setShowLevelBanner(false);
-                setMyLevelChoice(null);
-                myLevelChoiceRef.current = null;
-              }
+              // Cattura user1_id (= primo chooser del cambio-modalità a turni) appena disponibile.
+              if (match.user1_id) setMatchUser1Id(match.user1_id);
 
               // Risultato round — processa solo se è un round nuovo (round_count avanzato)
               const dbRound = match.round_count || 0;
@@ -2307,12 +2275,9 @@
                 setRoundCount(newRound);
                 setSessionMatches(newSessionMatches);
 
-                // Alternanza ruoli ogni 3 round (Batch C #5): al cambio blocco avvisa.
-                if (newRound % 3 === 0) {
-                  const nextRole = roleForRound(role, newRound);
-                  setRoleSwapNotice(nextRole);
-                  setTimeout(() => setRoleSwapNotice(null), 6000);
-                }
+                // Avviso cambio-ruolo: ora DERIVATO nel render in base a roundCount (mostrato
+                // all'inizio del nuovo blocco, durante il picker), così è ben visibile e non
+                // lampeggia durante la schermata del risultato.
 
                 // Solo il sender esegue la write al DB per evitare doppia scrittura.
                 // Aspetta 4s prima di cancellare i simboli, cosi' il receiver ha tempo
@@ -2374,36 +2339,26 @@
             if (!matchId || !showLevelBanner) return;
 
             const pollLevelChange = async () => {
-              // Read-only: tutta la scrittura del consenso passa dalla RPC apply_level_change_if_both_agree.
-              // Qui sincronizziamo solo lo stato UI dell'altro client.
+              // Read-only lato passivo: solo il chooser scrive (proposeLevelChange).
               const { data } = await supabase.from('telepathy_matches').select('*').eq('id', matchId);
               if (!data || data.length === 0) return;
               const match = data[0];
+              if (match.user1_id) setMatchUser1Id(match.user1_id);
 
-              // Caso 1: livello cambiato → la RPC dell'altro è andata a buon fine, sync e dismiss
-              if (match.level && match.level !== currentLevel) {
-                setCurrentLevel(match.level);
+              // Il chooser ha scritto level + marcatore 'r'+bannerRound → applica e dismetti
+              // (vale anche per "Resta così", dove level non cambia ma il marcatore sì).
+              const bannerRound = Math.floor(roundCount / 7) * 7;
+              if (match.level_change_choice_sender === 'r' + bannerRound) {
+                if (match.level && match.level !== currentLevel) setCurrentLevel(match.level);
+                setShowLevelBanner(false);
                 lastProcessedRoundRef.current = -1;
-                setShowLevelBanner(false);
-                setMyLevelChoice(null);
-                myLevelChoiceRef.current = null;
-                return;
-              }
-
-              // Caso 2: choices azzerate (RPC ha processato disagreement o 'continue') → dismiss banner
-              if (!match.level_change_choice_sender
-                  && !match.level_change_choice_receiver
-                  && myLevelChoiceRef.current !== null) {
-                setShowLevelBanner(false);
-                setMyLevelChoice(null);
-                myLevelChoiceRef.current = null;
               }
             };
 
             pollLevelChange();
             const interval = setInterval(pollLevelChange, 2000);
             return () => clearInterval(interval);
-          }, [matchId, showLevelBanner, currentLevel]);
+          }, [matchId, showLevelBanner, currentLevel, roundCount]);
 
           // Poll per match da invito diretto (l'invitante aspetta che l'altro accetti)
           useEffect(() => {
@@ -2492,7 +2447,7 @@
               supabase.from('telepathy_invites').delete().eq('from_id', sessionId);
             }
             lastProcessedRoundRef.current = -1;
-            myLevelChoiceRef.current = null;
+            setMatchUser1Id(null);
             setPartner(null);
             setRole(null);
             setSelectedSymbol(null);
@@ -2506,10 +2461,8 @@
             setRoundCount(0);
             setSessionMatches(0);
             setShowLevelBanner(false);
-            setMyLevelChoice(null);
             setSessionEnded(false);
             setPartnerDisconnected(false);
-            setLevelDisagreement(null);
             setDirectInviteTarget(null);
             setSenderHasSent(false);
             setTelepathyChatMessages([]);
@@ -4011,19 +3964,9 @@
                           </div>
                         )}
 
-                        {roleSwapNotice && (
-                          <div role="status" style={{width: '100%', background: 'rgba(167,139,250,0.18)', border: '1px solid rgba(167,139,250,0.5)', borderRadius: '0.75rem', padding: '0.7rem 0.9rem', marginBottom: '0.5rem', color: '#fff', fontSize: '0.9rem', textAlign: 'center'}}>
-                            {roleSwapNotice === 'sender' ? t.telepathy.roleSwappedSender : t.telepathy.roleSwappedReceiver}
-                          </div>
-                        )}
-
-                        {levelDisagreement && (
-                          <div style={{width: '100%', background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.35)', borderRadius: '0.75rem', padding: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '0.5rem'}}>
-                            <div>
-                              <p className="text-white font-bold text-sm">{t.telepathy.differentChoices} {currentLevel === 'shapes' ? '🔷 ' + t.telepathy.levelShapes : currentLevel === 'numbers' ? '🔢 ' + t.telepathy.levelNumbers : '💬 ' + t.telepathy.levelWords}</p>
-                              <p className="text-secondary text-xs mt-1">{t.telepathy.you}: <strong>{levelDisagreement.myChoice}</strong> · {t.telepathy.partner}: <strong>{levelDisagreement.theirChoice}</strong></p>
-                            </div>
-                            <button onClick={() => setLevelDisagreement(null)} className="btn-secondary" style={{fontSize: '0.75rem', padding: '0.25rem 0.6rem', whiteSpace: 'nowrap'}}>{t.telepathy.ok}</button>
+                        {partner && !sessionEnded && !showResult && roundCount > 0 && roundCount % 3 === 0 && (
+                          <div role="status" className="pulse-glow" style={{width: '100%', background: 'rgba(167,139,250,0.32)', border: '2px solid rgba(167,139,250,0.85)', borderRadius: '0.85rem', padding: '1rem 1.1rem', marginBottom: '0.6rem', color: '#fff', fontSize: '1.1rem', fontWeight: 700, textAlign: 'center', boxShadow: '0 0 18px rgba(167,139,250,0.45)'}}>
+                            {effectiveRole === 'sender' ? t.telepathy.roleSwappedSender : t.telepathy.roleSwappedReceiver}
                           </div>
                         )}
 
@@ -4084,18 +4027,21 @@
                             <div style={{display: 'flex', flexDirection: 'column', gap: '1.5rem'}}>
                               {/* Banner proposta cambio livello */}
                               {showLevelBanner && (
-                                <div className="bg-glass-dark rounded-xl p-4" style={{border: '1px solid rgba(167,139,250,0.5)'}}>
-                                  <p className="text-white font-bold text-center mb-3">{t.telepathy.changeLevelPrompt}</p>
-                                  {myLevelChoice ? (
-                                    <p className="text-secondary text-sm text-center">{t.telepathy.youChose}: <span className="text-white">{myLevelChoice === 'continue' ? t.telepathy.continueLevel : myLevelChoice === 'numbers' ? t.telepathy.levelNumbers : t.telepathy.levelWords}</span>. {t.telepathy.waitingDots}</p>
-                                  ) : (
-                                    <div style={{display: 'flex', gap: '0.5rem'}}>
-                                      <button onClick={() => proposeLevelChange('numbers')} className="btn-secondary" style={{flex: 1, fontSize: '0.85rem'}}>🔢 {t.telepathy.levelNumbers}</button>
-                                      <button onClick={() => proposeLevelChange('words')} className="btn-secondary" style={{flex: 1, fontSize: '0.85rem'}}>💬 {t.telepathy.levelWords}</button>
-                                      <button onClick={() => proposeLevelChange('continue')} className="btn-secondary" style={{flex: 1, fontSize: '0.85rem'}}>{t.telepathy.continueLevel}</button>
+                                amIChooser ? (
+                                  <div className="bg-glass-dark rounded-xl p-4" style={{border: '1px solid rgba(167,139,250,0.5)'}}>
+                                    <p className="text-white font-bold text-center mb-3">{t.telepathy.levelChooseTitle}</p>
+                                    <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap'}}>
+                                      <button onClick={() => proposeLevelChange('shapes')} className="btn-secondary" style={{flex: '1 1 45%', fontSize: '0.85rem'}}>🔷 {t.telepathy.levelShapes}</button>
+                                      <button onClick={() => proposeLevelChange('numbers')} className="btn-secondary" style={{flex: '1 1 45%', fontSize: '0.85rem'}}>🔢 {t.telepathy.levelNumbers}</button>
+                                      <button onClick={() => proposeLevelChange('words')} className="btn-secondary" style={{flex: '1 1 45%', fontSize: '0.85rem'}}>💬 {t.telepathy.levelWords}</button>
+                                      <button onClick={() => proposeLevelChange('keep')} className="btn-secondary" style={{flex: '1 1 45%', fontSize: '0.85rem'}}>{t.telepathy.levelKeep}</button>
                                     </div>
-                                  )}
-                                </div>
+                                  </div>
+                                ) : (
+                                  <div role="status" className="bg-glass-dark rounded-xl p-4" style={{border: '1px solid rgba(167,139,250,0.5)', textAlign: 'center'}}>
+                                    <p className="text-white" style={{margin: 0}}>🔮 {partner?.nickname} {t.telepathy.levelWaiting}</p>
+                                  </div>
+                                )
                               )}
 
                               {effectiveRole === 'sender' && !waitingForPartner && (
@@ -4160,12 +4106,13 @@
                                 </div>
                                 {isMatch && <p className="text-white">{t.telepathy.resonance}</p>}
                               </div>
-                              <div className="grid grid-cols-2 gap-4">
-                                <div className="py-3 font-bold" style={{display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa', textAlign: 'center'}}>
-                                  {!showLevelBanner && `${t.telepathy.nextMatchIn} ${resultCountdown ?? 4}`}
+                              {!showLevelBanner && (
+                                <div style={{textAlign: 'center', color: '#a78bfa', fontWeight: 700}}>
+                                  <div style={{fontSize: '0.95rem', opacity: 0.85}}>{t.telepathy.nextMatchIn}</div>
+                                  <div className="pulse-glow" style={{fontSize: '3rem', lineHeight: 1.1}}>{resultCountdown ?? 4}</div>
                                 </div>
-                                <button onClick={endSession} className="btn-secondary py-3 font-bold">{t.telepathy.endSessionBtn}</button>
-                              </div>
+                              )}
+                              <button onClick={endSession} className="btn-secondary py-3 font-bold w-full">{t.telepathy.endSessionBtn}</button>
                             </div>
                           )}
 
