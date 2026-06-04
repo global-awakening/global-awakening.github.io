@@ -634,17 +634,14 @@
           { id: 'n9', icon: '9', name: '9' },
         ];
 
+        // Livello "Lettere": mostra lettere (non più emoji). icon = la lettera (render testuale, come i numeri).
         const telepathyWords = [
-          { id: 'fuoco', icon: '🔥', name: 'Fuoco' },
-          { id: 'acqua', icon: '💧', name: 'Acqua' },
-          { id: 'terra', icon: '🌍', name: 'Terra' },
-          { id: 'cielo', icon: '☁️', name: 'Cielo' },
-          { id: 'luce', icon: '✨', name: 'Luce' },
-          { id: 'ombra', icon: '🌫️', name: 'Ombra' },
-          { id: 'luna', icon: '🌛', name: 'Luna' },
-          { id: 'sole', icon: '🌞', name: 'Sole' },
-          { id: 'stelle', icon: '💫', name: 'Stelle' },
-          { id: 'vento', icon: '🌬️', name: 'Vento' },
+          { id: 'A', icon: 'A', name: 'A' },
+          { id: 'B', icon: 'B', name: 'B' },
+          { id: 'C', icon: 'C', name: 'C' },
+          { id: 'D', icon: 'D', name: 'D' },
+          { id: 'E', icon: 'E', name: 'E' },
+          { id: 'F', icon: 'F', name: 'F' },
         ];
 
         const ritualTypes = [
@@ -871,9 +868,9 @@
               yourPartnerFallback: "Your partner",
               backToLobby: "Back to lobby",
               differentChoices: "Different choices — continuing with",
-              levelShapes: "Shapes",
+              levelShapes: "Symbols",
               levelNumbers: "Numbers",
-              levelWords: "Words",
+              levelWords: "Letters",
               you: "You",
               partner: "Partner",
               ok: "OK",
@@ -1152,9 +1149,9 @@
               yourPartnerFallback: "Il tuo partner",
               backToLobby: "Torna alla lobby",
               differentChoices: "Scelte diverse — si continua con",
-              levelShapes: "Figure",
+              levelShapes: "Simboli",
               levelNumbers: "Numeri",
-              levelWords: "Parole",
+              levelWords: "Lettere",
               you: "Tu",
               partner: "Partner",
               ok: "Ok",
@@ -4031,7 +4028,7 @@
                                   <div className="bg-glass-dark rounded-xl p-4" style={{border: '1px solid rgba(167,139,250,0.5)'}}>
                                     <p className="text-white font-bold text-center mb-3">{t.telepathy.levelChooseTitle}</p>
                                     <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap'}}>
-                                      {[{m: 'shapes', ic: '🔷', lb: t.telepathy.levelShapes}, {m: 'numbers', ic: '🔢', lb: t.telepathy.levelNumbers}, {m: 'words', ic: '💬', lb: t.telepathy.levelWords}].filter(o => o.m !== currentLevel).map(o => (
+                                      {[{m: 'shapes', ic: '🔣', lb: t.telepathy.levelShapes}, {m: 'numbers', ic: '🔢', lb: t.telepathy.levelNumbers}, {m: 'words', ic: '🔤', lb: t.telepathy.levelWords}].filter(o => o.m !== currentLevel).map(o => (
                                         <button key={o.m} onClick={() => proposeLevelChange(o.m)} className="btn-secondary" style={{flex: '1 1 45%', fontSize: '0.85rem'}}>{o.ic} {o.lb}</button>
                                       ))}
                                       <button onClick={() => proposeLevelChange('keep')} className="btn-secondary" style={{flex: '1 1 45%', fontSize: '0.85rem'}}>{t.telepathy.levelKeep}</button>
