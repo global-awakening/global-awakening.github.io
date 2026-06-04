@@ -891,6 +891,14 @@
               levelChooseTitle: "Choose the new mode",
               levelKeep: "Keep current",
               levelWaiting: "is choosing the new game mode…",
+              tabPlay: "Play",
+              tabLeaderboard: "Leaderboard",
+              leaderboardTitle: "Top telepaths",
+              leaderboardEmpty: "Not enough data yet — play to appear here.",
+              leaderboardPlayer: "Player",
+              leaderboardMatches: "Matches",
+              leaderboardAccuracy: "Accuracy",
+              leaderboardRefresh: "Refresh",
               pickSymbol: "Pick the symbol to send:",
               sendTelepathically: "Send Telepathically",
               symbolSentGuess: "✨ Symbol sent! Which one do you receive?",
@@ -1172,6 +1180,14 @@
               levelChooseTitle: "Scegli la nuova modalità",
               levelKeep: "Resta così",
               levelWaiting: "sta scegliendo la nuova modalità di gioco…",
+              tabPlay: "Gioca",
+              tabLeaderboard: "Classifica",
+              leaderboardTitle: "Migliori telepati",
+              leaderboardEmpty: "Ancora pochi dati — gioca per comparire qui.",
+              leaderboardPlayer: "Giocatore",
+              leaderboardMatches: "Match",
+              leaderboardAccuracy: "Precisione",
+              leaderboardRefresh: "Aggiorna",
               pickSymbol: "Scegli il simbolo da inviare:",
               sendTelepathically: "Invia Telepaticamente",
               symbolSentGuess: "✨ Simbolo inviato! Quale ricevi?",
@@ -1242,6 +1258,8 @@
           const [isMatch, setIsMatch] = useState(false);
           const [matchId, setMatchId] = useState(null);
           const [matchUser1Id, setMatchUser1Id] = useState(null); // user1 del match = primo chooser (cambio-modalità a turni)
+          const [telepathyView, setTelepathyView] = useState('play'); // 'play' | 'leaderboard'
+          const [leaderboard, setLeaderboard] = useState([]); // top 10 per match telepatici
           const [partnerSymbol, setPartnerSymbol] = useState(null);
 
           // Telepatia v2 — nuovi state
@@ -1301,6 +1319,12 @@
             if (level === 'numbers') return telepathyNumbers;
             if (level === 'words') return telepathyWords;
             return telepathySymbols;
+          };
+
+          // Classifica telepatia: top 10 per match telepatici totali (lettura sola da telepathy_scores).
+          const loadLeaderboard = async () => {
+            const { data } = await supabase.from('telepathy_scores').select('*').order('matches_count', { ascending: false }).limit(10);
+            setLeaderboard(Array.isArray(data) ? data : []);
           };
 
           const [privateMessages, setPrivateMessages] = useState([]);
@@ -3869,6 +3893,14 @@
 
                     {!partner && !searchingPartner && !sessionEnded && (
                       <div style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
+                        {/* Selettore Gioca | Classifica */}
+                        <div style={{display: 'flex', gap: '0.5rem'}}>
+                          <button onClick={() => setTelepathyView('play')} className={telepathyView === 'play' ? 'btn-primary' : 'btn-secondary'} style={{flex: 1}}>{t.telepathy.tabPlay}</button>
+                          <button onClick={() => { setTelepathyView('leaderboard'); loadLeaderboard(); }} className={telepathyView === 'leaderboard' ? 'btn-primary' : 'btn-secondary'} style={{flex: 1}}>🏆 {t.telepathy.tabLeaderboard}</button>
+                        </div>
+
+                        {telepathyView === 'play' && (
+                        <div style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
                         {/* Come funziona */}
                         <div className="bg-glass-dark rounded-xl p-4">
                           <h3 className="text-white font-bold mb-2">{t.telepathy.howItWorks}</h3>
@@ -3911,6 +3943,35 @@
                         <button onClick={startSearching} className="btn-primary w-full" style={{fontSize: '1.125rem'}}>
                           {t.telepathy.randomMatch}
                         </button>
+                        </div>
+                        )}
+
+                        {telepathyView === 'leaderboard' && (
+                          <div className="bg-glass-dark rounded-xl p-4">
+                            <h3 className="text-white font-bold mb-3">🏆 {t.telepathy.leaderboardTitle}</h3>
+                            {leaderboard.length === 0 ? (
+                              <p className="text-secondary text-sm text-center" style={{padding: '1rem'}}>{t.telepathy.leaderboardEmpty}</p>
+                            ) : (
+                              <div style={{display: 'flex', flexDirection: 'column', gap: '0.4rem'}}>
+                                <div style={{display: 'flex', fontSize: '0.7rem', color: '#9ca3af', padding: '0 0.5rem'}}>
+                                  <span style={{width: '2rem'}}>#</span>
+                                  <span style={{flex: 1}}>{t.telepathy.leaderboardPlayer}</span>
+                                  <span style={{width: '3.5rem', textAlign: 'right'}}>{t.telepathy.leaderboardMatches}</span>
+                                  <span style={{width: '4.5rem', textAlign: 'right'}}>{t.telepathy.leaderboardAccuracy}</span>
+                                </div>
+                                {leaderboard.map((row, i) => (
+                                  <div key={row.user_id || i} style={{display: 'flex', alignItems: 'center', padding: '0.5rem', borderRadius: '0.6rem', background: i < 3 ? 'rgba(167,139,250,0.15)' : 'rgba(255,255,255,0.04)'}}>
+                                    <span style={{width: '2rem', fontWeight: 700, color: i === 0 ? '#fbbf24' : i === 1 ? '#d1d5db' : i === 2 ? '#d97706' : '#9ca3af'}}>{i + 1}</span>
+                                    <span className="text-white" style={{flex: 1, fontWeight: 600}}>{row.nickname}</span>
+                                    <span className="text-white" style={{width: '3.5rem', textAlign: 'right'}}>{row.matches_count}</span>
+                                    <span style={{width: '4.5rem', textAlign: 'right', color: '#4ade80'}}>{row.rounds_count > 0 ? Math.round((row.matches_count / row.rounds_count) * 100) + '%' : '—'}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <button onClick={loadLeaderboard} className="btn-secondary w-full" style={{marginTop: '0.75rem', fontSize: '0.8rem'}}>{t.telepathy.leaderboardRefresh}</button>
+                          </div>
+                        )}
                       </div>
                     )}
 
