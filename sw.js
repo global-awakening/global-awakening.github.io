@@ -1,7 +1,7 @@
 // Service worker PWA Global Awakening.
-// Strategia: network-first per la navigazione/app.html (deploy sempre freschi),
-// cache-first per i CDN immutabili e le icone, no-cache per Supabase/EmailJS.
-const CACHE = 'ga-pwa-v2';
+// Strategia: network-first per navigazione/app.html/app.js (aggiornamenti sempre freschi,
+// cache solo come fallback offline), cache-first per CDN immutabili e icone, no-cache per Supabase/EmailJS.
+const CACHE = 'ga-pwa-v3';
 const PRECACHE = [
   'app.html', 'app.js', 'index.html', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
@@ -35,9 +35,10 @@ self.addEventListener('fetch', (e) => {
   // Supabase / EmailJS: sempre rete, mai cache (dati freschi; offline -> errore gestito dall'app)
   if (/supabase\.co$/.test(url.hostname) || /emailjs\.com$/.test(url.hostname)) return;
 
-  // Navigazione o app.html: network-first, fallback cache
-  const isNav = req.mode === 'navigate' || url.pathname.endsWith('/app.html') || url.pathname.endsWith('/');
-  if (isNav) {
+  // Navigazione, app.html e app.js (codice dell'app): network-first, fallback cache.
+  // app.js DEVE essere preso fresco, altrimenti le PWA installate restano sulla versione vecchia.
+  const isFresh = req.mode === 'navigate' || url.pathname.endsWith('/app.html') || url.pathname.endsWith('/app.js') || url.pathname.endsWith('/');
+  if (isFresh) {
     e.respondWith((async () => {
       try {
         const fresh = await fetch(req);
