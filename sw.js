@@ -1,13 +1,12 @@
 // Service worker PWA Global Awakening.
 // Strategia: network-first per la navigazione/app.html (deploy sempre freschi),
 // cache-first per i CDN immutabili e le icone, no-cache per Supabase/EmailJS.
-const CACHE = 'ga-pwa-v1';
+const CACHE = 'ga-pwa-v2';
 const PRECACHE = [
-  'app.html', 'index.html', 'manifest.webmanifest',
+  'app.html', 'app.js', 'index.html', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
   'https://unpkg.com/react@18.3.1/umd/react.production.min.js',
   'https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js',
-  'https://unpkg.com/@babel/standalone@7.29.2/babel.min.js',
   'https://cdn.jsdelivr.net/npm/@emailjs/browser@4.4.1/dist/email.min.js'
 ];
 
