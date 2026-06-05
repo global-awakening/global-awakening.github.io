@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://unpkg.com https://cdn.jsdelivr.net 'sha256-NwHmHfqxALuQcS60/W6pn3jpYZiaiG22vhXvRbXNTBY=' 'sha256-oQJsl5MD2Xv3eiKO/zyYqIDcY8DSAVh/ntmjmESjD08=' 'sha256-YvDVK8975O3rgdbaaDXOJNFq1lKf6tn2kN0TxW0gRTg=' 'sha256-1XXUF9ui+l1RvYNEoHwTiETxytwNNhFEvwMReMFEjwk='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://vxzxdkcluyrcftsnxxza.supabase.co https://api.emailjs.com; manifest-src 'self'; worker-src 'self'; base-uri 'self'; object-src 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://unpkg.com https://cdn.jsdelivr.net 'sha256-NwHmHfqxALuQcS60/W6pn3jpYZiaiG22vhXvRbXNTBY=' 'sha256-oQJsl5MD2Xv3eiKO/zyYqIDcY8DSAVh/ntmjmESjD08=' 'sha256-YvDVK8975O3rgdbaaDXOJNFq1lKf6tn2kN0TxW0gRTg=' 'sha256-Z5sI4nxPa6QxTMzXDYX7DOwyhEokzraD4EJYdwAsg9w='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://vxzxdkcluyrcftsnxxza.supabase.co https://api.emailjs.com; manifest-src 'self'; worker-src 'self'; base-uri 'self'; object-src 'none'">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Global Awakening Platform</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⭐</text></svg>">
@@ -566,35 +566,34 @@
 <canvas id="starfield" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;pointer-events:none;"></canvas>
 <script>
 (function() {
-  // Starfield "warp": stelle in prospettiva 3D che sfrecciano dal centro verso i bordi,
-  // come viaggiando nello spazio. Leggero (~180 stelle, requestAnimationFrame), in pausa
-  // quando l'app è in background, e quasi statico se l'utente preferisce ridurre le animazioni.
+  // Starfield "warp": le stelle sfrecciano dal centro verso i bordi, come volando in avanti
+  // nello spazio. Leggero (requestAnimationFrame), in pausa quando l'app è in background,
+  // e quasi statico se l'utente preferisce ridurre le animazioni.
   const canvas = document.getElementById('starfield');
   const ctx = canvas.getContext('2d');
   const BG = '#0c0f14';
-  const STAR_COUNT = 340;
+  const STAR_COUNT = 420;
   const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const DRIFT = reduce ? 0.04 : 0.32; // deriva base (px/frame) → senso di viaggio nello spazio
+  const SPEED = reduce ? 0.004 : 0.019; // frazione di espansione radiale per frame (verso i bordi)
 
-  let W, H, stars = [], running = false, rafId = null;
+  let W, H, cx, cy, stars = [], running = false, rafId = null;
 
   function resize() {
     W = canvas.width = window.innerWidth;
     H = canvas.height = window.innerHeight;
+    cx = W / 2; cy = H / 2;
   }
 
-  // Campo uniforme su TUTTO lo schermo → stelle sempre visibili ovunque (anche ai bordi).
-  function place(s) {
-    s.x = Math.random() * W;
-    s.y = Math.random() * H;
-    const r = Math.random();
-    s.size = r < 0.70 ? 1.0 + Math.random() * 0.9
-           : r < 0.93 ? 2.0 + Math.random() * 1.2
-           :            3.5 + Math.random() * 1.8;
-    s.depth = 0.35 + s.size / 4;        // più grande = più "vicina" = deriva più veloce (parallasse)
-    s.bright = 0.6 + Math.random() * 0.4;
-    s.tw = 0.001 + Math.random() * 0.004;
-    s.to = Math.random() * Math.PI * 2;
+  // atCenter=true → rinasce vicino al centro (punto di fuga del viaggio); altrimenti
+  // distribuita su tutto lo schermo (riempimento iniziale → stelle subito ovunque).
+  function place(s, atCenter) {
+    if (atCenter) {
+      const a = Math.random() * Math.PI * 2, d = 1 + Math.random() * 30;
+      s.x = cx + Math.cos(a) * d; s.y = cy + Math.sin(a) * d;
+    } else {
+      s.x = Math.random() * W; s.y = Math.random() * H;
+    }
+    s.b = 0.6 + Math.random() * 0.4;
     s.col = Math.random() < 0.12 ? '180, 220, 240' : '255, 255, 255';
   }
 
@@ -603,20 +602,32 @@
     for (let i = 0; i < STAR_COUNT; i++) { const s = {}; place(s, false); stars.push(s); }
   }
 
-  function draw(t) {
+  function draw() {
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, W, H);
+    ctx.lineCap = 'round';
+    const maxR = Math.hypot(cx, cy);
     for (const s of stars) {
-      // deriva (viaggio): verso il basso + lieve diagonale, più veloce per le stelle "vicine"
-      s.y += DRIFT * s.depth;
-      s.x += DRIFT * s.depth * 0.35;
-      if (s.y > H + 2) { s.y = -2; s.x = Math.random() * W; }
-      if (s.x > W + 2) { s.x = -2; }
-      const flick = 0.8 + 0.2 * Math.sin(t * s.tw + s.to);
-      const alpha = Math.min(1, s.bright * flick);
+      const dx = s.x - cx, dy = s.y - cy;
+      const px = s.x, py = s.y;
+      // espansione radiale dal centro → senso di viaggio in avanti nello spazio
+      s.x += dx * SPEED;
+      s.y += dy * SPEED;
+      if (s.x < -8 || s.x > W + 8 || s.y < -8 || s.y > H + 8) { place(s, true); continue; }
+      const k = Math.min(1, Math.hypot(dx, dy) / maxR); // 0 centro → 1 bordo (più "vicina")
+      const r = 0.5 + k * 2.4;
+      const alpha = Math.min(1, s.b * (0.45 + k * 0.7));
+      // scia: la stella sfreccia verso il bordo
+      ctx.strokeStyle = `rgba(${s.col}, ${alpha * 0.7})`;
+      ctx.lineWidth = r;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(s.x, s.y);
+      ctx.stroke();
+      // punto-stella (sempre visibile)
       ctx.fillStyle = `rgba(${s.col}, ${alpha})`;
       ctx.beginPath();
-      ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+      ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
       ctx.fill();
     }
     if (running) rafId = requestAnimationFrame(draw);
