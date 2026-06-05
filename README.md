@@ -50,13 +50,27 @@ A platform to connect starseeds worldwide for planetary awakening through synchr
 5. **Your site will be live at: `https://yourusername.github.io/global-awakening`**
 
 ### Local Development
+
+The app is **precompiled**: the JSX source lives in `src/app.jsx`, and the file served
+to the browser is `app.js` (generated). There is no in-browser Babel anymore.
+
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/global-awakening.git
+cd global-awakening
+npm install                 # dev-deps for the build (Babel)
 
-# Open index.html in your browser
-open index.html
+# 1. Edit src/app.jsx (app logic) or app.html (shell, styles, inline scripts)
+# 2. Rebuild: regenerates app.js and refreshes the CSP hashes in app.html
+node build.js               # or: npm run build
+# 3. Serve and open
+npx serve . -p 4321         # → http://localhost:4321/app.html
 ```
+
+> **Important:** the `<meta>` Content-Security-Policy in `app.html` pins the SHA-256
+> hash of each inline script. If you change an inline script in `app.html`, re-run
+> `node build.js` or the browser will block it. Run the E2E suite
+> (`node test-telepathy.js`, `test-messaggi.js`, `test-rituali.js`) before pushing.
 
 ---
 
