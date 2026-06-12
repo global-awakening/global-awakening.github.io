@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://unpkg.com https://cdn.jsdelivr.net 'sha256-NwHmHfqxALuQcS60/W6pn3jpYZiaiG22vhXvRbXNTBY=' 'sha256-oQJsl5MD2Xv3eiKO/zyYqIDcY8DSAVh/ntmjmESjD08=' 'sha256-YvDVK8975O3rgdbaaDXOJNFq1lKf6tn2kN0TxW0gRTg=' 'sha256-LjM8FFyNNBSGTYOlRUUAj60lfZObXdqEEQ0nf3FC3DE='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://vxzxdkcluyrcftsnxxza.supabase.co https://api.emailjs.com; manifest-src 'self'; worker-src 'self'; base-uri 'self'; object-src 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://unpkg.com https://cdn.jsdelivr.net 'sha256-NwHmHfqxALuQcS60/W6pn3jpYZiaiG22vhXvRbXNTBY=' 'sha256-oQJsl5MD2Xv3eiKO/zyYqIDcY8DSAVh/ntmjmESjD08=' 'sha256-YvDVK8975O3rgdbaaDXOJNFq1lKf6tn2kN0TxW0gRTg=' 'sha256-Sb2ryqpOQKnyVxFUrVxNN1RmlEjgfGp23VNw4FjojnE='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://vxzxdkcluyrcftsnxxza.supabase.co https://api.emailjs.com; manifest-src 'self'; worker-src 'self'; base-uri 'self'; object-src 'none'">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Global Awakening Platform</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⭐</text></svg>">
@@ -574,7 +574,7 @@
   const BG = '#0c0f14';
   const STAR_COUNT = 420;
   const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const SPEED = reduce ? 0.003 : 0.008; // frazione di espansione radiale per frame (verso i bordi)
+  const SPEED = reduce ? 0.0015 : 0.004; // frazione di espansione radiale per frame (verso i bordi)
 
   let W, H, cx, cy, stars = [], running = false, rafId = null;
 

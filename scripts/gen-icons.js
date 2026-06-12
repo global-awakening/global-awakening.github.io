@@ -6,7 +6,7 @@ const fs = require('fs');
 
 const STAR = `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
   <polygon points="50,8 61,38 93,38 67,57 77,90 50,70 23,90 33,57 7,38 39,38"
-           fill="url(#g)" stroke="rgba(255,255,255,0.9)" stroke-width="1.5" stroke-linejoin="round"/>
+           fill="url(#g)" stroke-linejoin="round"/>
   <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0%" stop-color="#fef9c3"/><stop offset="100%" stop-color="#fbbf24"/>
   </linearGradient></defs></svg>`;
