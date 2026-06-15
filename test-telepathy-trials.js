@@ -53,7 +53,7 @@ for (const p of ['p_match_id', 'p_round', 'p_sender_id', 'p_receiver_id', 'p_mod
   ok(new RegExp(p + ':').test(src), `parametro passato: ${p}`);
 }
 ok(/p_card_count:\s*cardCountForLevel\(currentLevel\)/.test(src), 'p_card_count = cardCountForLevel(currentLevel)');
-ok(/p_receiver_id:\s*userEmail \|\| sessionId/.test(src), 'p_receiver_id = identità affidabile del ricevente');
+ok(/p_receiver_id:\s*userEmail \|\| (sessionId|guestCode)/.test(src), 'p_receiver_id = identità affidabile del ricevente (email o codice ospite)');
 ok(/p_sender_id:\s*partner\?\.id \|\| null/.test(src), 'p_sender_id = solo partner.id (niente fallback ambiguo user1_id)');
 ok(!/p_sender_id:[^\n]*match\.user1_id/.test(src), 'sender_id NON usa match.user1_id (eviterebbe sender==receiver)');
 

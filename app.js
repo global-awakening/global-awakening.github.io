@@ -293,6 +293,12 @@ const telepathyWords = [{
   icon: 'F',
   name: 'F'
 }];
+const GUEST_ADJ = ['aurora', 'lunare', 'solare', 'stellare', 'cosmico', 'astrale', 'etereo', 'mistico', 'radioso', 'sereno', 'profondo', 'arcano', 'celeste', 'lucente', 'eterno', 'sacro', 'antico', 'divino', 'nebuloso', 'boreale'];
+const GUEST_ANIMAL = ['lince', 'cervo', 'lupo', 'falco', 'gufo', 'volpe', 'airone', 'delfino', 'cigno', 'pantera', 'colibri', 'fenice', 'aquila', 'leone', 'tigre', 'orca', 'corvo', 'ibis', 'drago', 'gazzella'];
+const makeGuestCode = () => {
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+  return `${pick(GUEST_ADJ)}-${pick(GUEST_ANIMAL)}-${1000 + Math.floor(Math.random() * 9000)}`;
+};
 const ritualTypes = [{
   id: 'consciousness',
   name: 'Consciousness Elevation',
@@ -363,6 +369,8 @@ const translations = {
     magicLinkHint: "Login with magick link →",
     guestBadge: "Guest",
     registeredBadge: "Registered",
+    guestCodeLabel: "Your researcher code",
+    guestCodeHint: "Anonymous but recognizable (saved on this device): if you get exceptional telepathy results, we may publicly call for this code so you can come forward — only if you wish.",
     registerInvite: "Register to save your profile permanently",
     logout: "Logout",
     logoutConfirmTitle: "Log out?",
@@ -669,6 +677,8 @@ const translations = {
     magicLinkHint: "Login con magick link →",
     guestBadge: "Ospite",
     registeredBadge: "Registrato",
+    guestCodeLabel: "Il tuo codice ricercatore",
+    guestCodeHint: "Anonimo ma riconoscibile (salvato su questo dispositivo): se ottieni risultati di telepatia eccezionali potremmo lanciare un appello pubblico per questo codice, così puoi farti avanti — solo se vuoi.",
     registerInvite: "Registrati per salvare il profilo in modo permanente",
     logout: "Esci",
     logoutConfirmTitle: "Vuoi uscire?",
@@ -1061,6 +1071,14 @@ function GlobalAwakeningPlatform() {
     expandedRitualIdRef.current = expandedRitualId;
   }, [expandedRitualId]);
   const [sessionId, setSessionId] = useState(() => localStorage.getItem('ga_session_id') || Date.now() + '-' + Math.random());
+  const [guestCode] = useState(() => {
+    let c = localStorage.getItem('ga_guest_code');
+    if (!c) {
+      c = makeGuestCode();
+      localStorage.setItem('ga_guest_code', c);
+    }
+    return c;
+  });
   const mySlot = matchUser1Id != null ? sessionId === matchUser1Id ? 'user1' : 'user2' : null;
   const levelChangeIndex = Math.floor(roundCount / 7);
   const amIChooser = mySlot !== null && mySlot === (levelChangeIndex % 2 === 1 ? 'user1' : 'user2');
@@ -2081,7 +2099,7 @@ function GlobalAwakeningPlatform() {
             p_match_id: matchId,
             p_round: dbRound,
             p_sender_id: partner?.id || null,
-            p_receiver_id: userEmail || sessionId,
+            p_receiver_id: userEmail || guestCode,
             p_mode: currentLevel,
             p_card_count: cardCountForLevel(currentLevel),
             p_target: match.sender_symbol,
@@ -4776,6 +4794,23 @@ function GlobalAwakeningPlatform() {
       border: '1px solid rgba(251,191,36,0.3)'
     }
   }, React.createElement("p", {
+    style: {
+      color: '#fbbf24',
+      fontSize: '0.8rem',
+      marginBottom: '0.25rem'
+    }
+  }, t.guestCodeLabel, ": ", React.createElement("strong", {
+    style: {
+      letterSpacing: '0.02em'
+    }
+  }, guestCode)), React.createElement("p", {
+    style: {
+      color: 'rgba(251,191,36,0.85)',
+      fontSize: '0.7rem',
+      marginBottom: '0.7rem',
+      lineHeight: 1.35
+    }
+  }, t.guestCodeHint), React.createElement("p", {
     style: {
       color: '#fbbf24',
       fontSize: '0.875rem'

@@ -103,6 +103,20 @@
           { id: 'F', icon: 'F', name: 'F' },
         ];
 
+        // Codice ospite leggibile e stabile (es. 'aurora-lince-4827'): identità anonima ma
+        // RICONOSCIBILE per l'indagine telepatia. Sostituisce il sessionId illeggibile come
+        // identità del percipiente nei telepathy_trials; consente un eventuale appello pubblico
+        // ("cerchiamo aurora-lince-4827") a cui la persona può rispondere spontaneamente. Spec Fase 3.
+        // Spazio ~20×20×9000 ≈ 3,6M combinazioni: collisioni improbabili alla scala realistica
+        // dell'app (a migliaia di ospiti il rischio cresce — limite accettato, non un'identità
+        // crittografica). matchId è univoco (id DB), quindi nessuna perdita dati sul vincolo UNIQUE.
+        const GUEST_ADJ = ['aurora', 'lunare', 'solare', 'stellare', 'cosmico', 'astrale', 'etereo', 'mistico', 'radioso', 'sereno', 'profondo', 'arcano', 'celeste', 'lucente', 'eterno', 'sacro', 'antico', 'divino', 'nebuloso', 'boreale'];
+        const GUEST_ANIMAL = ['lince', 'cervo', 'lupo', 'falco', 'gufo', 'volpe', 'airone', 'delfino', 'cigno', 'pantera', 'colibri', 'fenice', 'aquila', 'leone', 'tigre', 'orca', 'corvo', 'ibis', 'drago', 'gazzella'];
+        const makeGuestCode = () => {
+          const pick = (a) => a[Math.floor(Math.random() * a.length)];
+          return `${pick(GUEST_ADJ)}-${pick(GUEST_ANIMAL)}-${1000 + Math.floor(Math.random() * 9000)}`;
+        };
+
         const ritualTypes = [
           { id: 'consciousness', name: 'Consciousness Elevation', icon: '🧠' },
           { id: 'dna', name: 'DNA Activation', icon: '🧬' },
@@ -161,6 +175,8 @@
             magicLinkHint: "Login with magick link →",
             guestBadge: "Guest",
             registeredBadge: "Registered",
+            guestCodeLabel: "Your researcher code",
+            guestCodeHint: "Anonymous but recognizable (saved on this device): if you get exceptional telepathy results, we may publicly call for this code so you can come forward — only if you wish.",
             registerInvite: "Register to save your profile permanently",
             logout: "Logout",
             logoutConfirmTitle: "Log out?",
@@ -450,6 +466,8 @@
             magicLinkHint: "Login con magick link →",
             guestBadge: "Ospite",
             registeredBadge: "Registrato",
+            guestCodeLabel: "Il tuo codice ricercatore",
+            guestCodeHint: "Anonimo ma riconoscibile (salvato su questo dispositivo): se ottieni risultati di telepatia eccezionali potremmo lanciare un appello pubblico per questo codice, così puoi farti avanti — solo se vuoi.",
             registerInvite: "Registrati per salvare il profilo in modo permanente",
             logout: "Esci",
             logoutConfirmTitle: "Vuoi uscire?",
@@ -843,6 +861,14 @@
           React.useEffect(() => { expandedRitualIdRef.current = expandedRitualId; }, [expandedRitualId]);
 
           const [sessionId, setSessionId] = useState(() => localStorage.getItem('ga_session_id') || (Date.now() + '-' + Math.random()));
+          // Codice ospite leggibile/stabile: generato una volta e persistito in localStorage.
+          // È l'identità del percipiente nei telepathy_trials quando si gioca da ospite (al posto
+          // del sessionId illeggibile). Per gli iscritti vale l'email; questo resta inutilizzato.
+          const [guestCode] = useState(() => {
+            let c = localStorage.getItem('ga_guest_code');
+            if (!c) { c = makeGuestCode(); localStorage.setItem('ga_guest_code', c); }
+            return c;
+          });
           // Cambio-modalità a turni: "primo chooser" = user1 del match; poi alterna a ogni cambio (round 7,14,...).
           const mySlot = (matchUser1Id != null) ? (sessionId === matchUser1Id ? 'user1' : 'user2') : null;
           const levelChangeIndex = Math.floor(roundCount / 7); // k: 1 al round 7, 2 al 14, ...
@@ -1784,9 +1810,10 @@
                 setShowResult(true);
                 setWaitingForPartner(false);
 
-                // Indagine (Fase 2): il RICEVENTE registra il tentativo in telepathy_trials
-                // (append-only) — la sua identità (email/sessionId) è quella affidabile del
-                // percipiente. sender_id = session_id del partner (presenza): è solo un'etichetta
+                // Indagine: il RICEVENTE registra il tentativo in telepathy_trials (append-only).
+                // receiver_id = identità affidabile del percipiente: email se iscritto, altrimenti
+                // il codice ospite leggibile/stabile (Fase 3, es. 'aurora-lince-72'), non il
+                // sessionId effimero. sender_id = session_id del partner (presenza): è solo un'etichetta
                 // di coppia, NON un'identità affidabile (mai un'email anche se il sender è iscritto).
                 // Niente fallback a user1_id: quando il ricevente locale È user1 finirebbe per
                 // registrare se stesso come sender (dato sporco). Un solo lato scrive (il ricevente)
@@ -1796,7 +1823,7 @@
                     p_match_id: matchId,
                     p_round: dbRound,
                     p_sender_id: partner?.id || null,
-                    p_receiver_id: userEmail || sessionId,
+                    p_receiver_id: userEmail || guestCode,
                     p_mode: currentLevel,
                     p_card_count: cardCountForLevel(currentLevel),
                     p_target: match.sender_symbol,
@@ -3784,6 +3811,8 @@
                       )}
                       {isGuest && (
                         <div style={{marginTop: '0.75rem', padding: '0.75rem', borderRadius: '0.75rem', background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)'}}>
+                          <p style={{color: '#fbbf24', fontSize: '0.8rem', marginBottom: '0.25rem'}}>{t.guestCodeLabel}: <strong style={{letterSpacing: '0.02em'}}>{guestCode}</strong></p>
+                          <p style={{color: 'rgba(251,191,36,0.85)', fontSize: '0.7rem', marginBottom: '0.7rem', lineHeight: 1.35}}>{t.guestCodeHint}</p>
                           <p style={{color: '#fbbf24', fontSize: '0.875rem'}}>{t.registerInvite}</p>
                           <button
                             onClick={() => { setShowEditProfile(false); handleLogout(); setTimeout(() => setAuthTab('register'), 100); }}

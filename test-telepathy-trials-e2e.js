@@ -58,12 +58,12 @@ async function autoAdv(p) {
 
   const browser = await chromium.launch({ headless: false, slowMo: 120 });
   const ctxA = await browser.newContext(), ctxB = await browser.newContext();
-  // Per un ospite il sessionId è generato in memoria (non in localStorage). Lo fissiamo
-  // a un valore noto PRIMA del caricamento (handleEnterGuest non lo rigenera): così
-  // receiver_id è prevedibile e possiamo leggere/pulire con precisione i dati di test.
+  // Fissiamo PRIMA del caricamento sia il sessionId (presenza/sender_id) sia il codice
+  // ospite (Fase 3: receiver_id nei trials). Stesso valore per ciascun ospite, così tutti
+  // i sender_id/receiver_id stanno nell'insieme {sidA, sidB} → query e pulizia precise.
   const sidA = 'trial-e2e-a', sidB = 'trial-e2e-b';
-  await ctxA.addInitScript((s) => localStorage.setItem('ga_session_id', s), sidA);
-  await ctxB.addInitScript((s) => localStorage.setItem('ga_session_id', s), sidB);
+  await ctxA.addInitScript((s) => { localStorage.setItem('ga_session_id', s); localStorage.setItem('ga_guest_code', s); }, sidA);
+  await ctxB.addInitScript((s) => { localStorage.setItem('ga_session_id', s); localStorage.setItem('ga_guest_code', s); }, sidB);
   const pageA = await ctxA.newPage(), pageB = await ctxB.newPage();
   try {
     await Promise.all([guestLogin(pageA, 'TrialA', { appUrl: APP_URL, timeout: T }), guestLogin(pageB, 'TrialB', { appUrl: APP_URL, timeout: T })]);

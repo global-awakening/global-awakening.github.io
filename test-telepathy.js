@@ -171,10 +171,11 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
   // Due contesti separati = due "utenti" indipendenti
   const ctxA = await browser.newContext();
   const ctxB = await browser.newContext();
-  // sessionId fissi per i due ospiti di test (vedi SID_A/SID_B): rende ripulibili i
-  // tentativi loggati in telepathy_trials. addInitScript gira prima degli script di pagina.
-  await ctxA.addInitScript((s) => localStorage.setItem('ga_session_id', s), SID_A);
-  await ctxB.addInitScript((s) => localStorage.setItem('ga_session_id', s), SID_B);
+  // sessionId E codice ospite (Fase 3) fissi per i due ospiti di test (vedi SID_A/SID_B):
+  // così receiver_id (codice ospite) e sender_id (sessionId) nei telepathy_trials sono noti
+  // e ripulibili con precisione. addInitScript gira prima degli script di pagina.
+  await ctxA.addInitScript((s) => { localStorage.setItem('ga_session_id', s); localStorage.setItem('ga_guest_code', s); }, SID_A);
+  await ctxB.addInitScript((s) => { localStorage.setItem('ga_session_id', s); localStorage.setItem('ga_guest_code', s); }, SID_B);
   const pageA = await ctxA.newPage();
   const pageB = await ctxB.newPage();
 
