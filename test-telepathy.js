@@ -32,6 +32,12 @@ function fail(msg) { console.log(`  ❌ ${msg}`); process.exitCode = 1; }
 // Usa la service_role key via test-helpers; senza chiave degrada con un warning.
 const NICK_A = 'TestUserA';
 const NICK_B = 'TestUserB';
+// sessionId FISSI dei due ospiti di test (impostati via addInitScript prima del
+// caricamento): così i tentativi registrati in telepathy_trials (Fase 2) — che usano
+// receiver_id/sender_id = sessionId — sono ripuliti con precisione, senza lasciare
+// dati di test nel dataset append-only dell'indagine.
+const SID_A = 'test-telepathy-a';
+const SID_B = 'test-telepathy-b';
 
 async function cleanupTelepathy(label) {
   const enc = encodeURIComponent;
@@ -42,6 +48,11 @@ async function cleanupTelepathy(label) {
     paths.push(`telepathy_scores?nickname=eq.${enc(n)}`);
     paths.push(`telepathy_invites?from_name=eq.${enc(n)}`);
     paths.push(`telepathy_invites?to_name=eq.${enc(n)}`);
+  }
+  for (const s of [SID_A, SID_B]) {
+    paths.push(`telepathy_trials?receiver_id=eq.${enc(s)}`);
+    paths.push(`telepathy_trials?sender_id=eq.${enc(s)}`);
+    paths.push(`telepathy_scores?user_id=eq.${enc(s)}`);
   }
   await purge(SUPABASE_URL, paths, { label: `telepathy-${label}` });
 }
@@ -160,6 +171,10 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
   // Due contesti separati = due "utenti" indipendenti
   const ctxA = await browser.newContext();
   const ctxB = await browser.newContext();
+  // sessionId fissi per i due ospiti di test (vedi SID_A/SID_B): rende ripulibili i
+  // tentativi loggati in telepathy_trials. addInitScript gira prima degli script di pagina.
+  await ctxA.addInitScript((s) => localStorage.setItem('ga_session_id', s), SID_A);
+  await ctxB.addInitScript((s) => localStorage.setItem('ga_session_id', s), SID_B);
   const pageA = await ctxA.newPage();
   const pageB = await ctxB.newPage();
 

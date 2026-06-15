@@ -786,6 +786,14 @@
           // caso puro più improbabile (1/N). Numeri/Lettere restano modalità a parte.
           // getCurrentSymbols accetta anche il legacy 'shapes' (set intero) per sicurezza
           // se un partner sincronizza un valore vecchio.
+          // cardCountForLevel = N (numero di card del livello): registrato per ogni tentativo
+          // nell'indagine (prob. caso = 1/N).
+          const cardCountForLevel = (level) => {
+            if (level === 'numbers') return telepathyNumbers.length;
+            if (level === 'words') return telepathyWords.length;
+            const m = /^lvl(\d+)$/.exec(level || '');
+            return m ? parseInt(m[1], 10) : telepathySymbols.length;
+          };
           const getCurrentSymbols = (level) => {
             if (level === 'numbers') return telepathyNumbers;
             if (level === 'words') return telepathyWords;
@@ -1775,6 +1783,27 @@
                 setIsMatch(isTelepathicMatch);
                 setShowResult(true);
                 setWaitingForPartner(false);
+
+                // Indagine (Fase 2): il RICEVENTE registra il tentativo in telepathy_trials
+                // (append-only) — la sua identità (email/sessionId) è quella affidabile del
+                // percipiente. sender_id = session_id del partner (presenza): è solo un'etichetta
+                // di coppia, NON un'identità affidabile (mai un'email anche se il sender è iscritto).
+                // Niente fallback a user1_id: quando il ricevente locale È user1 finirebbe per
+                // registrare se stesso come sender (dato sporco). Un solo lato scrive (il ricevente)
+                // per non duplicare. Best-effort: un trial perso non è un errore per l'utente.
+                if (effectiveRole === 'receiver') {
+                  supabase.rpc('log_telepathy_trial', {
+                    p_match_id: matchId,
+                    p_round: dbRound,
+                    p_sender_id: partner?.id || null,
+                    p_receiver_id: userEmail || sessionId,
+                    p_mode: currentLevel,
+                    p_card_count: cardCountForLevel(currentLevel),
+                    p_target: match.sender_symbol,
+                    p_guess: match.receiver_guess,
+                    p_is_hit: isTelepathicMatch
+                  }).then(({ error }) => { if (error) console.warn('log_telepathy_trial failed', error); }).catch(() => {});
+                }
                 // Congela ruolo+livello PRIMA dell'incremento di roundCount (che inverte
                 // effectiveRole ogni 3 round): il recap userà questi, non i valori live.
                 setResultRole(effectiveRole);

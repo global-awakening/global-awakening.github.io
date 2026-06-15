@@ -1005,6 +1005,12 @@ function GlobalAwakeningPlatform() {
     document.addEventListener('visibilitychange', onVisChange);
     return () => document.removeEventListener('visibilitychange', onVisChange);
   }, []);
+  const cardCountForLevel = level => {
+    if (level === 'numbers') return telepathyNumbers.length;
+    if (level === 'words') return telepathyWords.length;
+    const m = /^lvl(\d+)$/.exec(level || '');
+    return m ? parseInt(m[1], 10) : telepathySymbols.length;
+  };
   const getCurrentSymbols = level => {
     if (level === 'numbers') return telepathyNumbers;
     if (level === 'words') return telepathyWords;
@@ -2070,6 +2076,23 @@ function GlobalAwakeningPlatform() {
         setIsMatch(isTelepathicMatch);
         setShowResult(true);
         setWaitingForPartner(false);
+        if (effectiveRole === 'receiver') {
+          supabase.rpc('log_telepathy_trial', {
+            p_match_id: matchId,
+            p_round: dbRound,
+            p_sender_id: partner?.id || null,
+            p_receiver_id: userEmail || sessionId,
+            p_mode: currentLevel,
+            p_card_count: cardCountForLevel(currentLevel),
+            p_target: match.sender_symbol,
+            p_guess: match.receiver_guess,
+            p_is_hit: isTelepathicMatch
+          }).then(({
+            error
+          }) => {
+            if (error) console.warn('log_telepathy_trial failed', error);
+          }).catch(() => {});
+        }
         setResultRole(effectiveRole);
         setResultLevel(currentLevel);
         const newRound = (match.round_count || 0) + 1;
