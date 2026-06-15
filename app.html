@@ -430,6 +430,9 @@
             border: 2px solid transparent;
             cursor: pointer;
             transition: all 0.3s;
+            /* I simboli-testo (numeri, lettere, ∞) erediterebbero un colore scuro poco
+               leggibile; questo lilla chiaro li schiarisce. Le emoji ignorano `color`. */
+            color: #e9d5ff;
         }
         .symbol-btn:hover { background: rgba(255, 255, 255, 0.2); }
         .symbol-btn-selected {

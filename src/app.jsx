@@ -72,7 +72,13 @@
           { id: 'moon', icon: '🌙', name: 'Moon' },
           { id: 'heart', icon: '💜', name: 'Heart' },
           { id: 'eye', icon: '👁️', name: 'Eye' },
-          { id: 'infinity', icon: '∞', name: 'Infinity' }
+          // ∞ è un carattere di testo (come numeri e lettere), non un'emoji: il colore chiaro
+          // che lo rende leggibile è impostato via CSS su .symbol-btn e sullo span del recap
+          // (un solo punto per tutti i glifi-testo). Le emoji ignorano `color`, restano invariate.
+          { id: 'infinity', icon: '∞', name: 'Infinity' },
+          { id: 'water', icon: '💧', name: 'Water' },
+          { id: 'fire', icon: '🔥', name: 'Fire' },
+          { id: 'crystalball', icon: '🔮', name: 'Crystal Ball' }
         ];
 
         const telepathyNumbers = [
@@ -717,7 +723,7 @@
           // Telepatia v2 — nuovi state
           const [incomingInvite, setIncomingInvite] = useState(null); // { from_id, from_name, invite_id }
           const [directInviteTarget, setDirectInviteTarget] = useState(null); // utente a cui abbiamo inviato invito
-          const [currentLevel, setCurrentLevel] = useState('shapes'); // 'shapes' | 'numbers' | 'words'
+          const [currentLevel, setCurrentLevel] = useState('lvl3'); // scala: 'lvl3'|'lvl5'|'lvl7'|'lvl9' + modalità extra 'numbers'|'words'
           const [roundCount, setRoundCount] = useState(0);
           const swapRole = (r) => r === 'sender' ? 'receiver' : 'sender';
           // round 0-based: 0,1,2 -> base; 3,4,5 -> swap; ... (alternanza ogni 3 round)
@@ -775,10 +781,16 @@
             return () => document.removeEventListener('visibilitychange', onVisChange);
           }, []);
 
+          // Scala di difficoltà per numero di card: i livelli 'lvlN' mostrano le prime N
+          // forme del set unico (es. 'lvl3' = 3 simboli, 'lvl9' = tutte e 9). Più card =
+          // caso puro più improbabile (1/N). Numeri/Lettere restano modalità a parte.
+          // getCurrentSymbols accetta anche il legacy 'shapes' (set intero) per sicurezza
+          // se un partner sincronizza un valore vecchio.
           const getCurrentSymbols = (level) => {
             if (level === 'numbers') return telepathyNumbers;
             if (level === 'words') return telepathyWords;
-            return telepathySymbols;
+            const m = /^lvl(\d+)$/.exec(level || '');
+            return m ? telepathySymbols.slice(0, parseInt(m[1], 10)) : telepathySymbols;
           };
 
           // Classifica telepatia: top 10 per match telepatici totali (lettura sola da telepathy_scores).
@@ -859,6 +871,14 @@
           const [magicLinkEmail, setMagicLinkEmail] = useState('');
           const [showMagicLink, setShowMagicLink] = useState(false);
           const t = translations[lang];
+          // Etichetta leggibile del livello (pannello sessione + chooser). Per la scala
+          // mostra "N Simboli" (es. "3 Simboli"); Numeri/Lettere usano le label dedicate.
+          const levelLabel = (level) => {
+            if (level === 'numbers') return t.telepathy.levelNumbers;
+            if (level === 'words') return t.telepathy.levelWords;
+            const m = /^lvl(\d+)$/.exec(level || '');
+            return m ? `${m[1]} ${t.telepathy.levelShapes}` : t.telepathy.levelShapes;
+          };
 
           const avatarEmojis = ['🌟', '✨', '🔮', '🧿', '💫', '⭐', '🌙', '☀️', '🌈', '🦋', '🕊️', '🐉', '🧬', '👁️', '💜', '🔥', '🌸', '🍃', '💎', '🪷'];
           const starseedTypes = ['pleiadian', 'sirian', 'arcturian', 'andromedan', 'lyran', 'orion', 'universal'];
@@ -1146,7 +1166,8 @@
                   user1_role: theirRole,
                   user2_id: sessionId,
                   user2_nickname: nickname || 'Anonymous',
-                  user2_role: myRole
+                  user2_role: myRole,
+                  level: 'lvl3' // ogni sessione parte dal livello più facile (3 card)
                 });
 
                 if (!matchData || matchData.length === 0) {
@@ -1714,7 +1735,7 @@
 
           const proposeLevelChange = async (choice) => {
             // Cambio-modalità a turni: solo il chooser scrive; la scelta si applica subito.
-            // choice ∈ 'shapes'|'numbers'|'words'|'keep'. 'keep' = resta sulla modalità attuale.
+            // choice ∈ 'lvl3'|'lvl5'|'lvl7'|'lvl9'|'numbers'|'words'|'keep'. 'keep' = resta sulla modalità attuale.
             const bannerRound = Math.floor(roundCount / 7) * 7; // 7,14,...
             const newLevel = (choice === 'keep') ? currentLevel : choice;
             setCurrentLevel(newLevel);
@@ -1957,7 +1978,7 @@
             setMatchId(null);
             setPartnerSymbol(null);
             // nuovi state v2
-            setCurrentLevel('shapes');
+            setCurrentLevel('lvl3');
             setRoundCount(0);
             setSessionMatches(0);
             setShowLevelBanner(false);
@@ -2018,7 +2039,7 @@
               user2_id: sessionId,
               user2_nickname: nickname || 'Anonymous',
               user2_role: myRole,
-              level: 'shapes',
+              level: 'lvl3', // ogni sessione parte dal livello più facile (3 card)
               round_count: 0
             });
             if (matchError || !matchData || matchData.length === 0) {
@@ -3522,7 +3543,7 @@
                             </div>
                             <div style={{display: 'flex', justifyContent: 'space-between'}}>
                               <span className="text-secondary text-xs">{t.telepathy.levelLabel}</span>
-                              <span className="text-white text-sm font-bold">{currentLevel === 'shapes' ? t.telepathy.levelShapes : currentLevel === 'numbers' ? t.telepathy.levelNumbers : t.telepathy.levelWords}</span>
+                              <span className="text-white text-sm font-bold">{levelLabel(currentLevel)}</span>
                             </div>
                             {roundCount > 0 && (
                               <div style={{display: 'flex', justifyContent: 'space-between'}}>
@@ -3564,7 +3585,7 @@
                                   <div className="bg-glass-dark rounded-xl p-4" style={{border: '1px solid rgba(167,139,250,0.5)'}}>
                                     <p className="text-white font-bold text-center mb-3">{t.telepathy.levelChooseTitle}</p>
                                     <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap'}}>
-                                      {[{m: 'shapes', ic: '🔣', lb: t.telepathy.levelShapes}, {m: 'numbers', ic: '🔢', lb: t.telepathy.levelNumbers}, {m: 'words', ic: '🔤', lb: t.telepathy.levelWords}].filter(o => o.m !== currentLevel).map(o => (
+                                      {[{m: 'lvl3', ic: '🔣', lb: levelLabel('lvl3')}, {m: 'lvl5', ic: '🔣', lb: levelLabel('lvl5')}, {m: 'lvl7', ic: '🔣', lb: levelLabel('lvl7')}, {m: 'lvl9', ic: '🔣', lb: levelLabel('lvl9')}, {m: 'numbers', ic: '🔢', lb: t.telepathy.levelNumbers}, {m: 'words', ic: '🔤', lb: t.telepathy.levelWords}].filter(o => o.m !== currentLevel).map(o => (
                                         <button key={o.m} onClick={() => proposeLevelChange(o.m)} className="btn-secondary" style={{flex: '1 1 45%', fontSize: '0.85rem'}}>{o.ic} {o.lb}</button>
                                       ))}
                                       <button onClick={() => proposeLevelChange('keep')} className="btn-secondary" style={{flex: '1 1 45%', fontSize: '0.85rem'}}>{t.telepathy.levelKeep}</button>
@@ -3630,11 +3651,11 @@
                                 <div className="flex justify-center gap-6 mb-3" style={{marginTop: '0.5rem'}}>
                                   <div className="text-center">
                                     <p className="text-secondary text-sm mb-1">{t.telepathy.sentLabel}</p>
-                                    <span style={{fontSize: '2.5rem'}}>{getCurrentSymbols(resultLevel || currentLevel).find(s => s.id === ((resultRole || effectiveRole) === 'sender' ? selectedSymbol : partnerSymbol))?.icon || '·'}</span>
+                                    <span style={{fontSize: '2.5rem', color: '#e9d5ff'}}>{getCurrentSymbols(resultLevel || currentLevel).find(s => s.id === ((resultRole || effectiveRole) === 'sender' ? selectedSymbol : partnerSymbol))?.icon || '·'}</span>
                                   </div>
                                   <div className="text-center">
                                     <p className="text-secondary text-sm mb-1">{t.telepathy.guessedLabel}</p>
-                                    <span style={{fontSize: '2.5rem'}}>{getCurrentSymbols(resultLevel || currentLevel).find(s => s.id === ((resultRole || effectiveRole) === 'receiver' ? guessedSymbol : partnerSymbol))?.icon || '·'}</span>
+                                    <span style={{fontSize: '2.5rem', color: '#e9d5ff'}}>{getCurrentSymbols(resultLevel || currentLevel).find(s => s.id === ((resultRole || effectiveRole) === 'receiver' ? guessedSymbol : partnerSymbol))?.icon || '·'}</span>
                                   </div>
                                 </div>
                                 {isMatch && <p className="text-white">{t.telepathy.resonance}</p>}

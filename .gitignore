@@ -1,6 +1,7 @@
 # Dipendenze e artefatti locali (non vanno versionati)
 node_modules/
 .gstack/
+.superpowers/
 serve.log
 *.run*.log
 
@@ -12,3 +13,4 @@ email-preview-*.png
 visual-c3-*.png
 visual-check-c3.js
 screenshot-emails.js
+screenshot-simboli-scala.js

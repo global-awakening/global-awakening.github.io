@@ -218,6 +218,18 @@ const telepathySymbols = [{
   id: 'infinity',
   icon: '∞',
   name: 'Infinity'
+}, {
+  id: 'water',
+  icon: '💧',
+  name: 'Water'
+}, {
+  id: 'fire',
+  icon: '🔥',
+  name: 'Fire'
+}, {
+  id: 'crystalball',
+  icon: '🔮',
+  name: 'Crystal Ball'
 }];
 const telepathyNumbers = [{
   id: 'n1',
@@ -942,7 +954,7 @@ function GlobalAwakeningPlatform() {
   const [partnerSymbol, setPartnerSymbol] = useState(null);
   const [incomingInvite, setIncomingInvite] = useState(null);
   const [directInviteTarget, setDirectInviteTarget] = useState(null);
-  const [currentLevel, setCurrentLevel] = useState('shapes');
+  const [currentLevel, setCurrentLevel] = useState('lvl3');
   const [roundCount, setRoundCount] = useState(0);
   const swapRole = r => r === 'sender' ? 'receiver' : 'sender';
   const roleForRound = (baseRole, round) => Math.floor(round / 3) % 2 === 0 ? baseRole : swapRole(baseRole);
@@ -996,7 +1008,8 @@ function GlobalAwakeningPlatform() {
   const getCurrentSymbols = level => {
     if (level === 'numbers') return telepathyNumbers;
     if (level === 'words') return telepathyWords;
-    return telepathySymbols;
+    const m = /^lvl(\d+)$/.exec(level || '');
+    return m ? telepathySymbols.slice(0, parseInt(m[1], 10)) : telepathySymbols;
   };
   const loadLeaderboard = async () => {
     const {
@@ -1077,6 +1090,12 @@ function GlobalAwakeningPlatform() {
   const [magicLinkEmail, setMagicLinkEmail] = useState('');
   const [showMagicLink, setShowMagicLink] = useState(false);
   const t = translations[lang];
+  const levelLabel = level => {
+    if (level === 'numbers') return t.telepathy.levelNumbers;
+    if (level === 'words') return t.telepathy.levelWords;
+    const m = /^lvl(\d+)$/.exec(level || '');
+    return m ? `${m[1]} ${t.telepathy.levelShapes}` : t.telepathy.levelShapes;
+  };
   const avatarEmojis = ['🌟', '✨', '🔮', '🧿', '💫', '⭐', '🌙', '☀️', '🌈', '🦋', '🕊️', '🐉', '🧬', '👁️', '💜', '🔥', '🌸', '🍃', '💎', '🪷'];
   const starseedTypes = ['pleiadian', 'sirian', 'arcturian', 'andromedan', 'lyran', 'orion', 'universal'];
   const experienceLevels = ['beginner', 'intermediate', 'advanced', 'master'];
@@ -1398,7 +1417,8 @@ function GlobalAwakeningPlatform() {
           user1_role: theirRole,
           user2_id: sessionId,
           user2_nickname: nickname || 'Anonymous',
-          user2_role: myRole
+          user2_role: myRole,
+          level: 'lvl3'
         });
         if (!matchData || matchData.length === 0) {
           return;
@@ -2221,7 +2241,7 @@ function GlobalAwakeningPlatform() {
     setWaitingForPartner(false);
     setMatchId(null);
     setPartnerSymbol(null);
-    setCurrentLevel('shapes');
+    setCurrentLevel('lvl3');
     setRoundCount(0);
     setSessionMatches(0);
     setShowLevelBanner(false);
@@ -2278,7 +2298,7 @@ function GlobalAwakeningPlatform() {
       user2_id: sessionId,
       user2_nickname: nickname || 'Anonymous',
       user2_role: myRole,
-      level: 'shapes',
+      level: 'lvl3',
       round_count: 0
     });
     if (matchError || !matchData || matchData.length === 0) {
@@ -4318,7 +4338,7 @@ function GlobalAwakeningPlatform() {
     className: "text-secondary text-xs"
   }, t.telepathy.levelLabel), React.createElement("span", {
     className: "text-white text-sm font-bold"
-  }, currentLevel === 'shapes' ? t.telepathy.levelShapes : currentLevel === 'numbers' ? t.telepathy.levelNumbers : t.telepathy.levelWords)), roundCount > 0 && React.createElement("div", {
+  }, levelLabel(currentLevel))), roundCount > 0 && React.createElement("div", {
     style: {
       display: 'flex',
       justifyContent: 'space-between'
@@ -4381,9 +4401,21 @@ function GlobalAwakeningPlatform() {
       flexWrap: 'wrap'
     }
   }, [{
-    m: 'shapes',
+    m: 'lvl3',
     ic: '🔣',
-    lb: t.telepathy.levelShapes
+    lb: levelLabel('lvl3')
+  }, {
+    m: 'lvl5',
+    ic: '🔣',
+    lb: levelLabel('lvl5')
+  }, {
+    m: 'lvl7',
+    ic: '🔣',
+    lb: levelLabel('lvl7')
+  }, {
+    m: 'lvl9',
+    ic: '🔣',
+    lb: levelLabel('lvl9')
   }, {
     m: 'numbers',
     ic: '🔢',
@@ -4484,7 +4516,8 @@ function GlobalAwakeningPlatform() {
     className: "text-secondary text-sm mb-1"
   }, t.telepathy.sentLabel), React.createElement("span", {
     style: {
-      fontSize: '2.5rem'
+      fontSize: '2.5rem',
+      color: '#e9d5ff'
     }
   }, getCurrentSymbols(resultLevel || currentLevel).find(s => s.id === ((resultRole || effectiveRole) === 'sender' ? selectedSymbol : partnerSymbol))?.icon || '·')), React.createElement("div", {
     className: "text-center"
@@ -4492,7 +4525,8 @@ function GlobalAwakeningPlatform() {
     className: "text-secondary text-sm mb-1"
   }, t.telepathy.guessedLabel), React.createElement("span", {
     style: {
-      fontSize: '2.5rem'
+      fontSize: '2.5rem',
+      color: '#e9d5ff'
     }
   }, getCurrentSymbols(resultLevel || currentLevel).find(s => s.id === ((resultRole || effectiveRole) === 'receiver' ? guessedSymbol : partnerSymbol))?.icon || '·'))), isMatch && React.createElement("p", {
     className: "text-white"
