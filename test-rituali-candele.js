@@ -7,10 +7,13 @@
  * Esecuzione: node test-rituali-candele.js
  * Prerequisito: aver applicato supabase/sql/09_ritual_candles.sql.
  */
+const { purge } = require('./test-helpers');
+
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
 
 const TS  = Date.now();
+const CREATOR = `CandGuest_${TS}`;
 const SID1 = `candle-s1-${TS}`;
 const SID2 = `candle-s2-${TS}`;
 const PAST_DATE = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
@@ -38,7 +41,7 @@ const candlesOf = (row) => (row && row[0] && Array.isArray(row[0].candles)) ? ro
   console.log('— Setup —');
   await rpc('cleanup_expired_rituals', {});
   const created = await rpc('create_ritual', {
-    p_creator: `CandGuest_${TS}`, p_creator_id: SID1, p_name: `Candela-${TS}`,
+    p_creator: CREATOR, p_creator_id: SID1, p_name: `Candela-${TS}`,
     p_description: 'test', p_type: 'consciousness', p_sacred_number: 11,
     p_date: PAST_DATE, p_time: '12:00:00', p_duration: 5, p_password_hash: null,
   });
@@ -69,6 +72,13 @@ const candlesOf = (row) => (row && row[0] && Array.isArray(row[0].candles)) ? ro
   else fail(`indipendenza fallita: ${JSON.stringify(r)}`);
 
   console.log('— Teardown —');
-  await rpc('cleanup_expired_rituals', {});
+  // Pulizia DETERMINISTICA del rituale di questo run: purge filtra esattamente sul
+  // creator del run via service_role key → cancella sempre, indipendentemente dalla
+  // logica di scadenza di cleanup_expired_rituals (che resta nel Setup come igiene
+  // iniziale). Cancellando il rituale spariscono anche le candele (JSONB su rituals).
+  // Vedi test-helpers.js.
+  await purge(SUPABASE_URL, [
+    `rituals?creator=eq.${encodeURIComponent(CREATOR)}`,
+  ], { label: 'rituali-candele' });
   console.log(`\nRisultato: ${passed} passati, ${failed} falliti`);
 })();
