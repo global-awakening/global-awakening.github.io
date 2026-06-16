@@ -53,6 +53,12 @@ async function cleanupTelepathy(label) {
     paths.push(`telepathy_trials?receiver_id=eq.${enc(s)}`);
     paths.push(`telepathy_trials?sender_id=eq.${enc(s)}`);
     paths.push(`telepathy_scores?user_id=eq.${enc(s)}`);
+    // telepathy_matches con i SID fissi: un match residuo di un run precedente rende
+    // TestUserA/B perennemente 'busy' (status derivato da telepathy_matches, app.jsx:1058)
+    // → la lista lobby non mostra il bottone "Proponi" → Test 3 fallisce in modo
+    // DETERMINISTICO cross-run. Va pulito qui (pre+post) come le altre tabelle.
+    paths.push(`telepathy_matches?user1_id=eq.${enc(s)}`);
+    paths.push(`telepathy_matches?user2_id=eq.${enc(s)}`);
   }
   await purge(SUPABASE_URL, paths, { label: `telepathy-${label}` });
 }
@@ -267,8 +273,12 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
 
     // ── Test 6: Auto-avanzamento (no pulsante "Ancora") ────────────────────
     console.log('\n📋 Test 6: Auto-avanzamento dopo il risultato');
-    // Il gioco riparte da solo dopo ~4s: niente click, si attende l'auto-avanzamento.
-    await pageA.waitForTimeout(8000);
+    // Il gioco riparte da solo dopo ~4s: niente click. Si attende la CONDIZIONE reale
+    // (picker o banner) su ENTRAMBE le pagine, non un fisso da 8s: con un tempo fisso, se
+    // l'auto-avanzamento è più lento, il sendSymbol del Test 7 parte su stato non pronto
+    // → "timeout di click" su .symbol-btn (flakiness storica). waitAutoAdvance attende
+    // la ricomparsa del picker per entrambi, sincronizzandoli prima del round successivo.
+    await Promise.all([waitAutoAdvance(pageA), waitAutoAdvance(pageB)]);
     const symbolsA = await pageA.locator('.symbol-btn').count();
     const waitingA = await pageA.locator(':text("Simbolo inviato"), :text("Aspetta")').count();
     if (symbolsA > 0 || waitingA > 0) {
@@ -514,7 +524,10 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
       log('TestUserA', `Round ${i}/7 completato (ruolo A: ${roleA})`);
       // Auto-avanzamento: il gioco riparte da solo (niente click "Ancora"). Al 7° round
       // appare invece il banner cambio livello: si attende il picker O il banner.
-      await waitAutoAdvance(pageA);
+      // Sincronizza ENTRAMBE le pagine: attendere solo pageA lasciava il receiver (a volte
+      // pageB) non ancora auto-avanzato → al round dopo guessSymbol cliccava un .symbol-btn
+      // ancora 'disabled' → "timeout di click" intermittente (round variabile). Stesso fix del Test 6.
+      await Promise.all([waitAutoAdvance(pageA), waitAutoAdvance(pageB)]);
     }
     if (!swapVerified) fail('Atteso swap dei ruoli al round 4, non rilevato');
 
@@ -574,7 +587,10 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
       await Promise.all([waitForResult(pageA, 'TestUserA'), waitForResult(pageB, 'TestUserB')]);
       // Auto-avanzamento: per i round 8→13 riappare il picker; al round 14 appare invece il
       // banner cambio-modalità (per il passivo A è "...sta scegliendo..."). waitAutoAdvance accetta entrambi.
-      await waitAutoAdvance(pageA);
+      // Sincronizza ENTRAMBE le pagine: attendere solo pageA lasciava il receiver (a volte
+      // pageB) non ancora auto-avanzato → al round dopo guessSymbol cliccava un .symbol-btn
+      // ancora 'disabled' → "timeout di click" intermittente (round variabile). Stesso fix del Test 6.
+      await Promise.all([waitAutoAdvance(pageA), waitAutoAdvance(pageB)]);
       log('TestUserA', `Round ${i}/14 completato`);
     }
 
