@@ -3737,6 +3737,12 @@
                                 </div>
                                 {roundCount > 0 && <p className="text-white">{t.telepathy.accuracyColon} <span className="font-bold" style={{color: '#fbbf24'}}>{Math.round((sessionMatches / roundCount) * 100)}%</span></p>}
                               </div>
+                              {isGuest && guestCode && (
+                                <div style={{padding: '0.75rem', borderRadius: '0.75rem', background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)', textAlign: 'center'}}>
+                                  <p style={{color: '#fbbf24', fontSize: '0.8rem', marginBottom: '0.25rem'}}>{t.guestCodeLabel}: <strong style={{letterSpacing: '0.02em'}}>{guestCode}</strong></p>
+                                  <p style={{color: 'rgba(251,191,36,0.85)', fontSize: '0.7rem', lineHeight: 1.35, marginBottom: 0}}>{t.guestCodeHint}</p>
+                                </div>
+                              )}
                               <div style={{display: 'flex', flexDirection: 'column', gap: '0.75rem'}}>
                                 <button onClick={playAgainSamePartner} className="btn-primary w-full">{t.telepathy.playAgainWith} {partner?.nickname}</button>
                                 <button onClick={resetTelepathy} className="btn-secondary w-full">{t.telepathy.backToLobbyCap}</button>

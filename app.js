@@ -4626,7 +4626,32 @@ function GlobalAwakeningPlatform() {
     style: {
       color: '#fbbf24'
     }
-  }, Math.round(sessionMatches / roundCount * 100), "%"))), React.createElement("div", {
+  }, Math.round(sessionMatches / roundCount * 100), "%"))), isGuest && guestCode && React.createElement("div", {
+    style: {
+      padding: '0.75rem',
+      borderRadius: '0.75rem',
+      background: 'rgba(251,191,36,0.1)',
+      border: '1px solid rgba(251,191,36,0.3)',
+      textAlign: 'center'
+    }
+  }, React.createElement("p", {
+    style: {
+      color: '#fbbf24',
+      fontSize: '0.8rem',
+      marginBottom: '0.25rem'
+    }
+  }, t.guestCodeLabel, ": ", React.createElement("strong", {
+    style: {
+      letterSpacing: '0.02em'
+    }
+  }, guestCode)), React.createElement("p", {
+    style: {
+      color: 'rgba(251,191,36,0.85)',
+      fontSize: '0.7rem',
+      lineHeight: 1.35,
+      marginBottom: 0
+    }
+  }, t.guestCodeHint)), React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
