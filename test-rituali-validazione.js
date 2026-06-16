@@ -89,7 +89,28 @@ const okRejected = (r, m) => (r.status >= 400)
     p_ritual_id: ritId, p_author_nickname: 'x'.repeat(300), p_content: 'ok', p_password_hash: null,
   }), 'comment: author troppo lungo');
 
+  // ── B9: rate-limit create_ritual (max 5 / 10 min per creator_id) ──
+  // creator_id dedicato per non interferire col budget di SID usato sopra.
+  console.log('— Rate-limit (B9): create_ritual max 5 / 10 min per creator_id —');
+  const RLCREATOR = `RLGuest_${TS}`;
+  const RLSID = `rl-sess-${TS}`;
+  const mkRL = () => rpc('create_ritual', {
+    p_creator: RLCREATOR, p_creator_id: RLSID, p_name: `RL-${TS}`,
+    p_description: 'x', p_type: 'consciousness', p_sacred_number: 11,
+    p_date: PAST_DATE, p_time: '12:00:00', p_duration: 5, p_password_hash: null,
+  });
+  let rlFirstFive = true;
+  for (let i = 1; i <= 5; i++) {
+    const r = await mkRL();
+    if (!(r.status >= 200 && r.status < 300)) { rlFirstFive = false; fail(`rate-limit: create #${i}/5 doveva passare (HTTP ${r.status} ${JSON.stringify(r.body)})`); }
+  }
+  if (rlFirstFive) pass('rate-limit: i primi 5 create sotto soglia passano');
+  okRejected(await mkRL(), 'rate-limit: il 6° create entro la finestra è bloccato');
+
   console.log('— Teardown —');
-  await purge(SUPABASE_URL, [`rituals?creator=eq.${encodeURIComponent(CREATOR)}`], { label: 'rituali-validazione' });
+  await purge(SUPABASE_URL, [
+    `rituals?creator=eq.${encodeURIComponent(CREATOR)}`,
+    `rituals?creator=eq.${encodeURIComponent(RLCREATOR)}`,
+  ], { label: 'rituali-validazione' });
   console.log(`\nRisultato: ${passed} passati, ${failed} falliti`);
 })();
