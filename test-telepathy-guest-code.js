@@ -56,4 +56,17 @@ ok(/guestCodeLabel/.test(src), 'etichetta del codice mostrata (guestCodeLabel)')
 console.log('— traduzioni IT/EN per il codice ospite —');
 ok((src.match(/guestCodeLabel:/g) || []).length >= 2, 'guestCodeLabel tradotto (IT + EN)');
 
+console.log('— codice ospite nel recap di fine sessione (commit 1d8fa27) —');
+// Ancoro al box stesso (`isGuest && guestCode`) invece che al pattern del recap, che
+// ricorre più volte nel sorgente. Verifico (a) che il box renderizzi etichetta+valore+hint
+// del codice e (b) che si trovi nel contesto del recap di fine sessione (marcatori
+// sessionComplete/roundsPlayed poco prima), non in un punto qualsiasi del file.
+const boxStart = src.indexOf('isGuest && guestCode');
+const boxSlice = boxStart >= 0 ? src.slice(boxStart, boxStart + 600) : '';
+const recapContext = boxStart >= 0 ? src.slice(Math.max(0, boxStart - 2500), boxStart) : '';
+ok(boxStart >= 0, 'box codice ospite condizionato a isGuest && guestCode');
+ok(/\{t\.guestCodeLabel\}[\s\S]*\{guestCode\}/.test(boxSlice), 'box mostra etichetta + valore del codice ospite');
+ok(/\{t\.guestCodeHint\}/.test(boxSlice), 'box mostra il suggerimento (guestCodeHint)');
+ok(/sessionComplete|roundsPlayed/.test(recapContext), 'il box è nel contesto del recap di fine sessione');
+
 console.log(`\nRisultato: ${passed} passati, ${failed} falliti`);
