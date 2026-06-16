@@ -69,6 +69,26 @@ const okRejected = (r, m) => (r.status >= 400)
   okRejected(await rpc('toggle_ritual_candle', { p_ritual_id: ritId, p_session_id: 'x'.repeat(300) }), 'candela: session troppo lungo');
   okRejected(await rpc('toggle_ritual_candle', { p_ritual_id: 999999999, p_session_id: 's1' }), 'candela: rituale inesistente');
 
+  // ── B5 round 2: create_ritual / create_ritual_comment (Step B, hash auth) ──
+  const mkRitual = (over) => rpc('create_ritual', {
+    p_creator: CREATOR, p_creator_id: SID, p_name: `V-${TS}`,
+    p_description: 'x', p_type: 'consciousness', p_sacred_number: 11,
+    p_date: PAST_DATE, p_time: '12:00:00', p_duration: 5, p_password_hash: null,
+    ...over,
+  });
+
+  console.log('— create_ritual: input legittimi ACCETTATI —');
+  okAccepted(await mkRitual({ p_type: 'ascension', p_sacred_number: 108 }), 'create: type/sacred validi');
+
+  console.log('— create_ritual: input illegittimi RIFIUTATI —');
+  okRejected(await mkRitual({ p_type: 'malware' }), 'create: type non in whitelist');
+  okRejected(await mkRitual({ p_sacred_number: 999999 }), 'create: sacred_number fuori range');
+  okRejected(await mkRitual({ p_name: 'x'.repeat(300) }), 'create: name troppo lungo');
+  okRejected(await mkRitual({ p_date: null }), 'create: date mancante');
+  okRejected(await rpc('create_ritual_comment', {
+    p_ritual_id: ritId, p_author_nickname: 'x'.repeat(300), p_content: 'ok', p_password_hash: null,
+  }), 'comment: author troppo lungo');
+
   console.log('— Teardown —');
   await purge(SUPABASE_URL, [`rituals?creator=eq.${encodeURIComponent(CREATOR)}`], { label: 'rituali-validazione' });
   console.log(`\nRisultato: ${passed} passati, ${failed} falliti`);
