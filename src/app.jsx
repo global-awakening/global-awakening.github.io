@@ -313,6 +313,7 @@
               subtitle: "Private conversations",
               noConversations: "No conversations yet. Visit a profile and send a message!",
               guestPrompt: "Register to send private messages",
+              receiverNotRegistered: "This starseed isn't registered yet, so they can't receive private messages. Invite them to register!",
               placeholder: "Type a message...",
               send: "Send",
               sendMessage: "Send Message",
@@ -604,6 +605,7 @@
               subtitle: "Conversazioni private",
               noConversations: "Nessuna conversazione. Visita un profilo e invia un messaggio!",
               guestPrompt: "Registrati per inviare messaggi privati",
+              receiverNotRegistered: "Questo starseed non è ancora registrato, quindi non può ricevere messaggi privati. Invitalo a registrarsi!",
               placeholder: "Scrivi un messaggio...",
               send: "Invia",
               sendMessage: "Invia Messaggio",
@@ -1032,7 +1034,20 @@
                   // Fallback: at least show yourself
                   setOnlineUsers([{ id: sessionId, nickname, lat: myLat, lng: myLng }]);
                 } else {
-                  setOnlineUsers(data && data.length > 0 ? data : [{ id: sessionId, nickname, lat: myLat, lng: myLng }]);
+                  // Deduplica per nickname: tieni solo il record più recente per persona.
+                  // Vale sia per la community (onlineUsers, contatori "starseeds"/"online")
+                  // sia per la lista telepatia, così niente doppioni (es. "dario, dario")
+                  // quando una persona ha più sessioni/tab nella finestra di presenza.
+                  const sortedByDate = (data || []).slice().sort((a, b) => new Date(b.last_seen) - new Date(a.last_seen));
+                  const seenNicks = new Set();
+                  const uniqueUsers = [];
+                  for (const u of sortedByDate) {
+                    if (!seenNicks.has(u.nickname)) {
+                      seenNicks.add(u.nickname);
+                      uniqueUsers.push(u);
+                    }
+                  }
+                  setOnlineUsers(uniqueUsers.length > 0 ? uniqueUsers : [{ id: sessionId, nickname, lat: myLat, lng: myLng }]);
 
                   // Arricchisci utenti con stato 'in sessione' o 'disponibile'
                   const { data: activeMatches } = await supabase.from('telepathy_matches').select('user1_id,user2_id');
@@ -1042,16 +1057,6 @@
                       busyIds.add(m.user1_id);
                       busyIds.add(m.user2_id);
                     });
-                  }
-                  // Deduplica per nickname: tieni solo il record più recente per persona
-                  const sortedByDate = (data || []).slice().sort((a, b) => new Date(b.last_seen) - new Date(a.last_seen));
-                  const seenNicks = new Set();
-                  const uniqueUsers = [];
-                  for (const u of sortedByDate) {
-                    if (!seenNicks.has(u.nickname)) {
-                      seenNicks.add(u.nickname);
-                      uniqueUsers.push(u);
-                    }
                   }
                   const usersWithStatus = uniqueUsers.map(u => ({
                     ...u,
@@ -1956,7 +1961,14 @@
 
             pollForMatch();
             const interval = setInterval(pollForMatch, 2000);
-            return () => clearInterval(interval);
+            // Auto-sblocco: se entro 45s nessuno accetta, libera il latch e rimuove
+            // l'invito pendente. Senza questo, alla scadenza il bottone "invita" resta
+            // nascosto per sempre e non si puo' piu' reinvitare (stallo osservato nei test).
+            const expiry = setTimeout(async () => {
+              await supabase.from('telepathy_invites').delete().eq('from_id', sessionId).eq('to_id', directInviteTarget.id);
+              setDirectInviteTarget(null);
+            }, 45000);
+            return () => { clearInterval(interval); clearTimeout(expiry); };
           }, [directInviteTarget, partner, sessionId]);
 
           // Chat in-match telepatia
@@ -2074,6 +2086,16 @@
               type: 'telepathy_invite',
               message: `${nickname} ti ha invitato a un training telepatico`
             });
+          };
+
+          // Annulla l'invito in sospeso: libera il latch lato client e rimuove la riga
+          // pendente dal DB, così il bottone "invita" ricompare e si puo' reinviare.
+          const cancelDirectInvite = async () => {
+            const target = directInviteTarget;
+            setDirectInviteTarget(null);
+            if (target) {
+              await supabase.from('telepathy_invites').delete().eq('from_id', sessionId).eq('to_id', target.id);
+            }
           };
 
           const acceptInvite = async () => {
@@ -2310,7 +2332,11 @@
                   experienceLevel: p.experience_level || '',
                   telepathyScore: p.telepathy_score || 0,
                   telepathyBest: p.telepathy_best || 0,
-                  showTelepathyScore: p.show_telepathy_score !== false
+                  showTelepathyScore: p.show_telepathy_score !== false,
+                  // Registrato = ha una riga in profiles. È la stessa condizione che
+                  // get_my_messages richiede per LEGGERE i messaggi: se non ce l'ha,
+                  // non potrebbe comunque riceverli (i guest non salvano su profiles).
+                  registered: true
                 });
               } else {
                 setViewingProfile({
@@ -2323,7 +2349,8 @@
                   experienceLevel: '',
                   telepathyScore: 0,
                   telepathyBest: 0,
-                  empty: true
+                  empty: true,
+                  registered: false
                 });
               }
             } catch (err) {
@@ -2436,6 +2463,10 @@
           const submitPrivateMessage = async () => {
             const txt = newPrivateMessage;
             if (!txt.trim() || !viewingProfile || savingContent) return;
+            // Niente falso "inviato": se il destinatario non è registrato non può
+            // ricevere/leggere i messaggi (la RPC di lettura richiede un profilo). L'UI
+            // già nasconde l'input, questa è una guardia di sicurezza.
+            if (!viewingProfile.registered) { showErrorToast(); return; }
             setNewPrivateMessage('');
             setSavingContent(true);
             const ok = await sendPrivateMessage(viewingProfile.nickname, txt);
@@ -3492,7 +3523,16 @@
                                     </button>
                                   )}
                                   {directInviteTarget?.id === u.id && (
-                                    <span className="text-secondary text-xs">{t.telepathy.inviteSent}</span>
+                                    <span style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+                                      <span className="text-secondary text-xs">{t.telepathy.inviteSent}</span>
+                                      <button
+                                        onClick={cancelDirectInvite}
+                                        className="text-secondary text-xs"
+                                        style={{textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', padding: 0}}
+                                      >
+                                        {t.telepathy.cancel}
+                                      </button>
+                                    </span>
                                   )}
                                 </div>
                               ))}
@@ -4104,7 +4144,12 @@
                           <p className="text-secondary text-sm">{t.messages.guestPrompt}</p>
                         </div>
                       )}
-                      {viewingProfile.nickname !== nickname && !isGuest && (
+                      {viewingProfile.nickname !== nickname && !isGuest && !viewingProfile.registered && (
+                        <div className="bg-glass-dark rounded-xl p-3 text-center">
+                          <p className="text-secondary text-sm">{t.messages.receiverNotRegistered}</p>
+                        </div>
+                      )}
+                      {viewingProfile.nickname !== nickname && !isGuest && viewingProfile.registered && (
                         <div>
                           <p className="text-secondary text-xs mb-2">{t.messages.title}</p>
                           <div className="bg-glass-dark rounded-xl" style={{maxHeight: '250px', display: 'flex', flexDirection: 'column'}}>

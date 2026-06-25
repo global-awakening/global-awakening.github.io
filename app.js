@@ -524,6 +524,7 @@ const translations = {
       subtitle: "Private conversations",
       noConversations: "No conversations yet. Visit a profile and send a message!",
       guestPrompt: "Register to send private messages",
+      receiverNotRegistered: "This starseed isn't registered yet, so they can't receive private messages. Invite them to register!",
       placeholder: "Type a message...",
       send: "Send",
       sendMessage: "Send Message",
@@ -832,6 +833,7 @@ const translations = {
       subtitle: "Conversazioni private",
       noConversations: "Nessuna conversazione. Visita un profilo e invia un messaggio!",
       guestPrompt: "Registrati per inviare messaggi privati",
+      receiverNotRegistered: "Questo starseed non è ancora registrato, quindi non può ricevere messaggi privati. Invitalo a registrarsi!",
       placeholder: "Scrivi un messaggio...",
       send: "Invia",
       sendMessage: "Invia Messaggio",
@@ -1253,7 +1255,16 @@ function GlobalAwakeningPlatform() {
             lng: myLng
           }]);
         } else {
-          setOnlineUsers(data && data.length > 0 ? data : [{
+          const sortedByDate = (data || []).slice().sort((a, b) => new Date(b.last_seen) - new Date(a.last_seen));
+          const seenNicks = new Set();
+          const uniqueUsers = [];
+          for (const u of sortedByDate) {
+            if (!seenNicks.has(u.nickname)) {
+              seenNicks.add(u.nickname);
+              uniqueUsers.push(u);
+            }
+          }
+          setOnlineUsers(uniqueUsers.length > 0 ? uniqueUsers : [{
             id: sessionId,
             nickname,
             lat: myLat,
@@ -1268,15 +1279,6 @@ function GlobalAwakeningPlatform() {
               busyIds.add(m.user1_id);
               busyIds.add(m.user2_id);
             });
-          }
-          const sortedByDate = (data || []).slice().sort((a, b) => new Date(b.last_seen) - new Date(a.last_seen));
-          const seenNicks = new Set();
-          const uniqueUsers = [];
-          for (const u of sortedByDate) {
-            if (!seenNicks.has(u.nickname)) {
-              seenNicks.add(u.nickname);
-              uniqueUsers.push(u);
-            }
           }
           const usersWithStatus = uniqueUsers.map(u => ({
             ...u,
@@ -2210,7 +2212,14 @@ function GlobalAwakeningPlatform() {
     };
     pollForMatch();
     const interval = setInterval(pollForMatch, 2000);
-    return () => clearInterval(interval);
+    const expiry = setTimeout(async () => {
+      await supabase.from('telepathy_invites').delete().eq('from_id', sessionId).eq('to_id', directInviteTarget.id);
+      setDirectInviteTarget(null);
+    }, 45000);
+    return () => {
+      clearInterval(interval);
+      clearTimeout(expiry);
+    };
   }, [directInviteTarget, partner, sessionId]);
   useEffect(() => {
     if (!matchId) return;
@@ -2319,6 +2328,13 @@ function GlobalAwakeningPlatform() {
       type: 'telepathy_invite',
       message: `${nickname} ti ha invitato a un training telepatico`
     });
+  };
+  const cancelDirectInvite = async () => {
+    const target = directInviteTarget;
+    setDirectInviteTarget(null);
+    if (target) {
+      await supabase.from('telepathy_invites').delete().eq('from_id', sessionId).eq('to_id', target.id);
+    }
   };
   const acceptInvite = async () => {
     if (!incomingInvite) return;
@@ -2546,7 +2562,8 @@ function GlobalAwakeningPlatform() {
           experienceLevel: p.experience_level || '',
           telepathyScore: p.telepathy_score || 0,
           telepathyBest: p.telepathy_best || 0,
-          showTelepathyScore: p.show_telepathy_score !== false
+          showTelepathyScore: p.show_telepathy_score !== false,
+          registered: true
         });
       } else {
         setViewingProfile({
@@ -2559,7 +2576,8 @@ function GlobalAwakeningPlatform() {
           experienceLevel: '',
           telepathyScore: 0,
           telepathyBest: 0,
-          empty: true
+          empty: true,
+          registered: false
         });
       }
     } catch (err) {
@@ -2674,6 +2692,10 @@ function GlobalAwakeningPlatform() {
   const submitPrivateMessage = async () => {
     const txt = newPrivateMessage;
     if (!txt.trim() || !viewingProfile || savingContent) return;
+    if (!viewingProfile.registered) {
+      showErrorToast();
+      return;
+    }
     setNewPrivateMessage('');
     setSavingContent(true);
     const ok = await sendPrivateMessage(viewingProfile.nickname, txt);
@@ -4165,8 +4187,24 @@ function GlobalAwakeningPlatform() {
       padding: '0.3rem 0.75rem'
     }
   }, t.telepathy.propose), directInviteTarget?.id === u.id && React.createElement("span", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '0.5rem'
+    }
+  }, React.createElement("span", {
     className: "text-secondary text-xs"
-  }, t.telepathy.inviteSent))))), React.createElement("button", {
+  }, t.telepathy.inviteSent), React.createElement("button", {
+    onClick: cancelDirectInvite,
+    className: "text-secondary text-xs",
+    style: {
+      textDecoration: 'underline',
+      background: 'none',
+      border: 'none',
+      cursor: 'pointer',
+      padding: 0
+    }
+  }, t.telepathy.cancel)))))), React.createElement("button", {
     onClick: startSearching,
     className: "btn-primary w-full",
     style: {
@@ -5196,7 +5234,11 @@ function GlobalAwakeningPlatform() {
     className: "bg-glass-dark rounded-xl p-3 text-center"
   }, React.createElement("p", {
     className: "text-secondary text-sm"
-  }, t.messages.guestPrompt)), viewingProfile.nickname !== nickname && !isGuest && React.createElement("div", null, React.createElement("p", {
+  }, t.messages.guestPrompt)), viewingProfile.nickname !== nickname && !isGuest && !viewingProfile.registered && React.createElement("div", {
+    className: "bg-glass-dark rounded-xl p-3 text-center"
+  }, React.createElement("p", {
+    className: "text-secondary text-sm"
+  }, t.messages.receiverNotRegistered)), viewingProfile.nickname !== nickname && !isGuest && viewingProfile.registered && React.createElement("div", null, React.createElement("p", {
     className: "text-secondary text-xs mb-2"
   }, t.messages.title), React.createElement("div", {
     className: "bg-glass-dark rounded-xl",
