@@ -6,6 +6,11 @@ alter table public.telepathy_matches
   add column if not exists ended_at timestamptz,
   add column if not exists ended_by text;
 
+-- NB: ended_by contiene il session token del client (sessionId lato app), MAI l'email
+-- dell'utente autenticato: la tabella e' letta senza filtri durante il matchmaking
+-- (world-readable di fatto), quindi nessun dato personale va scritto qui. Il valore
+-- serve solo per un confronto di uguaglianza lato client, non viene mai renderizzato.
+
 -- RPC trustful (pattern del progetto): chiunque conosca il match_id puo' marcarlo terminato.
 -- Non cancella il record subito: lascia che l'altro lato lo rilevi via polling prima del cleanup.
 create or replace function public.end_telepathy_match(p_match_id uuid, p_ended_by text)

@@ -2089,7 +2089,7 @@ function GlobalAwakeningPlatform() {
       }
       const match = data[0];
       if (match.ended_at) {
-        if (match.ended_by && match.ended_by !== (userEmail || sessionId)) setPartnerDisconnected(true);
+        if (match.ended_by && match.ended_by !== sessionId) setPartnerDisconnected(true);
         setSessionEnded(true);
         setShowResult(false);
         setWaitingForPartner(false);
@@ -2178,7 +2178,7 @@ function GlobalAwakeningPlatform() {
       }
       const match = data[0];
       if (match.ended_at) {
-        if (match.ended_by && match.ended_by !== (userEmail || sessionId)) setPartnerDisconnected(true);
+        if (match.ended_by && match.ended_by !== sessionId) setPartnerDisconnected(true);
         setSessionEnded(true);
         setShowResult(false);
         setWaitingForPartner(false);
@@ -2561,7 +2561,7 @@ function GlobalAwakeningPlatform() {
             error: endErr
           } = await supabase.rpc('end_telepathy_match', {
             p_match_id: matchId,
-            p_ended_by: userEmail || sessionId
+            p_ended_by: sessionId
           });
           flagSet = !endErr;
         } catch (e) {}

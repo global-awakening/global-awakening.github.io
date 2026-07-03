@@ -1811,7 +1811,7 @@
               // lati chiudono in modo identico e deterministico, invece di dedurlo dalla
               // scomparsa del record (che dipendeva dal timing della delete lato chiudente).
               if (match.ended_at) {
-                if (match.ended_by && match.ended_by !== (userEmail || sessionId)) setPartnerDisconnected(true);
+                if (match.ended_by && match.ended_by !== sessionId) setPartnerDisconnected(true);
                 setSessionEnded(true);
                 setShowResult(false);
                 setWaitingForPartner(false);
@@ -1931,7 +1931,7 @@
               }
               const match = data[0];
               if (match.ended_at) {
-                if (match.ended_by && match.ended_by !== (userEmail || sessionId)) setPartnerDisconnected(true);
+                if (match.ended_by && match.ended_by !== sessionId) setPartnerDisconnected(true);
                 setSessionEnded(true);
                 setShowResult(false);
                 setWaitingForPartner(false);
@@ -2335,7 +2335,7 @@
                 // in sicurezza sul vecchio comportamento (delete immediata sotto).
                 let flagSet = false;
                 try {
-                  const { error: endErr } = await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: (userEmail || sessionId) });
+                  const { error: endErr } = await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: sessionId });
                   flagSet = !endErr;
                 } catch (e) { /* RPC non ancora applicata: si continua col vecchio path (delete) */ }
                 // Cancella subito la chat per non lasciare messaggi orfani in telepathy_chat
