@@ -270,13 +270,20 @@ async function cleanup() {
     // B (vittima della disconnessione) deve vedere il BANNER "ha terminato la sessione"
     // e NON il bottone "Ancora". Nota: la schermata "Sessione Completata!" e' riservata a chi
     // ha terminato volontariamente — non a chi e' stato terminato (UX bug fix bonus).
-    await pageB.waitForTimeout(7000); // attesa max checkPartnerLeft (5s)
+    // Task A1: endSession ritarda la delete del match SOLO se la RPC end_telepathy_match ha
+    // scritto con successo il flag ended_at (migration 14_telepathy_session_end.sql applicata),
+    // perche' solo in quel caso l'altro lato puo' effettivamente leggerlo via polling. Finche'
+    // la migration non e' applicata la RPC fallisce e si ricade sul comportamento pre-A1
+    // (delete immediata) — stessa tempistica di sempre, nessun margine aggiuntivo necessario.
+    await pageB.waitForTimeout(7000);
 
     const partnerLeftBanner = await pageB.locator(':text("ha terminato la sessione"), :text("ended the session")').count();
     if (partnerLeftBanner > 0) {
       pass('B vede il banner "partner ha terminato la sessione"');
     } else {
       fail('B NON vede il banner "partner ha terminato la sessione"');
+      const bBody = await pageB.evaluate(() => document.body.innerText.substring(0, 1500).replace(/\s+/g, ' '));
+      log('DEBUG', `B body (1500 char): ${bBody}`);
     }
 
     const ancoraBtn = await pageB.locator('button:has-text("Ancora"), button:has-text("Again")').count();

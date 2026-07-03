@@ -734,6 +734,11 @@
           const [resultCountdown, setResultCountdown] = useState(null);
           // Tiene traccia dell'ultimo round_count processato per evitare doppio processing
           const lastProcessedRoundRef = React.useRef(-1);
+          // Task A1: memorizza se le colonne ended_at/ended_by esistono su Supabase (migration
+          // 14_ applicata). Finche' non e' applicata, evita di ritentare la select con quelle
+          // colonne ad ogni poll (ogni 2s per tutta la sessione): raddoppierebbe le richieste
+          // di checkPartnerLeft inutilmente. Ottimistico (true) finche' non si osserva un errore.
+          const endedColumnsSupportedRef = React.useRef(true);
           const [isMatch, setIsMatch] = useState(false);
           const [matchId, setMatchId] = useState(null);
           const [matchUser1Id, setMatchUser1Id] = useState(null); // user1 del match = primo chooser (cambio-modalità a turni)
@@ -1802,6 +1807,17 @@
               }
               const match = data[0];
 
+              // Fine sessione come stato condiviso su DB (flag ended_at/ended_by): entrambi i
+              // lati chiudono in modo identico e deterministico, invece di dedurlo dalla
+              // scomparsa del record (che dipendeva dal timing della delete lato chiudente).
+              if (match.ended_at) {
+                if (match.ended_by && match.ended_by !== (userEmail || sessionId)) setPartnerDisconnected(true);
+                setSessionEnded(true);
+                setShowResult(false);
+                setWaitingForPartner(false);
+                return;
+              }
+
               // Cattura user1_id (= primo chooser del cambio-modalità a turni) appena disponibile.
               if (match.user1_id) setMatchUser1Id(match.user1_id);
 
@@ -1895,9 +1911,27 @@
           useEffect(() => {
             if (!matchId) return;
             const checkPartnerLeft = async () => {
-              const { data } = await supabase.from('telepathy_matches').select('id').eq('id', matchId);
+              // Evita di riprovare la select con ended_at/ended_by ad ogni tick (ogni 2s per
+              // tutta la sessione) una volta appurato che le colonne non esistono ancora
+              // (migration 14_ non applicata): raddoppierebbe inutilmente le richieste.
+              let data, error;
+              if (endedColumnsSupportedRef.current) {
+                ({ data, error } = await supabase.from('telepathy_matches').select('id, ended_at, ended_by').eq('id', matchId));
+                if (error) endedColumnsSupportedRef.current = false;
+              }
+              if (!endedColumnsSupportedRef.current) {
+                ({ data } = await supabase.from('telepathy_matches').select('id').eq('id', matchId));
+              }
               if (!data || data.length === 0) {
                 setPartnerDisconnected(true);
+                setSessionEnded(true);
+                setShowResult(false);
+                setWaitingForPartner(false);
+                return;
+              }
+              const match = data[0];
+              if (match.ended_at) {
+                if (match.ended_by && match.ended_by !== (userEmail || sessionId)) setPartnerDisconnected(true);
                 setSessionEnded(true);
                 setShowResult(false);
                 setWaitingForPartner(false);
@@ -2295,10 +2329,29 @@
                 }).eq('session_id', sessionId);
               }
               if (matchId) {
-                // Cancella anche la chat per non lasciare messaggi orfani in telepathy_chat
+                // Marca il flag di fine sessione PRIMA di cancellare, cosi' l'altro lato
+                // lo rileva via polling in modo deterministico (vedi pollResult/checkPartnerLeft).
+                // Best-effort: se la RPC/colonne non sono ancora applicate su Supabase, degrada
+                // in sicurezza sul vecchio comportamento (delete immediata sotto).
+                let flagSet = false;
+                try {
+                  const { error: endErr } = await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: (userEmail || sessionId) });
+                  flagSet = !endErr;
+                } catch (e) { /* RPC non ancora applicata: si continua col vecchio path (delete) */ }
+                // Cancella subito la chat per non lasciare messaggi orfani in telepathy_chat
                 // (la tabella non ha ON DELETE CASCADE).
                 await supabase.from('telepathy_chat').delete().eq('match_id', matchId);
-                await supabase.from('telepathy_matches').delete().eq('id', matchId);
+                if (flagSet) {
+                  // Il flag e' stato scritto con successo: ritarda la delete del match cosi'
+                  // l'altro lato fa in tempo a leggere ended_at nel polling (2s) prima del cleanup.
+                  setTimeout(() => { supabase.from('telepathy_matches').delete().eq('id', matchId); }, 6000);
+                } else {
+                  // Migration non applicata: nessuno potra' mai leggere il flag, quindi ritardare
+                  // la delete non avrebbe alcun beneficio e introdurrebbe solo il rischio che il
+                  // timer non arrivi mai a compimento (es. tab in background/throttled dal
+                  // browser) lasciando il record orfano. Si mantiene il comportamento pre-A1.
+                  await supabase.from('telepathy_matches').delete().eq('id', matchId);
+                }
               }
             } catch (err) {
               console.warn('endSession error:', err);

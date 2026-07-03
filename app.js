@@ -959,6 +959,7 @@ function GlobalAwakeningPlatform() {
   const [showResult, setShowResult] = useState(false);
   const [resultCountdown, setResultCountdown] = useState(null);
   const lastProcessedRoundRef = React.useRef(-1);
+  const endedColumnsSupportedRef = React.useRef(true);
   const [isMatch, setIsMatch] = useState(false);
   const [matchId, setMatchId] = useState(null);
   const [matchUser1Id, setMatchUser1Id] = useState(null);
@@ -2087,6 +2088,13 @@ function GlobalAwakeningPlatform() {
         return;
       }
       const match = data[0];
+      if (match.ended_at) {
+        if (match.ended_by && match.ended_by !== (userEmail || sessionId)) setPartnerDisconnected(true);
+        setSessionEnded(true);
+        setShowResult(false);
+        setWaitingForPartner(false);
+        return;
+      }
       if (match.user1_id) setMatchUser1Id(match.user1_id);
       const dbRound = match.round_count || 0;
       if (match.sender_symbol && match.receiver_guess && dbRound > lastProcessedRoundRef.current) {
@@ -2148,11 +2156,29 @@ function GlobalAwakeningPlatform() {
   useEffect(() => {
     if (!matchId) return;
     const checkPartnerLeft = async () => {
-      const {
-        data
-      } = await supabase.from('telepathy_matches').select('id').eq('id', matchId);
+      let data, error;
+      if (endedColumnsSupportedRef.current) {
+        ({
+          data,
+          error
+        } = await supabase.from('telepathy_matches').select('id, ended_at, ended_by').eq('id', matchId));
+        if (error) endedColumnsSupportedRef.current = false;
+      }
+      if (!endedColumnsSupportedRef.current) {
+        ({
+          data
+        } = await supabase.from('telepathy_matches').select('id').eq('id', matchId));
+      }
       if (!data || data.length === 0) {
         setPartnerDisconnected(true);
+        setSessionEnded(true);
+        setShowResult(false);
+        setWaitingForPartner(false);
+        return;
+      }
+      const match = data[0];
+      if (match.ended_at) {
+        if (match.ended_by && match.ended_by !== (userEmail || sessionId)) setPartnerDisconnected(true);
         setSessionEnded(true);
         setShowResult(false);
         setWaitingForPartner(false);
@@ -2529,8 +2555,24 @@ function GlobalAwakeningPlatform() {
         }).eq('session_id', sessionId);
       }
       if (matchId) {
+        let flagSet = false;
+        try {
+          const {
+            error: endErr
+          } = await supabase.rpc('end_telepathy_match', {
+            p_match_id: matchId,
+            p_ended_by: userEmail || sessionId
+          });
+          flagSet = !endErr;
+        } catch (e) {}
         await supabase.from('telepathy_chat').delete().eq('match_id', matchId);
-        await supabase.from('telepathy_matches').delete().eq('id', matchId);
+        if (flagSet) {
+          setTimeout(() => {
+            supabase.from('telepathy_matches').delete().eq('id', matchId);
+          }, 6000);
+        } else {
+          await supabase.from('telepathy_matches').delete().eq('id', matchId);
+        }
       }
     } catch (err) {
       console.warn('endSession error:', err);
