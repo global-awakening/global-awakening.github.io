@@ -1799,6 +1799,9 @@
 
             const pollResult = async () => {
               const { data } = await supabase.from('telepathy_matches').select('*').eq('id', matchId);
+              // Match cambiato mentre la select era in volo (Accept post-sessione crea un match
+              // nuovo): non applicare esiti/flag del match vecchio sulla sessione nuova.
+              if (matchIdRef.current !== matchId) return;
               if (!data || data.length === 0) {
                 // Il partner ha abbandonato la sessione — forza fine sessione su questo lato
                 setPartnerDisconnected(true);
@@ -1924,6 +1927,11 @@
               if (!endedColumnsSupportedRef.current) {
                 ({ data } = await supabase.from('telepathy_matches').select('id').eq('id', matchId));
               }
+              // Se il match e' cambiato mentre la select era in volo (es. Accept di un nuovo
+              // invito da schermata "sessione conclusa": resetTelepathy azzera il match OLD e se
+              // ne crea uno NUOVO), NON scrivere flag di fine sessione: apparterrebbero al match
+              // vecchio ma colpirebbero la sessione nuova (race stale-write esposta da A5).
+              if (matchIdRef.current !== matchId) return;
               if (!data || data.length === 0) {
                 setPartnerDisconnected(true);
                 setSessionEnded(true);
@@ -1944,7 +1952,7 @@
                 const { data: pu } = await supabase.from('online_users').select('last_seen').eq('id', partner.id);
                 if (pu && pu.length > 0) {
                   const stale = Date.now() - new Date(pu[0].last_seen).getTime() > 35000;
-                  if (stale) setPartnerDisconnected(true);
+                  if (stale && matchIdRef.current === matchId) setPartnerDisconnected(true);
                 }
               }
             };
@@ -2188,11 +2196,18 @@
 
           const acceptInvite = async () => {
             if (!incomingInvite) return;
-            // Guard: non accettare se sono gia' in un match (evita di sovrascrivere lo stato)
-            if (matchId || partner) {
-              console.warn('acceptInvite: gia\' in sessione, ignoro invito');
+            // Guard: non sovrascrivere una sessione ATTIVA. Ma se la precedente e' conclusa
+            // (sessionEnded) o il partner si e' disconnesso, NON bloccare: bug 2 — dalla
+            // schermata "sessione conclusa" l'Accept non funzionava perche' `partner` era
+            // ancora valorizzato mentre sessionEnded === true.
+            if ((matchId || partner) && !sessionEnded && !partnerDisconnected) {
+              console.warn('acceptInvite: gia\' in sessione attiva, ignoro invito');
               return;
             }
+            // Sessione precedente conclusa/abbandonata: reset completo prima di entrare nella
+            // nuova (cancella match/queue/inviti vecchi e azzera lo stato residuo). Non tocca
+            // incomingInvite (resetTelepathy cancella solo gli inviti in uscita from_id=sessionId).
+            if (matchId || partner) resetTelepathy();
             // Anticipare setSearchingPartner(false) per evitare che findPartner crei un altro match
             // in parallelo durante l'await dell'INSERT (race con random matching).
             setSearchingPartner(false);

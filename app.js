@@ -2082,6 +2082,7 @@ function GlobalAwakeningPlatform() {
       const {
         data
       } = await supabase.from('telepathy_matches').select('*').eq('id', matchId);
+      if (matchIdRef.current !== matchId) return;
       if (!data || data.length === 0) {
         setPartnerDisconnected(true);
         setSessionEnded(true);
@@ -2171,6 +2172,7 @@ function GlobalAwakeningPlatform() {
           data
         } = await supabase.from('telepathy_matches').select('id').eq('id', matchId));
       }
+      if (matchIdRef.current !== matchId) return;
       if (!data || data.length === 0) {
         setPartnerDisconnected(true);
         setSessionEnded(true);
@@ -2192,7 +2194,7 @@ function GlobalAwakeningPlatform() {
         } = await supabase.from('online_users').select('last_seen').eq('id', partner.id);
         if (pu && pu.length > 0) {
           const stale = Date.now() - new Date(pu[0].last_seen).getTime() > 35000;
-          if (stale) setPartnerDisconnected(true);
+          if (stale && matchIdRef.current === matchId) setPartnerDisconnected(true);
         }
       }
     };
@@ -2397,10 +2399,11 @@ function GlobalAwakeningPlatform() {
   };
   const acceptInvite = async () => {
     if (!incomingInvite) return;
-    if (matchId || partner) {
-      console.warn('acceptInvite: gia\' in sessione, ignoro invito');
+    if ((matchId || partner) && !sessionEnded && !partnerDisconnected) {
+      console.warn('acceptInvite: gia\' in sessione attiva, ignoro invito');
       return;
     }
+    if (matchId || partner) resetTelepathy();
     setSearchingPartner(false);
     const myRole = Math.random() > 0.5 ? 'sender' : 'receiver';
     const theirRole = myRole === 'sender' ? 'receiver' : 'sender';

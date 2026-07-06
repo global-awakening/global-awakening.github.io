@@ -70,6 +70,49 @@ async function cleanupMatch(matchId) {
   console.log(`  Sessioni simulate: ${SID_A} ↔ ${SID_B}`);
   console.log('══════════════════════════════════════════════════\n');
 
+  // ══════════════════════════════════════════════════════════════════════
+  // PARTE A5 — logica "accept da schermata sessione conclusa" (bug 2).
+  // Sempre eseguita (non dipende dalla migration): è logica client-side.
+  // ══════════════════════════════════════════════════════════════════════
+  console.log('— A5: guard acceptInvite (accept da sessione conclusa) —');
+
+  // Replica 1:1 del guard inline in src/app.jsx (non importabile dal monolite):
+  // true = accept BLOCCATO (early return). Deve bloccare SOLO una sessione ATTIVA.
+  const acceptBlocked = ({ matchId, partner, sessionEnded, partnerDisconnected }) =>
+    !!(matchId || partner) && !sessionEnded && !partnerDisconnected;
+
+  if (acceptBlocked({ matchId: 'm', partner: { id: 'p' }, sessionEnded: false, partnerDisconnected: false }) === true)
+    pass('sessione ATTIVA: accept bloccato (non sovrascrive lo stato vivo)');
+  else fail('sessione attiva: accept dovrebbe essere bloccato');
+
+  if (acceptBlocked({ matchId: 'm', partner: { id: 'p' }, sessionEnded: true, partnerDisconnected: false }) === false)
+    pass('sessione CONCLUSA: accept NON bloccato (bug 2 chiuso)');
+  else fail('sessione conclusa: accept NON deve essere bloccato');
+
+  if (acceptBlocked({ matchId: 'm', partner: { id: 'p' }, sessionEnded: false, partnerDisconnected: true }) === false)
+    pass('partner DISCONNESSO: accept NON bloccato');
+  else fail('partner disconnesso: accept NON deve essere bloccato');
+
+  if (acceptBlocked({ matchId: null, partner: null, sessionEnded: false, partnerDisconnected: false }) === false)
+    pass('nessuna sessione: accept NON bloccato');
+  else fail('nessuna sessione: accept NON deve essere bloccato');
+
+  // Source-analysis: la truth-table sopra deve corrispondere al codice reale.
+  const fs = require('fs');
+  const path = require('path');
+  const appSrc = fs.readFileSync(path.join(__dirname, 'src', 'app.jsx'), 'utf8');
+  const aiStart = appSrc.indexOf('const acceptInvite = async');
+  const aiEnd = appSrc.indexOf('const declineInvite', aiStart);
+  const ai = (aiStart >= 0 && aiEnd >= 0) ? appSrc.slice(aiStart, aiEnd) : '';
+  if (/&& !sessionEnded && !partnerDisconnected/.test(ai))
+    pass('src: guard acceptInvite rilassato su sessionEnded/partnerDisconnected');
+  else fail('src: guard acceptInvite NON rilassato (bug 2 ancora presente)');
+  if (/resetTelepathy\(\)/.test(ai))
+    pass('src: acceptInvite resetta la sessione precedente prima di entrare nella nuova');
+  else fail('src: acceptInvite non chiama resetTelepathy prima di entrare');
+
+  console.log('');
+
   let matchId = null;
 
   try {
