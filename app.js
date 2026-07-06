@@ -611,6 +611,7 @@ const translations = {
       accuracyColon: "Accuracy:",
       playAgainWith: "Play again with",
       backToLobbyCap: "Back to Lobby",
+      leaveSession: "Leave session",
       chatWith: "Chat with",
       noMessages: "No messages yet",
       chatPlaceholder: "Type...",
@@ -920,6 +921,7 @@ const translations = {
       accuracyColon: "Precisione:",
       playAgainWith: "Altra sessione con",
       backToLobbyCap: "Torna alla Lobby",
+      leaveSession: "Esci dalla sessione",
       chatWith: "Chat con",
       noMessages: "Nessun messaggio ancora",
       chatPlaceholder: "Scrivi...",
@@ -2327,6 +2329,17 @@ function GlobalAwakeningPlatform() {
     setSenderHasSent(false);
     setTelepathyChatMessages([]);
     setNewTelepathyMessage('');
+  };
+  const leaveSession = async () => {
+    if (matchId) {
+      try {
+        await supabase.rpc('end_telepathy_match', {
+          p_match_id: matchId,
+          p_ended_by: sessionId
+        });
+      } catch (e) {}
+    }
+    resetTelepathy();
   };
   const sendDirectInvite = async targetUser => {
     if (directInviteTarget) {
@@ -4608,7 +4621,13 @@ function GlobalAwakeningPlatform() {
     className: "pulse-glow mb-4"
   }, "\uD83D\uDD2E"), React.createElement("p", {
     className: "text-primary"
-  }, effectiveRole === 'sender' ? t.telepathy.senderWaiting : t.telepathy.receiverWaiting))), showResult && !partnerDisconnected && !sessionEnded && React.createElement("div", {
+  }, effectiveRole === 'sender' ? t.telepathy.senderWaiting : t.telepathy.receiverWaiting)), (showLevelBanner || waitingForPartner || effectiveRole === 'receiver' && !senderHasSent) && React.createElement("button", {
+    onClick: leaveSession,
+    className: "btn-secondary w-full",
+    style: {
+      marginTop: '0.25rem'
+    }
+  }, t.telepathy.leaveSession)), showResult && !partnerDisconnected && !sessionEnded && React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',

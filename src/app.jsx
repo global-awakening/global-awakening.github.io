@@ -400,6 +400,7 @@
               accuracyColon: "Accuracy:",
               playAgainWith: "Play again with",
               backToLobbyCap: "Back to Lobby",
+              leaveSession: "Leave session",
               chatWith: "Chat with",
               noMessages: "No messages yet",
               chatPlaceholder: "Type...",
@@ -692,6 +693,7 @@
               accuracyColon: "Precisione:",
               playAgainWith: "Altra sessione con",
               backToLobbyCap: "Torna alla Lobby",
+              leaveSession: "Esci dalla sessione",
               chatWith: "Chat con",
               noMessages: "Nessun messaggio ancora",
               chatPlaceholder: "Scrivi...",
@@ -2090,6 +2092,19 @@
             setSenderHasSent(false);
             setTelepathyChatMessages([]);
             setNewTelepathyMessage('');
+          };
+
+          // A2: uscita rapida anti-stallo, sempre disponibile nelle attese.
+          // Diversa da endSession (chiusura graziosa con recap+punteggio): qui si abbandona
+          // e si torna in lobby senza recap. Marca il flag ended (best-effort, no PII: session
+          // token come in A1) cosi' l'altro lato esce anche lui via polling; resetTelepathy
+          // resta il fallback affidabile (cancella il match -> l'altro rileva partner uscito).
+          const leaveSession = async () => {
+            if (matchId) {
+              try { await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: sessionId }); }
+              catch (e) { /* RPC/colonne non ancora applicate: resetTelepathy cancella comunque il match */ }
+            }
+            resetTelepathy();
           };
 
           const sendDirectInvite = async (targetUser) => {
@@ -3786,6 +3801,14 @@
                                     {effectiveRole === 'sender' ? t.telepathy.senderWaiting : t.telepathy.receiverWaiting}
                                   </p>
                                 </div>
+                              )}
+
+                              {/* A2: uscita anti-stallo nelle sole attese (bug 5) — nel turno attivo
+                                  basta la ✕ Termina Sessione; qui invece si potrebbe restare appesi. */}
+                              {(showLevelBanner || waitingForPartner || (effectiveRole === 'receiver' && !senderHasSent)) && (
+                                <button onClick={leaveSession} className="btn-secondary w-full" style={{marginTop: '0.25rem'}}>
+                                  {t.telepathy.leaveSession}
+                                </button>
                               )}
                             </div>
                           )}

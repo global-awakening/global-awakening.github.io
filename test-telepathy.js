@@ -29,7 +29,7 @@ function fail(msg) { console.log(`  ❌ ${msg}`); process.exitCode = 1; }
 // Nickname FISSI del test. La pulizia pre-run azzera lo stato lasciato da un run
 // precedente interrotto (code in telepathy_queue, inviti pending, sessioni, presence):
 // è la causa più probabile dei "capricci" di questo test. La post-run evita accumulo.
-// Usa la service_role key via test-helpers; senza chiave degrada con un warning.
+// Usa la chiave di servizio (service-role) via test-helpers; senza chiave degrada con un warning.
 const NICK_A = 'TestUserA';
 const NICK_B = 'TestUserB';
 // sessionId FISSI dei due ospiti di test (impostati via addInitScript prima del
@@ -147,7 +147,8 @@ async function clickTerminaSessione(page, nickname) {
   // lo rimuove dopo ~4.5s (showResult→false), causando click-timeout intermittenti.
   // La X (app.html:3987) è visibile per tutta la sessione (partner && !sessionEnded) → race-free.
   await page.locator('button[aria-label="Termina Sessione"], button[aria-label="End Session"]').first().click();
-  await page.locator('button:has-text("Esci"), button:has-text("Leave")').first().click();
+  // Scopa al modal: dopo A2 esiste anche un bottone "Esci dalla sessione" nell'area di gioco.
+  await page.locator('.modal-content button:has-text("Esci"), .modal-content button:has-text("Leave")').first().click();
   log(nickname, `Cliccato "Termina Sessione" (X + conferma)`);
 }
 
@@ -325,7 +326,7 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
     await pageA.waitForSelector('text=/Uscire dalla sessione|Leave session/', { timeout: 5000 });
     pass('Modale conferma apparso');
 
-    await pageA.locator('button:has-text("Esci"), button:has-text("Leave")').first().click();
+    await pageA.locator('.modal-content button:has-text("Esci"), .modal-content button:has-text("Leave")').first().click();
     await pageA.waitForSelector('text=/Sessione Completata|Session Complete/', { timeout: TIMEOUT });
     pass('TestUserA fuori sessione tramite X durante round attivo');
 
