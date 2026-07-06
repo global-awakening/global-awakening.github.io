@@ -2268,15 +2268,16 @@ function GlobalAwakeningPlatform() {
     const checkSenderSent = async () => {
       const {
         data
-      } = await supabase.from('telepathy_matches').select('sender_symbol').eq('id', matchId);
+      } = await supabase.from('telepathy_matches').select('sender_symbol, round_count').eq('id', matchId);
       if (data && data.length > 0) {
-        setSenderHasSent(!!data[0].sender_symbol);
+        const dbRound = data[0].round_count || 0;
+        setSenderHasSent(!!data[0].sender_symbol && dbRound === roundCount);
       }
     };
     checkSenderSent();
     const interval = setInterval(checkSenderSent, 2000);
     return () => clearInterval(interval);
-  }, [matchId, role, effectiveRole, waitingForPartner, showResult]);
+  }, [matchId, role, effectiveRole, waitingForPartner, showResult, roundCount]);
   useEffect(() => {
     if (!showResult || sessionEnded || partnerDisconnected) {
       setResultCountdown(null);
@@ -2293,6 +2294,7 @@ function GlobalAwakeningPlatform() {
       setPartnerSymbol(null);
       setWaitingForPartner(false);
       setResultCountdown(null);
+      setSenderHasSent(false);
     }, 4500);
     return () => {
       clearInterval(tick);
@@ -2436,6 +2438,7 @@ function GlobalAwakeningPlatform() {
     setGuessedSymbol(null);
     setPartnerSymbol(null);
     setWaitingForPartner(false);
+    setSenderHasSent(false);
     setRoundCount(0);
     setSessionMatches(0);
     setActiveTab('telepathy');

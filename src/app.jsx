@@ -2019,21 +2019,30 @@
             return () => clearInterval(interval);
           }, [matchId]);
 
-          // Receiver: controlla se il sender ha già inviato il simbolo
+          // Receiver: controlla se il sender ha già inviato il simbolo DEL ROUND CORRENTE.
           useEffect(() => {
             if (!matchId || effectiveRole !== 'receiver' || waitingForPartner || showResult) return;
 
             const checkSenderSent = async () => {
-              const { data } = await supabase.from('telepathy_matches').select('sender_symbol').eq('id', matchId);
+              const { data } = await supabase.from('telepathy_matches').select('sender_symbol, round_count').eq('id', matchId);
               if (data && data.length > 0) {
-                setSenderHasSent(!!data[0].sender_symbol);
+                // A4/bug 4: un sender_symbol non-null vale come "inviato" SOLO se il round sul DB
+                // combacia con il round locale. Dopo un risultato il receiver avanza subito a
+                // round N+1, ma il vecchio simbolo (round N) resta sul DB finché il sender non
+                // lo pulisce (fino a ~4s dopo, misurati sul SUO clock). Il sender scrive
+                // round_count e sender_symbol=null nello stesso update (atomico), quindi un
+                // simbolo vecchio coesiste sempre con round_count indietro: confrontare i round
+                // evita di sbloccare la griglia leggendo il simbolo del round precedente
+                // (race cross-client), senza dipendere da margini di timing.
+                const dbRound = data[0].round_count || 0;
+                setSenderHasSent(!!data[0].sender_symbol && dbRound === roundCount);
               }
             };
 
             checkSenderSent();
             const interval = setInterval(checkSenderSent, 2000);
             return () => clearInterval(interval);
-          }, [matchId, role, effectiveRole, waitingForPartner, showResult]);
+          }, [matchId, role, effectiveRole, waitingForPartner, showResult, roundCount]);
 
           // Auto-avanzamento: dopo il risultato il gioco riparte da solo dopo 4s (no "Ancora").
           // 4s = combacia con la pulizia dei simboli (sender, ~2255). Bloccato se c'è il banner
@@ -2054,6 +2063,10 @@
               setPartnerSymbol(null);
               setWaitingForPartner(false);
               setResultCountdown(null);
+              // A4/bug 4: azzera anche senderHasSent, altrimenti a inizio nuovo round resta
+              // `true` dal round precedente e la griglia del receiver è cliccabile finché il
+              // polling (ogni 2s) non la corregge. Bloccata dal principio finché il sender invia.
+              setSenderHasSent(false);
             }, 4500);  // dopo la scrittura round_count del sender (4s): evita la race
             return () => { clearInterval(tick); clearTimeout(advance); };
           }, [showResult, sessionEnded, partnerDisconnected]);
@@ -2212,6 +2225,7 @@
             setGuessedSymbol(null);
             setPartnerSymbol(null);
             setWaitingForPartner(false);
+            setSenderHasSent(false); // A4: la griglia receiver parte bloccata finché il sender non invia
             setRoundCount(0);
             setSessionMatches(0);
             setActiveTab('telepathy');
