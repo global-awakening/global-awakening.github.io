@@ -2351,6 +2351,14 @@ function GlobalAwakeningPlatform() {
     }
     resetTelepathy();
   };
+  useEffect(() => {
+    const waitingOnPartner = !!matchId && !sessionEnded && !partnerDisconnected && !showResult && (waitingForPartner || showLevelBanner && !amIChooser || effectiveRole === 'receiver' && !senderHasSent);
+    if (!waitingOnPartner) return;
+    const timer = setTimeout(() => {
+      leaveSession();
+    }, 90000);
+    return () => clearTimeout(timer);
+  }, [matchId, sessionEnded, partnerDisconnected, showResult, waitingForPartner, showLevelBanner, amIChooser, effectiveRole, senderHasSent, roundCount, sessionMatches]);
   const sendDirectInvite = async targetUser => {
     if (directInviteTarget) {
       console.warn('sendDirectInvite: invito gia\' pending, ignoro il secondo');

@@ -2120,6 +2120,19 @@
             resetTelepathy();
           };
 
+          // A3: auto-timeout di inattività (bug desync/stallo). Arma un timer di 90s SOLO
+          // quando si è realmente in attesa dell'azione del partner (non nel proprio turno,
+          // per non buttare fuori chi sta riflettendo). Ogni progresso cambia una dep →
+          // l'effetto si ri-arma; 90s di attesa continua senza progressi → leaveSession
+          // (che, con A1, fa uscire dalla sessione anche il partner via flag/rilevamento).
+          useEffect(() => {
+            const waitingOnPartner = !!matchId && !sessionEnded && !partnerDisconnected && !showResult
+              && (waitingForPartner || (showLevelBanner && !amIChooser) || (effectiveRole === 'receiver' && !senderHasSent));
+            if (!waitingOnPartner) return;
+            const timer = setTimeout(() => { leaveSession(); }, 90000);
+            return () => clearTimeout(timer);
+          }, [matchId, sessionEnded, partnerDisconnected, showResult, waitingForPartner, showLevelBanner, amIChooser, effectiveRole, senderHasSent, roundCount, sessionMatches]);
+
           const sendDirectInvite = async (targetUser) => {
             // Dedup: se ho gia' un invito pending verso qualcuno, non spammare un secondo.
             // L'utente puo' annullare il primo (flusso futuro) o aspettare scadenza/accept.
