@@ -2331,6 +2331,16 @@ function GlobalAwakeningPlatform() {
     setNewTelepathyMessage('');
   };
   const leaveSession = async () => {
+    if (roundCount > 0) {
+      try {
+        await supabase.rpc('increment_telepathy_score', {
+          p_user_id: userEmail || sessionId,
+          p_nickname: nickname || 'Anonymous',
+          p_rounds: roundCount,
+          p_matches: sessionMatches
+        });
+      } catch (e) {}
+    }
     if (matchId) {
       try {
         await supabase.rpc('end_telepathy_match', {

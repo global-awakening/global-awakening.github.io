@@ -2100,6 +2100,19 @@
           // token come in A1) cosi' l'altro lato esce anche lui via polling; resetTelepathy
           // resta il fallback affidabile (cancella il match -> l'altro rileva partner uscito).
           const leaveSession = async () => {
+            // I round gia' giocati sono avvenuti davvero: come endSession, persistili nel
+            // contatore autoritativo (increment_telepathy_score) prima di uscire, cosi' uscire
+            // per stallo non fa perdere statistiche legittime. "Senza recap" != "senza salvare".
+            if (roundCount > 0) {
+              try {
+                await supabase.rpc('increment_telepathy_score', {
+                  p_user_id: userEmail || sessionId,
+                  p_nickname: nickname || 'Anonymous',
+                  p_rounds: roundCount,
+                  p_matches: sessionMatches
+                });
+              } catch (e) { /* best-effort: non bloccare l'uscita se il salvataggio fallisce */ }
+            }
             if (matchId) {
               try { await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: sessionId }); }
               catch (e) { /* RPC/colonne non ancora applicate: resetTelepathy cancella comunque il match */ }
