@@ -789,7 +789,7 @@ const translations = {
     social: {
       viewProfile: "Vedi Profilo",
       telepathyScore: "Round Giocati",
-      bestScore: "% Match",
+      bestScore: "Match %",
       community: "Comunita'",
       noProfile: "Nessun profilo ancora",
       close: "Chiudi",
@@ -1228,6 +1228,27 @@ function GlobalAwakeningPlatform() {
     if (score) setTotalRounds(parseInt(score));
     if (best) setTotalMatches(parseInt(best));
   }, []);
+  useEffect(() => {
+    if (!showEditProfile || !isGuest || !sessionId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const {
+          data
+        } = await supabase.from('telepathy_scores').select('rounds_count,matches_count').eq('user_id', sessionId);
+        if (cancelled || !data || data.length === 0) return;
+        const r = data[0].rounds_count || 0;
+        const m = data[0].matches_count || 0;
+        setTotalRounds(r);
+        setTotalMatches(m);
+        localStorage.setItem('telepathy_score', String(r));
+        localStorage.setItem('telepathy_best', String(m));
+      } catch (e) {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showEditProfile, isGuest, sessionId]);
   useEffect(() => {
     if (!nickname) return;
     const myLat = 20 + Math.random() * 50;
@@ -2631,6 +2652,19 @@ function GlobalAwakeningPlatform() {
       } = await supabase.from('profiles').select('*').eq('nickname', userName);
       if (data && data.length > 0) {
         const p = data[0];
+        let rounds = 0,
+          matches = 0;
+        try {
+          const {
+            data: st
+          } = await supabase.rpc('get_public_telepathy_stats', {
+            p_nickname: userName
+          });
+          if (st && st.length > 0) {
+            rounds = st[0].rounds_count || 0;
+            matches = st[0].matches_count || 0;
+          }
+        } catch (e) {}
         setViewingProfile({
           nickname: p.nickname || userName || 'Anonymous',
           bio: p.bio || '',
@@ -2639,8 +2673,8 @@ function GlobalAwakeningPlatform() {
           country: p.country || '',
           interests: p.interests || [],
           experienceLevel: p.experience_level || '',
-          telepathyScore: p.telepathy_score || 0,
-          telepathyBest: p.telepathy_best || 0,
+          telepathyRounds: rounds || p.telepathy_score || 0,
+          telepathyMatches: matches || p.telepathy_best || 0,
           showTelepathyScore: p.show_telepathy_score !== false,
           registered: true
         });
@@ -2653,8 +2687,8 @@ function GlobalAwakeningPlatform() {
           country: '',
           interests: [],
           experienceLevel: '',
-          telepathyScore: 0,
-          telepathyBest: 0,
+          telepathyRounds: 0,
+          telepathyMatches: 0,
           empty: true,
           registered: false
         });
@@ -5306,7 +5340,7 @@ function GlobalAwakeningPlatform() {
     style: {
       color: '#fbbf24'
     }
-  }, viewingProfile.telepathyScore)), React.createElement("div", {
+  }, viewingProfile.telepathyRounds)), React.createElement("div", {
     className: "bg-glass-dark rounded-xl p-3 text-center"
   }, React.createElement("p", {
     className: "text-secondary text-xs mb-1"
@@ -5315,7 +5349,7 @@ function GlobalAwakeningPlatform() {
     style: {
       color: '#4ade80'
     }
-  }, viewingProfile.telepathyScore > 0 ? Math.round(viewingProfile.telepathyBest / viewingProfile.telepathyScore * 100) : 0, "%")))), viewingProfile.nickname !== nickname && isGuest && React.createElement("div", {
+  }, viewingProfile.telepathyRounds > 0 ? Math.round(viewingProfile.telepathyMatches / viewingProfile.telepathyRounds * 100) : 0, "%")))), viewingProfile.nickname !== nickname && isGuest && React.createElement("div", {
     className: "bg-glass-dark rounded-xl p-3 text-center"
   }, React.createElement("p", {
     className: "text-secondary text-sm"

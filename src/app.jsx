@@ -574,7 +574,7 @@
             social: {
               viewProfile: "Vedi Profilo",
               telepathyScore: "Round Giocati",
-              bestScore: "% Match",
+              bestScore: "Match %",
               community: "Comunita'",
               noProfile: "Nessun profilo ancora",
               close: "Chiudi",
@@ -1011,6 +1011,31 @@
             if (score) setTotalRounds(parseInt(score));
             if (best) setTotalMatches(parseInt(best));
           }, []);
+
+          // B1 (bug 6, coerenza guest): il cache localStorage sopra puo' restare indietro
+          // rispetto a telepathy_scores (fonte unica) — es. se un round e' stato conteggiato
+          // lato server ma questo client non ha mai rieseguito endSession per rileggerlo.
+          // All'apertura di "Modifica Profilo" i guest si risincronizzano leggendo la propria
+          // riga (user_id = sessionId, stessa tabella già letta pubblicamente in classifica —
+          // nessuna nuova esposizione, e' il proprio dato). Nessun effetto per i registrati:
+          // il loro percorso (login/loadProfile) e' gia' verificato corretto, fuori scope B1.
+          useEffect(() => {
+            if (!showEditProfile || !isGuest || !sessionId) return;
+            let cancelled = false;
+            (async () => {
+              try {
+                const { data } = await supabase.from('telepathy_scores').select('rounds_count,matches_count').eq('user_id', sessionId);
+                if (cancelled || !data || data.length === 0) return;
+                const r = data[0].rounds_count || 0;
+                const m = data[0].matches_count || 0;
+                setTotalRounds(r);
+                setTotalMatches(m);
+                localStorage.setItem('telepathy_score', String(r));
+                localStorage.setItem('telepathy_best', String(m));
+              } catch (e) { /* fonte unica non raggiungibile: mantiene la cache locale */ }
+            })();
+            return () => { cancelled = true; };
+          }, [showEditProfile, isGuest, sessionId]);
 
           // Update presence in Supabase
           useEffect(() => {
@@ -2445,6 +2470,16 @@
               const { data } = await supabase.from('profiles').select('*').eq('nickname', userName);
               if (data && data.length > 0) {
                 const p = data[0];
+                // B1: le stats vengono dalla fonte unica telepathy_scores via RPC pubblica
+                // (SECURITY DEFINER, nessuna PII), NON da profiles.telepathy_score/best —
+                // storicamente desincronizzati (l'update su profiles in endSession è una
+                // scrittura separata dall'RPC increment_telepathy_score, può restare indietro).
+                // Fallback ai vecchi campi solo se la RPC non è ancora applicata (migration 15_).
+                let rounds = 0, matches = 0;
+                try {
+                  const { data: st } = await supabase.rpc('get_public_telepathy_stats', { p_nickname: userName });
+                  if (st && st.length > 0) { rounds = st[0].rounds_count || 0; matches = st[0].matches_count || 0; }
+                } catch (e) { /* RPC non applicata: fallback sotto */ }
                 setViewingProfile({
                   nickname: p.nickname || userName || 'Anonymous',
                   bio: p.bio || '',
@@ -2453,8 +2488,8 @@
                   country: p.country || '',
                   interests: p.interests || [],
                   experienceLevel: p.experience_level || '',
-                  telepathyScore: p.telepathy_score || 0,
-                  telepathyBest: p.telepathy_best || 0,
+                  telepathyRounds: rounds || (p.telepathy_score || 0),
+                  telepathyMatches: matches || (p.telepathy_best || 0),
                   showTelepathyScore: p.show_telepathy_score !== false,
                   // Registrato = ha una riga in profiles. È la stessa condizione che
                   // get_my_messages richiede per LEGGERE i messaggi: se non ce l'ha,
@@ -2470,8 +2505,8 @@
                   country: '',
                   interests: [],
                   experienceLevel: '',
-                  telepathyScore: 0,
-                  telepathyBest: 0,
+                  telepathyRounds: 0,
+                  telepathyMatches: 0,
                   empty: true,
                   registered: false
                 });
@@ -4258,11 +4293,11 @@
                             <div className="grid grid-cols-2 gap-3">
                               <div className="bg-glass-dark rounded-xl p-3 text-center">
                                 <p className="text-secondary text-xs mb-1">{t.social.telepathyScore}</p>
-                                <p className="text-2xl font-bold" style={{color: '#fbbf24'}}>{viewingProfile.telepathyScore}</p>
+                                <p className="text-2xl font-bold" style={{color: '#fbbf24'}}>{viewingProfile.telepathyRounds}</p>
                               </div>
                               <div className="bg-glass-dark rounded-xl p-3 text-center">
                                 <p className="text-secondary text-xs mb-1">{t.social.bestScore}</p>
-                                <p className="text-2xl font-bold" style={{color: '#4ade80'}}>{viewingProfile.telepathyScore > 0 ? Math.round((viewingProfile.telepathyBest / viewingProfile.telepathyScore) * 100) : 0}%</p>
+                                <p className="text-2xl font-bold" style={{color: '#4ade80'}}>{viewingProfile.telepathyRounds > 0 ? Math.round((viewingProfile.telepathyMatches / viewingProfile.telepathyRounds) * 100) : 0}%</p>
                               </div>
                             </div>
                           )}
