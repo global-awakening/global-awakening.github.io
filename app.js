@@ -5102,8 +5102,10 @@ function GlobalAwakeningPlatform() {
   }, t.profile.avatar), React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: 'repeat(10, 1fr)',
-      gap: '0.5rem'
+      gridTemplateColumns: 'repeat(auto-fill, minmax(2.5rem, 1fr))',
+      gap: '0.5rem',
+      maxHeight: '11rem',
+      overflowY: 'auto'
     }
   }, avatarEmojis.map(emoji => React.createElement("button", {
     key: emoji,
