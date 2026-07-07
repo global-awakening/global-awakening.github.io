@@ -5039,10 +5039,19 @@ function GlobalAwakeningPlatform() {
   }, React.createElement("span", {
     className: "text-white text-sm"
   }, t.showTelepathyScore), React.createElement("button", {
-    onClick: () => {
+    onClick: async () => {
       const newVal = !showTelepathyScore;
       setShowTelepathyScore(newVal);
       localStorage.setItem('ga_show_telepathy', String(newVal));
+      if (!isGuest && sessionId) {
+        try {
+          await supabase.from('profiles').update({
+            show_telepathy_score: newVal
+          }).eq('session_id', sessionId);
+        } catch (err) {
+          console.warn('Failed to persist show_telepathy_score toggle');
+        }
+      }
     },
     style: {
       width: '3rem',
