@@ -4223,7 +4223,12 @@ function GlobalAwakeningPlatform() {
   }, React.createElement("div", {
     className: `text-center mb-6 ${partner || sessionEnded ? 'tele-header-insession' : ''}`
   }, React.createElement(Brain, {
-    style: {
+    style: partner || sessionEnded ? {
+      width: '2.25rem',
+      height: '2.25rem',
+      margin: '0 auto 0.3rem',
+      color: '#a78bfa'
+    } : {
       width: '4rem',
       height: '4rem',
       margin: '0 auto 1rem',
@@ -4549,7 +4554,7 @@ function GlobalAwakeningPlatform() {
       minWidth: '260px',
       display: 'flex',
       flexDirection: 'column',
-      gap: '1.5rem'
+      gap: '1rem'
     }
   }, partner && !sessionEnded && React.createElement("div", {
     className: `bg-glass-dark rounded-xl ${isMyTurn() ? 'pulse-glow' : ''}`,
@@ -4644,9 +4649,13 @@ function GlobalAwakeningPlatform() {
       margin: 0
     }
   }, "\uD83D\uDD2E ", partner?.nickname, " ", t.telepathy.levelWaiting))), !showLevelBanner && effectiveRole === 'sender' && !waitingForPartner && React.createElement("div", null, React.createElement("p", {
-    className: "text-white text-center mb-4 font-medium"
+    className: "text-white text-center mb-2 font-medium"
   }, t.telepathy.pickSymbol), React.createElement("div", {
-    className: "grid grid-cols-3 gap-4 mb-6"
+    className: "grid grid-cols-3",
+    style: {
+      gap: '0.6rem',
+      marginBottom: '0.75rem'
+    }
   }, getCurrentSymbols(currentLevel).map(symbol => React.createElement("button", {
     key: symbol.id,
     onClick: () => setSelectedSymbol(symbol.id),
@@ -4656,11 +4665,15 @@ function GlobalAwakeningPlatform() {
     disabled: !selectedSymbol,
     className: "btn-primary w-full"
   }, t.telepathy.sendTelepathically)), !showLevelBanner && effectiveRole === 'receiver' && !waitingForPartner && React.createElement("div", null, senderHasSent ? React.createElement("p", {
-    className: "text-white text-center mb-4 font-medium"
+    className: "text-white text-center mb-2 font-medium"
   }, t.telepathy.symbolSentGuess) : React.createElement("p", {
-    className: "text-primary text-center mb-4 font-medium"
+    className: "text-primary text-center mb-2 font-medium"
   }, "\u23F3 ", partner?.nickname, " ", t.telepathy.waitingForSend), React.createElement("div", {
-    className: `grid grid-cols-3 gap-4 mb-6 ${!senderHasSent ? 'symbols-locked' : ''}`
+    className: `grid grid-cols-3 ${!senderHasSent ? 'symbols-locked' : ''}`,
+    style: {
+      gap: '0.6rem',
+      marginBottom: '0.75rem'
+    }
   }, getCurrentSymbols(currentLevel).map(symbol => React.createElement("button", {
     key: symbol.id,
     disabled: !senderHasSent,

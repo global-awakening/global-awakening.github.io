@@ -3644,7 +3644,7 @@
                 {activeTab === 'telepathy' && (
                   <div className="bg-glass rounded-2xl p-6 border-glass">
                     <div className={`text-center mb-6 ${(partner || sessionEnded) ? 'tele-header-insession' : ''}`}>
-                      <Brain style={{width: '4rem', height: '4rem', margin: '0 auto 1rem', color: '#a78bfa'}} />
+                      <Brain style={(partner || sessionEnded) ? {width: '2.25rem', height: '2.25rem', margin: '0 auto 0.3rem', color: '#a78bfa'} : {width: '4rem', height: '4rem', margin: '0 auto 1rem', color: '#a78bfa'}} />
                       <h2 className="text-3xl font-bold text-white mb-2">{t.telepathy.title}</h2>
                       <p className="text-primary">{t.telepathy.subtitle}</p>
                     </div>
@@ -3809,7 +3809,7 @@
                         </div>
 
                         {/* CENTRO: area di gioco */}
-                        <div className="tele-col tele-col-game" style={{flex: '1 1 280px', minWidth: '260px', display: 'flex', flexDirection: 'column', gap: '1.5rem'}}>
+                        <div className="tele-col tele-col-game" style={{flex: '1 1 280px', minWidth: '260px', display: 'flex', flexDirection: 'column', gap: '1rem'}}>
                           {partner && !sessionEnded && (
                             <div
                               className={`bg-glass-dark rounded-xl ${isMyTurn() ? 'pulse-glow' : ''}`}
@@ -3854,8 +3854,8 @@
 
                               {!showLevelBanner && effectiveRole === 'sender' && !waitingForPartner && (
                                 <div>
-                                  <p className="text-white text-center mb-4 font-medium">{t.telepathy.pickSymbol}</p>
-                                  <div className="grid grid-cols-3 gap-4 mb-6">
+                                  <p className="text-white text-center mb-2 font-medium">{t.telepathy.pickSymbol}</p>
+                                  <div className="grid grid-cols-3" style={{gap: '0.6rem', marginBottom: '0.75rem'}}>
                                     {getCurrentSymbols(currentLevel).map((symbol) => (
                                       <button key={symbol.id} onClick={() => setSelectedSymbol(symbol.id)} className={`symbol-btn ${selectedSymbol === symbol.id ? 'symbol-btn-selected' : ''}`}>
                                         {symbol.icon}
@@ -3869,11 +3869,11 @@
                               {!showLevelBanner && effectiveRole === 'receiver' && !waitingForPartner && (
                                 <div>
                                   {senderHasSent ? (
-                                    <p className="text-white text-center mb-4 font-medium">{t.telepathy.symbolSentGuess}</p>
+                                    <p className="text-white text-center mb-2 font-medium">{t.telepathy.symbolSentGuess}</p>
                                   ) : (
-                                    <p className="text-primary text-center mb-4 font-medium">⏳ {partner?.nickname} {t.telepathy.waitingForSend}</p>
+                                    <p className="text-primary text-center mb-2 font-medium">⏳ {partner?.nickname} {t.telepathy.waitingForSend}</p>
                                   )}
-                                  <div className={`grid grid-cols-3 gap-4 mb-6 ${!senderHasSent ? 'symbols-locked' : ''}`}>
+                                  <div className={`grid grid-cols-3 ${!senderHasSent ? 'symbols-locked' : ''}`} style={{gap: '0.6rem', marginBottom: '0.75rem'}}>
                                     {getCurrentSymbols(currentLevel).map((symbol) => (
                                       <button key={symbol.id} disabled={!senderHasSent} onClick={() => setGuessedSymbol(symbol.id)} className={`symbol-btn ${guessedSymbol === symbol.id ? 'symbol-btn-selected' : ''}`}>
                                         {symbol.icon}

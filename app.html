@@ -422,9 +422,17 @@
             .tele-header-insession { display: none; }
         }
 
+        /* C1: dimensioni compatte per far stare la griglia 3x3 (fino a 9 simboli) in un
+           viewport desktop senza scroll verticale. clamp() scala tra tablet e desktop;
+           il breakpoint mobile (@media max-width:768px più sotto) sovrascrive esplicitamente
+           font-size/padding e resta quindi invariato da questa modifica. */
+        .tele-header-insession { margin-bottom: 0.4rem; }
+        .tele-header-insession h2 { font-size: 1.3rem; margin-bottom: 0.15rem; }
+        .tele-header-insession p { display: none; }
+
         .symbol-btn {
-            font-size: 3.75rem;
-            padding: 1.5rem;
+            font-size: clamp(1.5rem, 2.4vw, 2rem);
+            padding: clamp(0.4rem, 1vw, 0.65rem);
             border-radius: 0.75rem;
             background: rgba(255, 255, 255, 0.1);
             border: 2px solid transparent;
