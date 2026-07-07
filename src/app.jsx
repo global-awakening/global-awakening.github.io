@@ -3201,11 +3201,15 @@
                                   const isExpiredInvite = n.type === 'telepathy_invite' && n.created_at &&
                                     (Date.now() - new Date(n.created_at).getTime() > 120000);
                                   return (
-                                  <div key={n.id} style={{
+                                  <div
+                                    key={n.id}
+                                    onClick={isExpiredInvite ? () => markOneNotifRead(n, tabTarget) : undefined}
+                                    style={{
                                     padding: '0.5rem 0.25rem',
                                     borderBottom: '1px solid rgba(255,255,255,0.06)',
                                     display: 'flex', alignItems: 'center', gap: '0.5rem',
-                                    opacity: isExpiredInvite ? 0.6 : 1
+                                    opacity: isExpiredInvite ? 0.6 : 1,
+                                    cursor: isExpiredInvite ? 'pointer' : 'default'
                                   }}>
                                     <span style={{fontSize: '1rem'}}>{icon}</span>
                                     <span style={{flex: 1, color: '#e5e7eb', fontSize: '0.82rem'}}>
@@ -3226,7 +3230,7 @@
                                       )}
                                     </span>
                                     <button
-                                      onClick={() => markOneNotifRead(n, tabTarget)}
+                                      onClick={(e) => { e.stopPropagation(); markOneNotifRead(n, tabTarget); }}
                                       className="btn-primary"
                                       style={{fontSize: '0.75rem', padding: '0.2rem 0.6rem', whiteSpace: 'nowrap'}}
                                     >{isExpiredInvite ? 'OK' : 'Vai'}</button>
