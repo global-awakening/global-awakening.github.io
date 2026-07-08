@@ -348,11 +348,21 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
     } catch { /* già in lobby */ }
     await waitForLobby(pageA, 'TestUserA');
 
-    // Aspetta che la lista utenti mostri TestUserB (invece di un fisso da 12s): exact-match
-    // sullo stesso span usato dall'evaluate sotto. Procede appena appare, fino a TIMEOUT se lento.
+    // Attende (condition-based) che TestUserB torni 'available' nella lista di A, non solo
+    // che compaia il nickname. Dopo il Test 7b il match precedente viene cancellato con
+    // ritardo (~6s, app.jsx:2442) e la presence di A si aggiorna al ciclo successivo (~10s):
+    // finché il match residuo esiste, TestUserB resta 'busy' (status derivato da
+    // telepathy_matches, app.jsx:1085) e la sua riga NON ha il bottone "Proponi". Attendere
+    // il solo nickname campionava troppo presto → "no button in row" DETERMINISTICO.
     try {
-      await pageA.waitForSelector('span.text-white.text-sm.font-medium:text-is("TestUserB")', { timeout: TIMEOUT });
-    } catch { /* se non appare, l'evaluate restituirà "span not found" → fail con messaggio chiaro */ }
+      await pageA.waitForFunction((targetNick) => {
+        const spans = [...document.querySelectorAll('span.text-white.text-sm.font-medium')];
+        const nickSpan = spans.find(s => s.textContent.trim() === targetNick);
+        if (!nickSpan) return false;
+        const rowDiv = nickSpan.parentElement?.parentElement;
+        return !!rowDiv?.querySelector('button');
+      }, 'TestUserB', { timeout: TIMEOUT });
+    } catch { /* se scade, l'evaluate sotto restituirà "no button..." → fail con messaggio chiaro */ }
     // Trova e clicca il bottone Proponi per TestUserB
     // Usiamo dispatchEvent con MouseEvent (bubbles:true) per triggerare React event delegation
     const clickResult = await pageA.evaluate((targetNick) => {

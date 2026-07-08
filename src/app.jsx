@@ -1081,11 +1081,18 @@
                   }
                   setOnlineUsers(uniqueUsers.length > 0 ? uniqueUsers : [{ id: sessionId, nickname, lat: myLat, lng: myLng }]);
 
-                  // Arricchisci utenti con stato 'in sessione' o 'disponibile'
-                  const { data: activeMatches } = await supabase.from('telepathy_matches').select('user1_id,user2_id');
+                  // Arricchisci utenti con stato 'in sessione' o 'disponibile'.
+                  // Solo i match ANCORA attivi rendono 'busy': un match con ended_at
+                  // valorizzato e' una sessione gia' conclusa (fine deterministica
+                  // condivisa, A1) la cui riga puo' sopravvivere alla chiusura finche'
+                  // non viene cancellata (delete ritardata ~6s / cleanup periodico 5min).
+                  // Senza filtrare ended_at gli utenti restavano "in sessione" per gli
+                  // altri anche dopo aver chiuso, senza poter ricevere nuovi inviti.
+                  const { data: activeMatches } = await supabase.from('telepathy_matches').select('*');
                   const busyIds = new Set();
                   if (activeMatches) {
                     activeMatches.forEach(m => {
+                      if (m.ended_at) return;
                       busyIds.add(m.user1_id);
                       busyIds.add(m.user2_id);
                     });
@@ -1187,7 +1194,9 @@
               // 1. Check if someone already matched with me
               const { data: matches } = await supabase.from('telepathy_matches').select('*');
               if (matches) {
-                const myMatch = matches.find(m => m.user1_id === sessionId || m.user2_id === sessionId);
+                // Solo match ATTIVI (ended_at null): un match concluso residuo non deve far
+                // "rientrare" in una sessione finita invece di cercare un nuovo partner.
+                const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
                 if (myMatch) {
                   const amUser1 = myMatch.user1_id === sessionId;
                   setPartner({ id: amUser1 ? myMatch.user2_id : myMatch.user1_id, nickname: amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname });
@@ -1211,7 +1220,8 @@
                 // NB: lato DB serve anche un UNIQUE constraint su (LEAST(u1,u2),GREATEST(u1,u2))
                 // per chiudere completamente la race. Questo client-side dedup la mitiga.
                 const { data: precheck } = await supabase.from('telepathy_matches').select('*');
-                const existingForMe = (precheck || []).find(m => m.user1_id === sessionId || m.user2_id === sessionId);
+                // Solo match ATTIVI: un match concluso residuo non conta come "gia' matchato".
+                const existingForMe = (precheck || []).find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
                 if (existingForMe) {
                   const amUser1 = existingForMe.user1_id === sessionId;
                   setPartner({ id: amUser1 ? existingForMe.user2_id : existingForMe.user1_id, nickname: amUser1 ? existingForMe.user2_nickname : existingForMe.user1_nickname });
@@ -1221,9 +1231,10 @@
                   await supabase.from('telepathy_queue').delete().eq('id', sessionId);
                   return;
                 }
-                const existingForThem = (precheck || []).find(m => m.user1_id === available.id || m.user2_id === available.id);
+                const existingForThem = (precheck || []).find(m => (m.user1_id === available.id || m.user2_id === available.id) && !m.ended_at);
                 if (existingForThem) {
-                  // available e' stato matchato con qualcun altro: prossimo tick rifara' lookup
+                  // available e' in un match ATTIVO con qualcun altro: prossimo tick rifara' lookup
+                  // (un match concluso residuo di 'available' non deve escluderlo dal matchmaking)
                   return;
                 }
 
@@ -1242,7 +1253,16 @@
                 });
 
                 if (!matchData || matchData.length === 0) {
-                  // INSERT fallita (probabile race con unique constraint o errore HTTP): retry next tick
+                  // INSERT fallita. Causa tipica: vincolo pair_unique in conflitto con un match GIA'
+                  // CONCLUSO residuo della coppia (un match ended sopravvive ~6s per la fine
+                  // condivisa A1). Lo rimuovo — per id e SOLO se ended, quindi mai una sessione
+                  // attiva — e ritento al tick successivo. Reattivo (non preventivo) per non
+                  // aggiungere query nel path felice e non alterare la race del matchmaking random.
+                  const { data: staleAll } = await supabase.from('telepathy_matches').select('*');
+                  for (const m of (staleAll || [])) {
+                    const isPair = (m.user1_id === sessionId && m.user2_id === available.id) || (m.user1_id === available.id && m.user2_id === sessionId);
+                    if (isPair && m.ended_at) await supabase.from('telepathy_matches').delete().eq('id', m.id);
+                  }
                   return;
                 }
 
@@ -1250,8 +1270,10 @@
                 // piu' vecchio (per created_at) vince. Cancello eventuali duplicati per la stessa coppia.
                 const { data: postcheck } = await supabase.from('telepathy_matches').select('*');
                 const pairMatches = (postcheck || []).filter(m =>
-                  (m.user1_id === sessionId && m.user2_id === available.id) ||
-                  (m.user2_id === sessionId && m.user1_id === available.id)
+                  !m.ended_at && (
+                    (m.user1_id === sessionId && m.user2_id === available.id) ||
+                    (m.user2_id === sessionId && m.user1_id === available.id)
+                  )
                 );
                 let winner = matchData[0];
                 if (pairMatches.length > 1) {
@@ -2018,7 +2040,10 @@
             const pollForMatch = async () => {
               const { data: matches } = await supabase.from('telepathy_matches').select('*');
               if (!matches) return;
-              const myMatch = matches.find(m => m.user1_id === sessionId || m.user2_id === sessionId);
+              // Solo match ATTIVI: senza il filtro ended_at l'invitante si agganciava al match
+              // CONCLUSO di una sessione precedente con lo stesso partner (residuo nel DB) invece
+              // di attendere quello nuovo creato dall'accettazione → sessione mai avviata.
+              const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
               if (myMatch) {
                 const amUser1 = myMatch.user1_id === sessionId;
                 setPartner({ id: amUser1 ? myMatch.user2_id : myMatch.user1_id, nickname: amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname });
@@ -2236,6 +2261,20 @@
             // Anticipare setSearchingPartner(false) per evitare che findPartner crei un altro match
             // in parallelo durante l'await dell'INSERT (race con random matching).
             setSearchingPartner(false);
+            // Rimuove eventuali match GIA' CONCLUSI per questa coppia prima di inserire il nuovo.
+            // Un match con ended_at puo' sopravvivere alla fine sessione (delete ritardata ~6s /
+            // cleanup periodico) e farebbe fallire l'INSERT sotto per il vincolo
+            // telepathy_matches_pair_unique (409). findPartner ripulisce gia' i residui; acceptInvite
+            // no → invitare di nuovo la stessa persona subito dopo una sessione risultava rotto.
+            // NB: filtro lato-client (select + delete per id): il client Supabase custom (app.html)
+            // implementa solo .eq/.neq/.lt, NON .not → una .not('ended_at','is',null) avrebbe lanciato
+            // TypeError interrompendo l'intero acceptInvite (nessun INSERT, nessuna sessione).
+            const inviterId = incomingInvite.from_id;
+            const { data: staleAccept } = await supabase.from('telepathy_matches').select('*');
+            for (const m of (staleAccept || [])) {
+              const isPair = (m.user1_id === inviterId && m.user2_id === sessionId) || (m.user1_id === sessionId && m.user2_id === inviterId);
+              if (isPair && m.ended_at) await supabase.from('telepathy_matches').delete().eq('id', m.id);
+            }
             const myRole = Math.random() > 0.5 ? 'sender' : 'receiver';
             const theirRole = myRole === 'sender' ? 'receiver' : 'sender';
             const { data: matchData, error: matchError } = await supabase.from('telepathy_matches').insert({

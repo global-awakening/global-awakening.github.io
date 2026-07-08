@@ -1296,10 +1296,11 @@ function GlobalAwakeningPlatform() {
           }]);
           const {
             data: activeMatches
-          } = await supabase.from('telepathy_matches').select('user1_id,user2_id');
+          } = await supabase.from('telepathy_matches').select('*');
           const busyIds = new Set();
           if (activeMatches) {
             activeMatches.forEach(m => {
+              if (m.ended_at) return;
               busyIds.add(m.user1_id);
               busyIds.add(m.user2_id);
             });
@@ -1416,7 +1417,7 @@ function GlobalAwakeningPlatform() {
         data: matches
       } = await supabase.from('telepathy_matches').select('*');
       if (matches) {
-        const myMatch = matches.find(m => m.user1_id === sessionId || m.user2_id === sessionId);
+        const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
         if (myMatch) {
           const amUser1 = myMatch.user1_id === sessionId;
           setPartner({
@@ -1440,7 +1441,7 @@ function GlobalAwakeningPlatform() {
         const {
           data: precheck
         } = await supabase.from('telepathy_matches').select('*');
-        const existingForMe = (precheck || []).find(m => m.user1_id === sessionId || m.user2_id === sessionId);
+        const existingForMe = (precheck || []).find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
         if (existingForMe) {
           const amUser1 = existingForMe.user1_id === sessionId;
           setPartner({
@@ -1453,7 +1454,7 @@ function GlobalAwakeningPlatform() {
           await supabase.from('telepathy_queue').delete().eq('id', sessionId);
           return;
         }
-        const existingForThem = (precheck || []).find(m => m.user1_id === available.id || m.user2_id === available.id);
+        const existingForThem = (precheck || []).find(m => (m.user1_id === available.id || m.user2_id === available.id) && !m.ended_at);
         if (existingForThem) {
           return;
         }
@@ -1471,12 +1472,19 @@ function GlobalAwakeningPlatform() {
           level: 'lvl3'
         });
         if (!matchData || matchData.length === 0) {
+          const {
+            data: staleAll
+          } = await supabase.from('telepathy_matches').select('*');
+          for (const m of staleAll || []) {
+            const isPair = m.user1_id === sessionId && m.user2_id === available.id || m.user1_id === available.id && m.user2_id === sessionId;
+            if (isPair && m.ended_at) await supabase.from('telepathy_matches').delete().eq('id', m.id);
+          }
           return;
         }
         const {
           data: postcheck
         } = await supabase.from('telepathy_matches').select('*');
-        const pairMatches = (postcheck || []).filter(m => m.user1_id === sessionId && m.user2_id === available.id || m.user2_id === sessionId && m.user1_id === available.id);
+        const pairMatches = (postcheck || []).filter(m => !m.ended_at && (m.user1_id === sessionId && m.user2_id === available.id || m.user2_id === sessionId && m.user1_id === available.id));
         let winner = matchData[0];
         if (pairMatches.length > 1) {
           pairMatches.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
@@ -2249,7 +2257,7 @@ function GlobalAwakeningPlatform() {
         data: matches
       } = await supabase.from('telepathy_matches').select('*');
       if (!matches) return;
-      const myMatch = matches.find(m => m.user1_id === sessionId || m.user2_id === sessionId);
+      const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
       if (myMatch) {
         const amUser1 = myMatch.user1_id === sessionId;
         setPartner({
@@ -2426,6 +2434,14 @@ function GlobalAwakeningPlatform() {
     }
     if (matchId || partner) resetTelepathy();
     setSearchingPartner(false);
+    const inviterId = incomingInvite.from_id;
+    const {
+      data: staleAccept
+    } = await supabase.from('telepathy_matches').select('*');
+    for (const m of staleAccept || []) {
+      const isPair = m.user1_id === inviterId && m.user2_id === sessionId || m.user1_id === sessionId && m.user2_id === inviterId;
+      if (isPair && m.ended_at) await supabase.from('telepathy_matches').delete().eq('id', m.id);
+    }
     const myRole = Math.random() > 0.5 ? 'sender' : 'receiver';
     const theirRole = myRole === 'sender' ? 'receiver' : 'sender';
     const {
