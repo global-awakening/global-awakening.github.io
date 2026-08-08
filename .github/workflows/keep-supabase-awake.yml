@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Scarica il codice
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Leggi URL e chiave da app.html
         id: cfg
