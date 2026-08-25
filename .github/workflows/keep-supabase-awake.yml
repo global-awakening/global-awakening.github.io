@@ -1,8 +1,15 @@
 name: Tieni sveglio Supabase
 
-# Il piano gratuito di Supabase mette in pausa il database dopo ~7 giorni
-# di inattivita'. Questo controllo lo interroga ogni 3 giorni cosi' non si
-# addormenta mai e l'app resta sempre raggiungibile.
+# Il piano gratuito di Supabase mette in pausa il database quando l'attivita'
+# della settimana precedente e' insufficiente. Attenzione: NON basta una
+# richiesta "entro 7 giorni" — Supabase valuta il volume di attivita' e si
+# aspetta qualche richiesta al giorno.
+#
+# Lezione imparata il 25/08/2026: la prima versione di questo controllo
+# interrogava il database ogni 3 giorni e NON e' bastato. Il progetto e' andato
+# in pausa tra il 13 e il 16 agosto 2026 e i messaggi privati sono diventati
+# invisibili nell'app (le letture falliscono in silenzio, l'interfaccia resta
+# in piedi ma vuota). Da qui: tre ping al giorno, uno per fascia oraria.
 #
 # URL e chiave NON sono scritti qui: vengono letti da app.html, che e' la
 # fonte di verita'. Se un giorno cambiano li', il controllo si adegua da solo.
@@ -11,8 +18,10 @@ name: Tieni sveglio Supabase
 
 on:
   schedule:
-    # ogni 3 giorni alle 06:00 UTC
-    - cron: '0 6 */3 * *'
+    # tre volte al giorno (06:00, 14:00, 22:00 UTC): copre ogni giorno della
+    # settimana, cosi' l'attivita' non scende mai sotto la soglia di Supabase.
+    # NB: non usare '*/N' sul giorno del mese — a fine mese salta e lascia buchi.
+    - cron: '0 6,14,22 * * *'
   # permette di lanciarlo a mano dalla tab "Actions" di GitHub
   workflow_dispatch:
 
@@ -47,7 +56,7 @@ jobs:
 
           echo "Risposta HTTP: $CODE"
           if [ "$CODE" != "200" ]; then
-            echo "::error::Il database NON risponde (HTTP $CODE). Se e' 000 o 5xx il progetto potrebbe essere di nuovo in pausa: vai su supabase.com/dashboard con l'account Ireneacqua, organizzazione awakening, e premi Resume project."
+            echo "::error::Il database NON risponde (HTTP $CODE). Se e' 000 o 5xx il progetto potrebbe essere di nuovo in pausa: vai su supabase.com/dashboard con l'account Ireneacqua, organizzazione awakening, apri Global Awakening e premi Resume project."
             head -c 500 /tmp/risposta.txt
             exit 1
           fi
