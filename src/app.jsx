@@ -1,5 +1,5 @@
 
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, useCallback } = React;
 
         // Supabase is initialized in the script tag above
 
@@ -894,6 +894,16 @@
           const [profilePasswordMsg, setProfilePasswordMsg] = useState('');
           const [isGuest, setIsGuest] = useState(() => localStorage.getItem('ga_is_guest') === 'true');
           const [userEmail, setUserEmail] = useState(() => localStorage.getItem('ga_email') || '');
+
+          // SP1 moderazione — nickname che l'utente ha bloccato. La cache locale evita
+          // che al primo render compaiano contenuti di un bloccato per poi sparire.
+          const [blockedUsers, setBlockedUsers] = useState(() => {
+            try { return JSON.parse(localStorage.getItem('ga_blocked') || '[]'); }
+            catch { return []; }
+          });
+          // Toast neutro per gli esiti positivi (blocco riuscito, segnalazione inviata).
+          // errorToast esiste già ma è rosso con ⚠️: userebbe il tono sbagliato.
+          const [infoToast, setInfoToast] = useState(null);
           const [authTab, setAuthTab] = useState('login');
           const [showResetForm, setShowResetForm] = useState(false);
           const [resetEmail, setResetEmail] = useState('');
@@ -974,6 +984,32 @@
             const tmr = setTimeout(() => setErrorToast(null), 4000);
             return () => clearTimeout(tmr);
           }, [errorToast]);
+
+          // Toast neutro (SP1): stesso comportamento, tono diverso.
+          useEffect(() => {
+            if (!infoToast) return;
+            const tmr = setTimeout(() => setInfoToast(null), 4000);
+            return () => clearTimeout(tmr);
+          }, [infoToast]);
+
+          // SP1 — elenco dei bloccati, ricaricato al login e dopo ogni blocco/sblocco.
+          // Gli ospiti non hanno riga profiles, quindi non hanno credenziale: lista vuota.
+          const reloadBlocks = useCallback(async () => {
+            if (!nickname || isGuest || !passwordHash) { setBlockedUsers([]); return; }
+            const { data, error } = await supabase.rpc('get_my_blocks', {
+              p_nickname: nickname,
+              p_password_hash: passwordHash
+            });
+            if (error) return;   // rete giù o auth non ancora pronta: si tiene la cache
+            const list = (data || []).map(x => (typeof x === 'string' ? x : x.get_my_blocks)).filter(Boolean);
+            setBlockedUsers(list);
+            try { localStorage.setItem('ga_blocked', JSON.stringify(list)); } catch {}
+          }, [nickname, isGuest, passwordHash]);
+
+          useEffect(() => { reloadBlocks(); }, [reloadBlocks]);
+
+          // Usato da tutti i filtri di visibilità.
+          const isBlocked = (nick) => !!nick && blockedUsers.includes(nick);
 
           // Pulizia stato remoto alla chiusura del tab.
           // sendBeacon non supporta DELETE: usiamo fetch con keepalive=true che il browser
@@ -1748,6 +1784,8 @@
             setIsGuest(false);
             setPasswordHash(null);
             localStorage.removeItem('ga_pwhash');
+            setBlockedUsers([]);
+            localStorage.removeItem('ga_blocked');
             setTempNickname('');
             setTempEmail('');
             setTempPassword('');
@@ -4445,6 +4483,20 @@
                   animation: 'toast-rise 0.35s ease-out'
                 }}>
                   <p className="text-white font-bold" style={{fontSize: '0.9rem', margin: 0, textAlign: 'center'}}>⚠️ {errorToast}</p>
+                </div>
+              )}
+
+              {infoToast && (
+                <div role="status" style={{
+                  position: 'fixed', bottom: '1rem', left: '50%', transform: 'translateX(-50%)',
+                  width: 'min(360px, calc(100vw - 2rem))',
+                  background: 'linear-gradient(135deg, rgba(109,40,217,0.96) 0%, rgba(167,139,250,0.93) 100%)',
+                  border: '1px solid rgba(255,255,255,0.25)',
+                  boxShadow: '0 12px 40px rgba(109,40,217,0.45)',
+                  borderRadius: '0.85rem', padding: '0.85rem 1rem', zIndex: 9999,
+                  animation: 'toast-rise 0.35s ease-out'
+                }}>
+                  <p className="text-white font-bold" style={{fontSize: '0.9rem', margin: 0, textAlign: 'center'}}>✅ {infoToast}</p>
                 </div>
               )}
 

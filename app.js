@@ -2,7 +2,8 @@ function _extends() { return _extends = Object.assign ? Object.assign.bind() : f
 const {
   useState,
   useEffect,
-  useRef
+  useRef,
+  useCallback
 } = React;
 async function hashPassword(password) {
   const encoder = new TextEncoder();
@@ -1099,6 +1100,14 @@ function GlobalAwakeningPlatform() {
   const [profilePasswordMsg, setProfilePasswordMsg] = useState('');
   const [isGuest, setIsGuest] = useState(() => localStorage.getItem('ga_is_guest') === 'true');
   const [userEmail, setUserEmail] = useState(() => localStorage.getItem('ga_email') || '');
+  const [blockedUsers, setBlockedUsers] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('ga_blocked') || '[]');
+    } catch {
+      return [];
+    }
+  });
+  const [infoToast, setInfoToast] = useState(null);
   const [authTab, setAuthTab] = useState('login');
   const [showResetForm, setShowResetForm] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
@@ -1190,6 +1199,34 @@ function GlobalAwakeningPlatform() {
     const tmr = setTimeout(() => setErrorToast(null), 4000);
     return () => clearTimeout(tmr);
   }, [errorToast]);
+  useEffect(() => {
+    if (!infoToast) return;
+    const tmr = setTimeout(() => setInfoToast(null), 4000);
+    return () => clearTimeout(tmr);
+  }, [infoToast]);
+  const reloadBlocks = useCallback(async () => {
+    if (!nickname || isGuest || !passwordHash) {
+      setBlockedUsers([]);
+      return;
+    }
+    const {
+      data,
+      error
+    } = await supabase.rpc('get_my_blocks', {
+      p_nickname: nickname,
+      p_password_hash: passwordHash
+    });
+    if (error) return;
+    const list = (data || []).map(x => typeof x === 'string' ? x : x.get_my_blocks).filter(Boolean);
+    setBlockedUsers(list);
+    try {
+      localStorage.setItem('ga_blocked', JSON.stringify(list));
+    } catch {}
+  }, [nickname, isGuest, passwordHash]);
+  useEffect(() => {
+    reloadBlocks();
+  }, [reloadBlocks]);
+  const isBlocked = nick => !!nick && blockedUsers.includes(nick);
   const matchIdRef = React.useRef(null);
   const sessionIdRef = React.useRef(null);
   React.useEffect(() => {
@@ -2005,6 +2042,8 @@ function GlobalAwakeningPlatform() {
     setIsGuest(false);
     setPasswordHash(null);
     localStorage.removeItem('ga_pwhash');
+    setBlockedUsers([]);
+    localStorage.removeItem('ga_blocked');
     setTempNickname('');
     setTempEmail('');
     setTempPassword('');
@@ -5524,7 +5563,30 @@ function GlobalAwakeningPlatform() {
       margin: 0,
       textAlign: 'center'
     }
-  }, "\u26A0\uFE0F ", errorToast)), incomingInvite && (!partner || sessionEnded) && React.createElement("div", {
+  }, "\u26A0\uFE0F ", errorToast)), infoToast && React.createElement("div", {
+    role: "status",
+    style: {
+      position: 'fixed',
+      bottom: '1rem',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      width: 'min(360px, calc(100vw - 2rem))',
+      background: 'linear-gradient(135deg, rgba(109,40,217,0.96) 0%, rgba(167,139,250,0.93) 100%)',
+      border: '1px solid rgba(255,255,255,0.25)',
+      boxShadow: '0 12px 40px rgba(109,40,217,0.45)',
+      borderRadius: '0.85rem',
+      padding: '0.85rem 1rem',
+      zIndex: 9999,
+      animation: 'toast-rise 0.35s ease-out'
+    }
+  }, React.createElement("p", {
+    className: "text-white font-bold",
+    style: {
+      fontSize: '0.9rem',
+      margin: 0,
+      textAlign: 'center'
+    }
+  }, "\u2705 ", infoToast)), incomingInvite && (!partner || sessionEnded) && React.createElement("div", {
     className: "invite-toast",
     style: {
       position: 'fixed',
