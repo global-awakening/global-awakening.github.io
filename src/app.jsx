@@ -419,6 +419,35 @@
               inviteExpired: "Expired",
               trainingFloatingPrefix: "Training in progress with",
               trainingFloatingCta: "Return"
+            },
+            moderation: {
+              menu: "Actions",
+              report: "Report",
+              block: "Block",
+              unblock: "Unblock",
+              cancel: "Cancel",
+              blockedUsers: "Blocked users",
+              noBlocked: "You haven't blocked anyone.",
+              blockTitle: "Block this person?",
+              blockConfirm: "You won't see their content and they won't be able to message you. You can undo this anytime.",
+              blockDone: "User blocked.",
+              unblockDone: "User unblocked.",
+              reportTitle: "Report content",
+              reportWhy: "Why are you reporting this?",
+              reportNotes: "Notes (optional)",
+              reportSend: "Send report",
+              reportDone: "Report sent. We'll review it within 48 hours.",
+              reportRules: "Content rules",
+              guestOnly: "You need a registered account to report or block.",
+              reasons: {
+                spam: "Spam or advertising",
+                harassment: "Harassment or insults",
+                hate: "Hate or discrimination",
+                sexual: "Sexual content",
+                violence: "Violence or threats",
+                self_harm: "Self-harm or suicide",
+                other: "Something else"
+              }
             }
           },
           it: {
@@ -712,6 +741,35 @@
               inviteExpired: "Scaduto",
               trainingFloatingPrefix: "Training in corso con",
               trainingFloatingCta: "Torna"
+            },
+            moderation: {
+              menu: "Azioni",
+              report: "Segnala",
+              block: "Blocca",
+              unblock: "Sblocca",
+              cancel: "Annulla",
+              blockedUsers: "Utenti bloccati",
+              noBlocked: "Non hai bloccato nessuno.",
+              blockTitle: "Vuoi bloccare questa persona?",
+              blockConfirm: "Non vedrai più i suoi contenuti e non potrà scriverti. Puoi annullare quando vuoi.",
+              blockDone: "Utente bloccato.",
+              unblockDone: "Utente sbloccato.",
+              reportTitle: "Segnala contenuto",
+              reportWhy: "Perché lo segnali?",
+              reportNotes: "Note (facoltative)",
+              reportSend: "Invia segnalazione",
+              reportDone: "Segnalazione inviata. La esamineremo entro 48 ore.",
+              reportRules: "Regolamento dei contenuti",
+              guestOnly: "Serve un account registrato per segnalare o bloccare.",
+              reasons: {
+                spam: "Spam o pubblicità",
+                harassment: "Molestie o insulti",
+                hate: "Odio o discriminazione",
+                sexual: "Contenuto sessuale",
+                violence: "Violenza o minacce",
+                self_harm: "Autolesionismo o suicidio",
+                other: "Altro"
+              }
             }
           }
         };
@@ -1017,6 +1075,92 @@
           // sola, quindi con lo stato leggerebbero per sempre la lista del primo
           // render e il filtro smetterebbe di aggiornarsi dopo un blocco.
           const isBlocked = (nick) => !!nick && blockedUsersRef.current.includes(nick);
+
+          // SP1 — segnalazione e blocco.
+          // openMenuKey sta QUI e non dentro il menu: un componente definito dentro
+          // GlobalAwakeningPlatform verrebbe rimontato a ogni render, e con il polling
+          // ogni 2s il menu aperto si richiuderebbe da solo.
+          const [openMenuKey, setOpenMenuKey] = useState(null);
+          const [reportTarget, setReportTarget] = useState(null);   // { author, type, id, snapshot }
+          const [reportReason, setReportReason] = useState('spam');
+          const [reportNotes, setReportNotes] = useState('');
+
+          const doBlock = async (nick) => {
+            if (isGuest || !passwordHash) { setErrorToast(t.moderation.guestOnly); return; }
+            const { error } = await supabase.rpc('block_user', {
+              p_nickname: nickname, p_password_hash: passwordHash, p_blocked_nickname: nick
+            });
+            if (error) { setErrorToast(error.message); return; }
+            await reloadBlocks();
+            setInfoToast(t.moderation.blockDone);
+          };
+
+          const doUnblock = async (nick) => {
+            if (isGuest || !passwordHash) return;
+            const { error } = await supabase.rpc('unblock_user', {
+              p_nickname: nickname, p_password_hash: passwordHash, p_blocked_nickname: nick
+            });
+            if (error) { setErrorToast(error.message); return; }
+            await reloadBlocks();
+            setInfoToast(t.moderation.unblockDone);
+          };
+
+          const doReport = async () => {
+            if (!reportTarget) return;
+            if (isGuest || !passwordHash) { setErrorToast(t.moderation.guestOnly); return; }
+            const { error } = await supabase.rpc('report_content', {
+              p_reporter_nickname: nickname,
+              p_password_hash: passwordHash,
+              p_target_nickname: reportTarget.author,
+              p_content_type: reportTarget.type,
+              p_content_id: reportTarget.id ? String(reportTarget.id) : null,
+              p_content_snapshot: reportTarget.snapshot || null,
+              p_reason: reportReason,
+              p_details: reportNotes || null
+            });
+            setReportTarget(null);
+            setReportNotes('');
+            setReportReason('spam');
+            if (error) setErrorToast(error.message);
+            else setInfoToast(t.moderation.reportDone);
+          };
+
+          // Menu ⋯ sui contenuti ALTRUI, solo per account registrati.
+          // Funzione che ritorna JSX, non un componente: nessuna identita' da
+          // riconciliare, nessuno stato interno da perdere.
+          const moderationMenu = ({ author, type, id, snapshot }) => {
+            if (!author || author === nickname || isGuest) return null;
+            const key = `${type}:${id || author}`;
+            const open = openMenuKey === key;
+            return (
+              <span style={{position: 'relative', marginLeft: 'auto'}}>
+                <button
+                  aria-label={t.moderation.menu}
+                  aria-expanded={open}
+                  onClick={() => setOpenMenuKey(open ? null : key)}
+                  className="text-secondary"
+                  style={{background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem',
+                          lineHeight: 1, padding: '0.25rem 0.5rem', minHeight: '32px'}}
+                >⋯</button>
+                {open && (
+                  <div style={{position: 'absolute', right: 0, top: '100%', zIndex: 40,
+                               background: 'rgba(17,12,30,0.98)', border: '1px solid rgba(167,139,250,0.35)',
+                               borderRadius: '0.75rem', padding: '0.25rem', minWidth: '11rem'}}>
+                    <button
+                      onClick={() => { setOpenMenuKey(null); setReportTarget({ author, type, id, snapshot }); }}
+                      style={{display: 'block', width: '100%', textAlign: 'left', background: 'none',
+                              border: 'none', color: '#e9d5ff', padding: '0.6rem 0.75rem', cursor: 'pointer'}}
+                    >{t.moderation.report}</button>
+                    <button
+                      onClick={() => { setOpenMenuKey(null); doBlock(author); }}
+                      style={{display: 'block', width: '100%', textAlign: 'left', background: 'none',
+                              border: 'none', color: '#fca5a5', padding: '0.6rem 0.75rem', cursor: 'pointer'}}
+                    >{t.moderation.block}</button>
+                  </div>
+                )}
+              </span>
+            );
+          };
 
           // Pulizia stato remoto alla chiusura del tab.
           // sendBeacon non supporta DELETE: usiamo fetch con keepalive=true che il browser
@@ -3461,7 +3605,11 @@
                                   >✦ {ritual.creator}</span>
                                 )}
                               </div>
-                              <div className="text-2xl" style={{color: '#fbbf24'}}>{ritual.sacred_number}</div>
+                              <div className="flex items-start gap-1">
+                                <div className="text-2xl" style={{color: '#fbbf24'}}>{ritual.sacred_number}</div>
+                                {moderationMenu({ author: ritual.creator, type: 'ritual', id: ritual.id, snapshot: `${ritual.name}
+${ritual.description || ''}` })}
+                              </div>
                             </div>
 
                             <div className="flex items-center gap-2 mb-3">
@@ -3530,7 +3678,7 @@
 
                             {isRitualExpanded && (
                               <div style={{marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.08)'}}>
-                                {ritualComments.map(c => (
+                                {ritualComments.map(c => { const commentKind = 'ritual_comment'; return (
                                   <div key={c.id} style={{marginBottom: '0.75rem', paddingLeft: '1rem', borderLeft: '2px solid rgba(124,58,237,0.4)'}}>
                                     <div className="flex items-center gap-2 mb-1">
                                       <span
@@ -3539,10 +3687,11 @@
                                         onClick={() => openProfile(c.author_nickname)}
                                       >{c.author_nickname}</span>
                                       <span style={{color: '#c4b5fd'}} className="text-xs">{new Date(c.created_at).toLocaleTimeString()}</span>
+                                      {moderationMenu({ author: c.author_nickname, type: commentKind, id: c.id, snapshot: c.content })}
                                     </div>
                                     <p className="text-white" style={{fontSize: '0.9rem'}}>{c.content}</p>
                                   </div>
-                                ))}
+                                ); })}
                                 <div className="flex gap-2" style={{marginTop: '0.75rem'}}>
                                   <input
                                     type="text"
@@ -3613,6 +3762,7 @@
                                 onClick={() => openProfile(post.author_nickname)}
                               >{post.author_nickname}</span>
                               <span style={{color: '#c4b5fd'}} className="text-xs">{new Date(post.created_at).toLocaleString()}</span>
+                              {moderationMenu({ author: post.author_nickname, type: 'post', id: post.id, snapshot: post.content })}
                             </div>
                             <p className="text-white" style={{marginBottom: '0.75rem', lineHeight: '1.5'}}>{post.content}</p>
                             <div className="flex gap-2">
@@ -3635,7 +3785,7 @@
 
                             {isExpanded && (
                               <div style={{marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.08)'}}>
-                                {postComments.map(c => (
+                                {postComments.map(c => { const commentKind = 'post_comment'; return (
                                   <div key={c.id} style={{marginBottom: '0.75rem', paddingLeft: '1rem', borderLeft: '2px solid rgba(124,58,237,0.4)'}}>
                                     <div className="flex items-center gap-2 mb-1">
                                       <span
@@ -3644,10 +3794,11 @@
                                         onClick={() => openProfile(c.author_nickname)}
                                       >{c.author_nickname}</span>
                                       <span style={{color: '#c4b5fd'}} className="text-xs">{new Date(c.created_at).toLocaleTimeString()}</span>
+                                      {moderationMenu({ author: c.author_nickname, type: commentKind, id: c.id, snapshot: c.content })}
                                     </div>
                                     <p className="text-white" style={{fontSize: '0.9rem'}}>{c.content}</p>
                                   </div>
-                                ))}
+                                ); })}
                                 <div className="flex gap-2" style={{marginTop: '0.75rem'}}>
                                   <input
                                     type="text"
@@ -4062,7 +4213,12 @@
                                 )}
                                 {telepathyChatMessages.map(msg => (
                                   <div key={msg.id} style={{padding: '0.3rem 0.5rem', borderRadius: '0.5rem', background: msg.sender_name === nickname ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.08)', alignSelf: msg.sender_name === nickname ? 'flex-end' : 'flex-start', maxWidth: '90%'}}>
-                                    {msg.sender_name !== nickname && <p className="text-secondary" style={{fontSize: '0.65rem'}}>{msg.sender_name}</p>}
+                                    {msg.sender_name !== nickname && (
+                                      <div className="flex items-center gap-1">
+                                        <p className="text-secondary" style={{fontSize: '0.65rem'}}>{msg.sender_name}</p>
+                                        {moderationMenu({ author: msg.sender_name, type: 'telepathy_chat', id: msg.id, snapshot: msg.content })}
+                                      </div>
+                                    )}
                                     <p className="text-white" style={{fontSize: '0.8rem'}}>{msg.content}</p>
                                   </div>
                                 ))}
@@ -4295,6 +4451,26 @@
                         </div>
                       )}
 
+                      {/* Utenti bloccati (SP1) — solo registrati */}
+                      {!isGuest && (
+                        <div style={{borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1.25rem'}}>
+                          <label className="text-white text-sm mb-2" style={{display: 'block'}}>{t.moderation.blockedUsers}</label>
+                          {blockedUsers.length === 0 ? (
+                            <p className="text-secondary text-xs">{t.moderation.noBlocked}</p>
+                          ) : blockedUsers.map(nick => (
+                            <div key={nick} className="flex items-center gap-2" style={{padding: '0.35rem 0'}}>
+                              <span className="text-white text-sm">{nick}</span>
+                              <button className="btn-secondary"
+                                style={{marginLeft: 'auto', fontSize: '0.75rem', padding: '0.3rem 0.7rem'}}
+                                onClick={() => doUnblock(nick)}>{t.moderation.unblock}</button>
+                            </div>
+                          ))}
+                          <a href="regole.html" target="_blank" rel="noopener"
+                             className="text-secondary text-xs"
+                             style={{display: 'inline-block', marginTop: '0.5rem'}}>{t.moderation.reportRules}</a>
+                        </div>
+                      )}
+
                       {/* I tuoi dati (GDPR) — solo registrati */}
                       {!isGuest && (
                         <div style={{borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1.25rem'}}>
@@ -4354,6 +4530,23 @@
                           {viewingProfile.bio && (
                             <div className="bg-glass-dark rounded-xl p-4">
                               <p className="text-white" style={{whiteSpace: 'pre-wrap'}}>{viewingProfile.bio}</p>
+                            </div>
+                          )}
+
+                          {viewingProfile.nickname !== nickname && !isGuest && (
+                            <div className="flex gap-2" style={{justifyContent: 'center'}}>
+                              <button className="btn-secondary" style={{fontSize: '0.8rem'}}
+                                onClick={() => setReportTarget({
+                                  author: viewingProfile.nickname, type: 'profile',
+                                  id: null, snapshot: viewingProfile.bio || ''
+                                })}>{t.moderation.report}</button>
+                              {blockedUsers.includes(viewingProfile.nickname) ? (
+                                <button className="btn-secondary" style={{fontSize: '0.8rem'}}
+                                  onClick={() => doUnblock(viewingProfile.nickname)}>{t.moderation.unblock}</button>
+                              ) : (
+                                <button className="btn-secondary" style={{fontSize: '0.8rem', color: '#fca5a5'}}
+                                  onClick={() => doBlock(viewingProfile.nickname)}>{t.moderation.block}</button>
+                              )}
                             </div>
                           )}
 
@@ -4436,9 +4629,12 @@
                                       }}>
                                         <p className="text-white" style={{fontSize: '0.8rem'}}>{msg.content}</p>
                                       </div>
-                                      <p style={{fontSize: '0.6rem', color: '#c4b5fd', marginTop: '0.1rem', textAlign: isMe ? 'right' : 'left'}}>
-                                        {new Date(msg.created_at).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'})}
-                                      </p>
+                                      <div className="flex items-center gap-1" style={{justifyContent: isMe ? 'flex-end' : 'flex-start'}}>
+                                        <p style={{fontSize: '0.6rem', color: '#c4b5fd', marginTop: '0.1rem'}}>
+                                          {new Date(msg.created_at).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'})}
+                                        </p>
+                                        {!isMe && moderationMenu({ author: msg.sender_name, type: 'private_message', id: msg.id, snapshot: msg.content })}
+                                      </div>
                                     </div>
                                   );
                                 })
@@ -4493,6 +4689,47 @@
                   animation: 'toast-rise 0.35s ease-out'
                 }}>
                   <p className="text-white font-bold" style={{fontSize: '0.9rem', margin: 0, textAlign: 'center'}}>⚠️ {errorToast}</p>
+                </div>
+              )}
+
+              {reportTarget && (
+                <div style={{position: 'fixed', inset: 0, zIndex: 9998, display: 'flex',
+                             alignItems: 'center', justifyContent: 'center', padding: '1rem',
+                             background: 'rgba(0,0,0,0.7)'}}
+                     onClick={() => setReportTarget(null)}>
+                  <div className="bg-glass rounded-2xl border-glass p-4"
+                       style={{maxWidth: '26rem', width: '100%', maxHeight: '90vh', overflowY: 'auto'}}
+                       onClick={e => e.stopPropagation()}>
+                    <h3 className="text-white font-bold mb-3">{t.moderation.reportTitle}</h3>
+                    <p className="text-secondary text-xs mb-2">{t.moderation.reportWhy}</p>
+                    {['spam','harassment','hate','sexual','violence','self_harm','other'].map(k => (
+                      <label key={k} style={{display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                             color: '#e9d5ff', padding: '0.35rem 0', cursor: 'pointer'}}>
+                        <input type="radio" name="report-reason" value={k}
+                               checked={reportReason === k}
+                               onChange={() => setReportReason(k)} />
+                        {t.moderation.reasons[k]}
+                      </label>
+                    ))}
+                    <textarea
+                      value={reportNotes}
+                      onChange={e => setReportNotes(e.target.value)}
+                      placeholder={t.moderation.reportNotes}
+                      aria-label={t.moderation.reportNotes}
+                      maxLength={1000}
+                      style={{width: '100%', marginTop: '0.75rem', minHeight: '4.5rem',
+                              background: 'rgba(255,255,255,0.06)', color: '#fff',
+                              border: '1px solid rgba(167,139,250,0.3)', borderRadius: '0.6rem',
+                              padding: '0.5rem'}}
+                    />
+                    <div className="flex gap-2" style={{marginTop: '0.75rem'}}>
+                      <button className="btn-primary" onClick={doReport}>{t.moderation.reportSend}</button>
+                      <button className="btn-secondary" onClick={() => setReportTarget(null)}>{t.moderation.cancel}</button>
+                    </div>
+                    <a href="regole.html" target="_blank" rel="noopener"
+                       className="text-secondary text-xs"
+                       style={{display: 'inline-block', marginTop: '0.75rem'}}>{t.moderation.reportRules}</a>
+                  </div>
                 </div>
               )}
 
