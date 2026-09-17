@@ -7,8 +7,10 @@
  *     auth errata -> Auth failed
  *
  * Esecuzione: node test-account-gdpr.js
- * Prerequisito: aver applicato supabase/sql/06_account_gdpr.sql in Studio.
+ * Prerequisito: applicati supabase/sql/06_account_gdpr.sql e 17_fix_delete_account.sql.
  */
+const { getServiceKey } = require('./test-helpers');
+
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
 
@@ -85,9 +87,22 @@ async function cleanup() {
   if (Array.isArray(prof) && prof.length === 0) pass('delete rimuove la riga profiles');
   else fail(`profiles ancora presente: ${JSON.stringify(prof)}`);
 
-  const msgs = await sb(`private_messages?sender_name=eq.${encodeURIComponent(NICK)}&select=id`);
-  if (Array.isArray(msgs) && msgs.length === 0) pass('delete rimuove i messaggi privati');
-  else fail(`messaggi ancora presenti: ${JSON.stringify(msgs)}`);
+  // La lettura diretta di private_messages e' chiusa da Messaggi Step B: con la
+  // anon key ritorna SEMPRE zero righe, quindi la vecchia asserzione passava a
+  // prescindere (falso verde, scoperto il 2026-09-17). Serve la chiave
+  // privilegiata; se manca il test lo dice invece di fingere che sia verde.
+  const svcKey = getServiceKey();
+  if (!svcKey) {
+    console.warn('  ⚠️  SUPABASE_SERVICE_KEY assente: cancellazione dei messaggi NON verificata.');
+    console.warn('     Copia .env.test.example in .env.test per abilitare il controllo.');
+  } else {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/private_messages?sender_name=eq.${encodeURIComponent(NICK)}&select=id`,
+      { headers: { apikey: svcKey, Authorization: `Bearer ${svcKey}` } });
+    const msgs = await res.json().catch(() => null);
+    if (Array.isArray(msgs) && msgs.length === 0) pass('delete rimuove i messaggi privati');
+    else fail(`messaggi ancora presenti: ${JSON.stringify(msgs)}`);
+  }
 
   const posts = await sb(`consciousness_posts?content=eq.${encodeURIComponent('post di test')}&select=author_nickname`);
   if (Array.isArray(posts) && posts.length >= 1 && posts[0].author_nickname === 'Utente eliminato') pass('delete anonimizza i post pubblici');

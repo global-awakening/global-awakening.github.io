@@ -30,15 +30,30 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const API = 'https://api.supabase.com';
 
-/** Mini-parser di .env.local, stesso approccio di test-helpers.js (niente dotenv). */
+/**
+ * Mini-parser di .env.local, stesso approccio di test-helpers.js (niente dotenv).
+ *
+ * Accetta due formati, perché incollare il solo token è l'errore naturale da fare:
+ *   SUPABASE_ACCESS_TOKEN=sbp_fc...   (forma canonica)
+ *   sbp_fc...                         (token nudo su una riga, riconosciuto dal prefisso)
+ */
 function loadLocalEnv() {
   const envPath = path.join(ROOT, '.env.local');
   if (!fs.existsSync(envPath)) return;
   for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
     if (/^\s*#/.test(line) || !line.trim()) continue;
+
     const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*)$/);
-    if (!m) continue;
-    if (!(m[1] in process.env)) process.env[m[1]] = m[2].trim().replace(/^["']|["']$/g, '');
+    if (m) {
+      if (!(m[1] in process.env)) process.env[m[1]] = m[2].trim().replace(/^["']|["']$/g, '');
+      continue;
+    }
+
+    // Riga senza "=": se ha la forma di un token Supabase, la usiamo come tale.
+    const nudo = line.trim().replace(/^["']|["']$/g, '');
+    if (/^sbp_/.test(nudo) && !process.env.SUPABASE_ACCESS_TOKEN) {
+      process.env.SUPABASE_ACCESS_TOKEN = nudo;
+    }
   }
 }
 
