@@ -50,8 +50,11 @@ File nuovi accanto al sito, nessuna modifica alla logica applicativa:
 |---|---|
 | `.well-known/assetlinks.json` | Digital Asset Links: prova a Chrome che l'app Android e il dominio sono la stessa entità. Senza, la TWA mostra la barra del browser. |
 | `privacy.html` | Informativa privacy raggiungibile **senza login e senza installare l'app** (URL obbligatorio in Play Console). Oggi la privacy esiste solo dentro l'app. |
-| `elimina-account.html` | Pagina web per richiedere la cancellazione account, obbligatoria per le app con registrazione. L'eliminazione in-app esiste già (`delete_my_account`). |
-| `regole.html` | Regolamento contenuti: cosa è inaccettabile e come si segnala. Richiesto dalla policy UGC, referenziato da SP1. |
+| `elimina-account.html` | Pagina web per richiedere la cancellazione account, obbligatoria per le app con registrazione. L'eliminazione in-app esiste già (`delete_my_account`, **riparata il 2026-09-17**: era rotta da `08_drop_dead_tables.sql`). |
+
+> `regole.html` era previsto qui ma è stato **realizzato in SP1** (Task 7): il dialog di
+> segnalazione ci rimanda, e pubblicare un link morto in un flusso che Google ispeziona
+> sarebbe stato un difetto.
 | `manifest.webmanifest` | Aggiunta del campo `id` e degli `screenshots` (migliorano scheda e installazione). |
 
 Il repo è `global-awakening/global-awakening.github.io`, quindi il sito sta sulla radice
