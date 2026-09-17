@@ -1166,18 +1166,25 @@ Riprende struttura, CORS e gestione dei segreti da `notify-ritual-participants/i
 
 - [ ] **Step 2: Chiamarla dal client, senza far fallire la segnalazione**
 
+⚠️ Il client Supabase di questo progetto è un'implementazione minimale scritta a mano (vedi i caveat in testa a `src/app.jsx`): **non ha `supabase.functions.invoke`**, e infatti oggi nessuna Edge Function viene chiamata dal client. Si usa una `fetch` diretta, come già si fa altrove nel file (per esempio la lettura di `telepathy_chat` a riga ~993).
+
 In `doReport`, dopo l'esito positivo della RPC:
 
 ```jsx
             // Best-effort: se la mail non parte, la segnalazione resta comunque salvata.
-            supabase.functions.invoke('notify-content-report', {
-              body: { report_id: data?.id, content_type: reportTarget.type,
-                      reason: reportReason, target_nickname: reportTarget.author,
-                      reporter_nickname: nickname }
+            // Il client custom non ha functions.invoke → fetch diretta all'endpoint.
+            fetch(`${SUPABASE_URL}/functions/v1/notify-content-report`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY,
+                         Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+              body: JSON.stringify({
+                report_id: data && data.id, content_type: reportTarget.type,
+                reason: reportReason, target_nickname: reportTarget.author,
+                reporter_nickname: nickname })
             }).catch(() => {});
 ```
 
-Serve catturare `data` dalla chiamata RPC, che allo Step 2 del Task 5 non veniva usata.
+Serve catturare `data` dalla chiamata RPC, che allo Step 2 del Task 5 non veniva usata. Usare i nomi reali delle costanti dell'URL e della anon key come sono definiti in `src/app.jsx`.
 
 - [ ] **Step 3: Chiedere a Irene il deploy della funzione**
 
