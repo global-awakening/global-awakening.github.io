@@ -1,5 +1,5 @@
 
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, useCallback } = React;
 
         // Supabase is initialized in the script tag above
 
@@ -419,6 +419,35 @@
               inviteExpired: "Expired",
               trainingFloatingPrefix: "Training in progress with",
               trainingFloatingCta: "Return"
+            },
+            moderation: {
+              menu: "Actions",
+              report: "Report",
+              block: "Block",
+              unblock: "Unblock",
+              cancel: "Cancel",
+              blockedUsers: "Blocked users",
+              noBlocked: "You haven't blocked anyone.",
+              blockTitle: "Block this person?",
+              blockConfirm: "You won't see their content and they won't be able to message you. You can undo this anytime.",
+              blockDone: "User blocked.",
+              unblockDone: "User unblocked.",
+              reportTitle: "Report content",
+              reportWhy: "Why are you reporting this?",
+              reportNotes: "Notes (optional)",
+              reportSend: "Send report",
+              reportDone: "Report sent. We'll review it within 48 hours.",
+              reportRules: "Content rules",
+              guestOnly: "You need a registered account to report or block.",
+              reasons: {
+                spam: "Spam or advertising",
+                harassment: "Harassment or insults",
+                hate: "Hate or discrimination",
+                sexual: "Sexual content",
+                violence: "Violence or threats",
+                self_harm: "Self-harm or suicide",
+                other: "Something else"
+              }
             }
           },
           it: {
@@ -712,6 +741,35 @@
               inviteExpired: "Scaduto",
               trainingFloatingPrefix: "Training in corso con",
               trainingFloatingCta: "Torna"
+            },
+            moderation: {
+              menu: "Azioni",
+              report: "Segnala",
+              block: "Blocca",
+              unblock: "Sblocca",
+              cancel: "Annulla",
+              blockedUsers: "Utenti bloccati",
+              noBlocked: "Non hai bloccato nessuno.",
+              blockTitle: "Vuoi bloccare questa persona?",
+              blockConfirm: "Non vedrai più i suoi contenuti e non potrà scriverti. Puoi annullare quando vuoi.",
+              blockDone: "Utente bloccato.",
+              unblockDone: "Utente sbloccato.",
+              reportTitle: "Segnala contenuto",
+              reportWhy: "Perché lo segnali?",
+              reportNotes: "Note (facoltative)",
+              reportSend: "Invia segnalazione",
+              reportDone: "Segnalazione inviata. La esamineremo entro 48 ore.",
+              reportRules: "Regolamento dei contenuti",
+              guestOnly: "Serve un account registrato per segnalare o bloccare.",
+              reasons: {
+                spam: "Spam o pubblicità",
+                harassment: "Molestie o insulti",
+                hate: "Odio o discriminazione",
+                sexual: "Contenuto sessuale",
+                violence: "Violenza o minacce",
+                self_harm: "Autolesionismo o suicidio",
+                other: "Altro"
+              }
             }
           }
         };
@@ -894,6 +952,19 @@
           const [profilePasswordMsg, setProfilePasswordMsg] = useState('');
           const [isGuest, setIsGuest] = useState(() => localStorage.getItem('ga_is_guest') === 'true');
           const [userEmail, setUserEmail] = useState(() => localStorage.getItem('ga_email') || '');
+
+          // SP1 moderazione — nickname che l'utente ha bloccato. La cache locale evita
+          // che al primo render compaiano contenuti di un bloccato per poi sparire.
+          const [blockedUsers, setBlockedUsers] = useState(() => {
+            try { return JSON.parse(localStorage.getItem('ga_blocked') || '[]'); }
+            catch { return []; }
+          });
+          // Copia sempre aggiornata della lista, letta dalle closure di polling.
+          const blockedUsersRef = useRef(blockedUsers);
+          useEffect(() => { blockedUsersRef.current = blockedUsers; }, [blockedUsers]);
+          // Toast neutro per gli esiti positivi (blocco riuscito, segnalazione inviata).
+          // errorToast esiste già ma è rosso con ⚠️: userebbe il tono sbagliato.
+          const [infoToast, setInfoToast] = useState(null);
           const [authTab, setAuthTab] = useState('login');
           const [showResetForm, setShowResetForm] = useState(false);
           const [resetEmail, setResetEmail] = useState('');
@@ -974,6 +1045,159 @@
             const tmr = setTimeout(() => setErrorToast(null), 4000);
             return () => clearTimeout(tmr);
           }, [errorToast]);
+
+          // Toast neutro (SP1): stesso comportamento, tono diverso.
+          useEffect(() => {
+            if (!infoToast) return;
+            const tmr = setTimeout(() => setInfoToast(null), 4000);
+            return () => clearTimeout(tmr);
+          }, [infoToast]);
+
+          // SP1 — elenco dei bloccati, ricaricato al login e dopo ogni blocco/sblocco.
+          // Gli ospiti non hanno riga profiles, quindi non hanno credenziale: lista vuota.
+          const reloadBlocks = useCallback(async () => {
+            if (!nickname || isGuest || !passwordHash) { setBlockedUsers([]); return; }
+            const { data, error } = await supabase.rpc('get_my_blocks', {
+              p_nickname: nickname,
+              p_password_hash: passwordHash
+            });
+            if (error) return;   // rete giù o auth non ancora pronta: si tiene la cache
+            const list = (data || []).map(x => (typeof x === 'string' ? x : x.get_my_blocks)).filter(Boolean);
+            setBlockedUsers(list);
+            blockedUsersRef.current = list;
+            try { localStorage.setItem('ga_blocked', JSON.stringify(list)); } catch {}
+          }, [nickname, isGuest, passwordHash]);
+
+          useEffect(() => { reloadBlocks(); }, [reloadBlocks]);
+
+          // Usato da tutti i filtri di visibilità. Legge dal ref e non dallo stato:
+          // i cicli di polling catturano isBlocked in una closure creata una volta
+          // sola, quindi con lo stato leggerebbero per sempre la lista del primo
+          // render e il filtro smetterebbe di aggiornarsi dopo un blocco.
+          const isBlocked = (nick) => !!nick && blockedUsersRef.current.includes(nick);
+
+          // SP1 — segnalazione e blocco.
+          // openMenuKey sta QUI e non dentro il menu: un componente definito dentro
+          // GlobalAwakeningPlatform verrebbe rimontato a ogni render, e con il polling
+          // ogni 2s il menu aperto si richiuderebbe da solo.
+          // { key, top|bottom, right }: le coordinate servono perche' il dropdown e'
+          // position:fixed. Dentro i contenitori scrollabili (chat telepatia 220px,
+          // messaggi privati 180px) un dropdown in position:absolute veniva TAGLIATO
+          // dall'overflow, proprio sulle due superfici di chat.
+          const [openMenu, setOpenMenu] = useState(null);
+          const [blockTarget, setBlockTarget] = useState(null);   // conferma prima di bloccare
+          const [reportTarget, setReportTarget] = useState(null);   // { author, type, id, snapshot }
+          const [reportReason, setReportReason] = useState('spam');
+          const [reportNotes, setReportNotes] = useState('');
+
+          useEffect(() => {
+            if (!openMenu) return;
+            const chiudi = () => setOpenMenu(null);
+            const onEsc = (e) => { if (e.key === 'Escape') setOpenMenu(null); };
+            // Lo scroll va chiuso perche' il menu e' position:fixed con coordinate
+            // catturate al click: scorrendo resterebbe sopra una card diversa da
+            // quella che lo ha aperto. Ma si ignorano gli scroll che nascono DENTRO
+            // il menu e quelli dei primi 250ms: il browser scrolla da solo per
+            // portare un elemento in vista, e il menu si richiuderebbe per colpa
+            // dello stesso gesto che lo ha aperto.
+            const apertoDa = Date.now();
+            const onScroll = (e) => {
+              if (Date.now() - apertoDa < 250) return;
+              if (e.target && e.target.closest && e.target.closest('[data-moderation-menu]')) return;
+              setOpenMenu(null);
+            };
+            document.addEventListener('click', chiudi);
+            document.addEventListener('keydown', onEsc);
+            document.addEventListener('scroll', onScroll, true);
+            return () => {
+              document.removeEventListener('click', chiudi);
+              document.removeEventListener('keydown', onEsc);
+              document.removeEventListener('scroll', onScroll, true);
+            };
+          }, [openMenu]);
+
+          const doBlock = async (nick) => {
+            if (isGuest || !passwordHash) { setErrorToast(t.moderation.guestOnly); return; }
+            const { error } = await supabase.rpc('block_user', {
+              p_nickname: nickname, p_password_hash: passwordHash, p_blocked_nickname: nick
+            });
+            if (error) { setErrorToast(error.message); return; }
+            await reloadBlocks();
+            setInfoToast(t.moderation.blockDone);
+          };
+
+          const doUnblock = async (nick) => {
+            if (isGuest || !passwordHash) return;
+            const { error } = await supabase.rpc('unblock_user', {
+              p_nickname: nickname, p_password_hash: passwordHash, p_blocked_nickname: nick
+            });
+            if (error) { setErrorToast(error.message); return; }
+            await reloadBlocks();
+            setInfoToast(t.moderation.unblockDone);
+          };
+
+          const doReport = async () => {
+            if (!reportTarget) return;
+            if (isGuest || !passwordHash) { setErrorToast(t.moderation.guestOnly); return; }
+            const { error } = await supabase.rpc('report_content', {
+              p_reporter_nickname: nickname,
+              p_password_hash: passwordHash,
+              p_target_nickname: reportTarget.author,
+              p_content_type: reportTarget.type,
+              p_content_id: reportTarget.id ? String(reportTarget.id) : null,
+              p_content_snapshot: reportTarget.snapshot || null,
+              p_reason: reportReason,
+              p_details: reportNotes || null
+            });
+            setReportTarget(null);
+            setReportNotes('');
+            setReportReason('spam');
+            if (error) setErrorToast(error.message);
+            else setInfoToast(t.moderation.reportDone);
+          };
+
+          // Menu ⋯ sui contenuti ALTRUI, solo per account registrati.
+          // Funzione che ritorna JSX, non un componente: nessuna identita' da
+          // riconciliare, nessuno stato interno da perdere.
+          const moderationMenu = ({ author, type, id, snapshot }) => {
+            if (!author || author === nickname) return null;
+            const key = `${type}:${id || author}`;
+            const open = openMenu && openMenu.key === key;
+
+            const apri = (e) => {
+              e.stopPropagation();   // senza questo il listener su document richiude subito
+              // Gli ospiti non hanno credenziale: invece di un menu che non farebbe nulla,
+              // si spiega perche' serve un account.
+              if (isGuest) { setErrorToast(t.moderation.guestOnly); return; }
+              if (open) { setOpenMenu(null); return; }
+              const r = e.currentTarget.getBoundingClientRect();
+              const flipUp = (window.innerHeight - r.bottom) < 110;
+              setOpenMenu({
+                key, author, type, id, snapshot,
+                top: flipUp ? null : r.bottom + 4,
+                bottom: flipUp ? (window.innerHeight - r.top + 4) : null,
+                right: Math.min(Math.max(8, window.innerWidth - 184),
+                                Math.max(8, window.innerWidth - r.right))
+              });
+            };
+
+            // Il dropdown NON sta qui dentro: renderizzato dentro la card, il suo
+            // z-index resterebbe confinato nel contesto di impilamento della card e
+            // finirebbe SOTTO le card successive (e tagliato dagli overflow delle chat).
+            // Vive a livello radice, uno solo, guidato da openMenu.
+            return (
+              <span style={{marginLeft: 'auto'}}>
+                <button
+                  aria-label={t.moderation.menu}
+                  aria-expanded={!!open}
+                  onClick={apri}
+                  className="text-secondary"
+                  style={{background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem',
+                          lineHeight: 1, padding: '0.25rem 0.5rem', minHeight: '32px'}}
+                >⋯</button>
+              </span>
+            );
+          };
 
           // Pulizia stato remoto alla chiusura del tab.
           // sendBeacon non supporta DELETE: usiamo fetch con keepalive=true che il browser
@@ -1101,13 +1325,15 @@
                     ...u,
                     status: busyIds.has(u.id) ? 'busy' : 'available'
                   }));
-                  setOnlineUsersForTelepathy(usersWithStatus.filter(u => u.nickname !== nickname));
+                  setOnlineUsersForTelepathy(usersWithStatus.filter(u => u.nickname !== nickname && !isBlocked(u.nickname)));
 
                   // Controlla inviti in arrivo
                   const { data: invites } = await supabase.from('telepathy_invites')
                     .select('*').eq('to_id', sessionId).eq('status', 'pending');
-                  if (invites && invites.length > 0) {
-                    const inv = invites[0];
+                  // SP1: un invito da un utente bloccato non viene mostrato.
+                  const visibili = (invites || []).filter(i => !isBlocked(i.from_name));
+                  if (visibili.length > 0) {
+                    const inv = visibili[0];
                     setIncomingInvite({ from_id: inv.from_id, from_name: inv.from_name, invite_id: inv.id });
                   } else {
                     setIncomingInvite(null);
@@ -1151,19 +1377,19 @@
                 if (expired.length > 0) {
                   await supabase.rpc('cleanup_expired_rituals');
                 }
-                setRituals(ritualsData.filter(r => !expired.find(e => e.id === r.id)));
+                setRituals(ritualsData.filter(r => !expired.find(e => e.id === r.id) && !isBlocked(r.creator)));
               }
 
               const { data: postsData } = await supabase.from('consciousness_posts').select('*').order('created_at', { ascending: false }).limit(50);
-              if (postsData) setPosts(postsData);
+              if (postsData) setPosts(postsData.filter(x => !isBlocked(x.author_nickname)));
 
               if (expandedPostIdRef.current) {
                 const { data: commentsData } = await supabase.from('consciousness_comments').select('*').eq('post_id', expandedPostIdRef.current).order('created_at', { ascending: true });
-                if (commentsData) setCommentsMap(prev => ({ ...prev, [expandedPostIdRef.current]: commentsData }));
+                if (commentsData) setCommentsMap(prev => ({ ...prev, [expandedPostIdRef.current]: commentsData.filter(x => !isBlocked(x.author_nickname)) }));
               }
               if (expandedRitualIdRef.current) {
                 const { data: rCommentsData } = await supabase.from('ritual_comments').select('*').eq('ritual_id', expandedRitualIdRef.current).order('created_at', { ascending: true });
-                if (rCommentsData) setRitualCommentsMap(prev => ({ ...prev, [expandedRitualIdRef.current]: rCommentsData }));
+                if (rCommentsData) setRitualCommentsMap(prev => ({ ...prev, [expandedRitualIdRef.current]: rCommentsData.filter(x => !isBlocked(x.author_nickname)) }));
               }
             };
             
@@ -1199,7 +1425,15 @@
                 const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
                 if (myMatch) {
                   const amUser1 = myMatch.user1_id === sessionId;
-                  setPartner({ id: amUser1 ? myMatch.user2_id : myMatch.user1_id, nickname: amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname });
+                  // SP1: mai una sessione con chi ho bloccato. Il match si chiude, se no
+                  // il polling lo ritroverebbe a ogni tick e non cercherei mai un altro.
+                  const altroNick = amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname;
+                  if (isBlocked(altroNick)) {
+                    try { await supabase.rpc('end_telepathy_match', { p_match_id: myMatch.id, p_ended_by: sessionId }); }
+                    catch (e) { /* RPC non applicata: il match scade comunque a TTL */ }
+                    return;
+                  }
+                  setPartner({ id: amUser1 ? myMatch.user2_id : myMatch.user1_id, nickname: altroNick });
                   setRole(amUser1 ? myMatch.user1_role : myMatch.user2_role);
                   setMatchId(myMatch.id);
                   setSearchingPartner(false);
@@ -1212,8 +1446,12 @@
               // 2. Look for someone in queue
               const { data: queue } = await supabase.from('telepathy_queue').select('*').neq('id', sessionId).order('timestamp', { ascending: true });
 
-              if (queue && queue.length > 0) {
-                const available = queue[0];
+              // SP1: scarta dalla coda chi ho bloccato; se resta solo lui, si attende
+              // il tick successivo invece di accoppiarsi.
+              const queueLibera = (queue || []).filter(q => !isBlocked(q.nickname));
+
+              if (queueLibera.length > 0) {
+                const available = queueLibera[0];
 
                 // Re-check pre-insert: tra il primo SELECT (riga sopra) e l'INSERT, un altro
                 // client puo' avermi appena matchato o aver matchato 'available' con un terzo.
@@ -1748,6 +1986,8 @@
             setIsGuest(false);
             setPasswordHash(null);
             localStorage.removeItem('ga_pwhash');
+            setBlockedUsers([]);
+            localStorage.removeItem('ga_blocked');
             setTempNickname('');
             setTempEmail('');
             setTempPassword('');
@@ -2070,7 +2310,7 @@
             if (!matchId) return;
             const loadChat = async () => {
               const { data } = await supabase.from('telepathy_chat').select('*').eq('match_id', matchId).order('created_at', { ascending: true });
-              if (data) setTelepathyChatMessages(data);
+              if (data) setTelepathyChatMessages(data.filter(x => !isBlocked(x.sender_name)));
             };
             loadChat();
             const interval = setInterval(loadChat, 3000);
@@ -2604,12 +2844,21 @@
             if (notif.type === 'private_message') {
               // Forza reload immediato dei messaggi privati prima di aprire il profilo,
               // così la conversazione non appare vuota anche se il poll (8s) non è ancora scattato.
+              // Via RPC e non con una SELECT diretta: la lettura pubblica di
+              // private_messages e' chiusa da Messaggi Step B (tornerebbe 0 righe e
+              // svuoterebbe la conversazione) e solo get_my_messages applica il filtro
+              // dei bloccati introdotto da SP1.
               try {
-                const { data: sent } = await supabase.from('private_messages').select('*').eq('sender_name', nickname);
-                const { data: received } = await supabase.from('private_messages').select('*').eq('receiver_name', nickname);
-                const all = [...(sent || []), ...(received || [])];
-                all.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-                setPrivateMessages(all);
+                if (!isGuest && passwordHash) {
+                  const { data } = await supabase.rpc('get_my_messages', {
+                    p_nickname: nickname, p_password_hash: passwordHash
+                  });
+                  if (Array.isArray(data)) {
+                    const all = [...data];
+                    all.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+                    setPrivateMessages(all);
+                  }
+                }
               } catch (err) { console.warn('reload private_messages failed', err); }
               const senderMatch = notif.message.match(/^(.+) ti ha inviato/);
               if (senderMatch) openProfile(senderMatch[1]);
@@ -2618,8 +2867,9 @@
                 // Fetch immediato dell'invito senza aspettare il prossimo ciclo di updatePresence
                 const { data: invites } = await supabase.from('telepathy_invites')
                   .select('*').eq('to_id', sessionId).eq('status', 'pending');
-                if (invites && invites.length > 0) {
-                  const inv = invites[0];
+                const visibili = (invites || []).filter(i => !isBlocked(i.from_name));
+                if (visibili.length > 0) {
+                  const inv = visibili[0];
                   setIncomingInvite({ from_id: inv.from_id, from_name: inv.from_name, invite_id: inv.id });
                 }
               }
@@ -2812,7 +3062,7 @@
             setExpandedRitualId(ritualId);
             if (!ritualCommentsMap[ritualId]) {
               const { data } = await supabase.from('ritual_comments').select('*').eq('ritual_id', ritualId).order('created_at', { ascending: true });
-              if (data) setRitualCommentsMap(prev => ({ ...prev, [ritualId]: data }));
+              if (data) setRitualCommentsMap(prev => ({ ...prev, [ritualId]: data.filter(x => !isBlocked(x.author_nickname)) }));
             }
           };
 
@@ -2870,7 +3120,7 @@
             }
             setExpandedPostId(postId);
             const { data } = await supabase.from('consciousness_comments').select('*').eq('post_id', postId).order('created_at', { ascending: true });
-            if (data) setCommentsMap(prev => ({ ...prev, [postId]: data }));
+            if (data) setCommentsMap(prev => ({ ...prev, [postId]: data.filter(x => !isBlocked(x.author_nickname)) }));
           };
 
           const createComment = async (postId) => {
@@ -3413,7 +3663,11 @@
                                   >✦ {ritual.creator}</span>
                                 )}
                               </div>
-                              <div className="text-2xl" style={{color: '#fbbf24'}}>{ritual.sacred_number}</div>
+                              <div className="flex items-start gap-1">
+                                <div className="text-2xl" style={{color: '#fbbf24'}}>{ritual.sacred_number}</div>
+                                {moderationMenu({ author: ritual.creator, type: 'ritual', id: ritual.id, snapshot: `${ritual.name}
+${ritual.description || ''}` })}
+                              </div>
                             </div>
 
                             <div className="flex items-center gap-2 mb-3">
@@ -3482,7 +3736,7 @@
 
                             {isRitualExpanded && (
                               <div style={{marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.08)'}}>
-                                {ritualComments.map(c => (
+                                {ritualComments.map(c => { const commentKind = 'ritual_comment'; return (
                                   <div key={c.id} style={{marginBottom: '0.75rem', paddingLeft: '1rem', borderLeft: '2px solid rgba(124,58,237,0.4)'}}>
                                     <div className="flex items-center gap-2 mb-1">
                                       <span
@@ -3491,10 +3745,11 @@
                                         onClick={() => openProfile(c.author_nickname)}
                                       >{c.author_nickname}</span>
                                       <span style={{color: '#c4b5fd'}} className="text-xs">{new Date(c.created_at).toLocaleTimeString()}</span>
+                                      {moderationMenu({ author: c.author_nickname, type: commentKind, id: c.id, snapshot: c.content })}
                                     </div>
                                     <p className="text-white" style={{fontSize: '0.9rem'}}>{c.content}</p>
                                   </div>
-                                ))}
+                                ); })}
                                 <div className="flex gap-2" style={{marginTop: '0.75rem'}}>
                                   <input
                                     type="text"
@@ -3565,6 +3820,7 @@
                                 onClick={() => openProfile(post.author_nickname)}
                               >{post.author_nickname}</span>
                               <span style={{color: '#c4b5fd'}} className="text-xs">{new Date(post.created_at).toLocaleString()}</span>
+                              {moderationMenu({ author: post.author_nickname, type: 'post', id: post.id, snapshot: post.content })}
                             </div>
                             <p className="text-white" style={{marginBottom: '0.75rem', lineHeight: '1.5'}}>{post.content}</p>
                             <div className="flex gap-2">
@@ -3587,7 +3843,7 @@
 
                             {isExpanded && (
                               <div style={{marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.08)'}}>
-                                {postComments.map(c => (
+                                {postComments.map(c => { const commentKind = 'post_comment'; return (
                                   <div key={c.id} style={{marginBottom: '0.75rem', paddingLeft: '1rem', borderLeft: '2px solid rgba(124,58,237,0.4)'}}>
                                     <div className="flex items-center gap-2 mb-1">
                                       <span
@@ -3596,10 +3852,11 @@
                                         onClick={() => openProfile(c.author_nickname)}
                                       >{c.author_nickname}</span>
                                       <span style={{color: '#c4b5fd'}} className="text-xs">{new Date(c.created_at).toLocaleTimeString()}</span>
+                                      {moderationMenu({ author: c.author_nickname, type: commentKind, id: c.id, snapshot: c.content })}
                                     </div>
                                     <p className="text-white" style={{fontSize: '0.9rem'}}>{c.content}</p>
                                   </div>
-                                ))}
+                                ); })}
                                 <div className="flex gap-2" style={{marginTop: '0.75rem'}}>
                                   <input
                                     type="text"
@@ -4014,7 +4271,12 @@
                                 )}
                                 {telepathyChatMessages.map(msg => (
                                   <div key={msg.id} style={{padding: '0.3rem 0.5rem', borderRadius: '0.5rem', background: msg.sender_name === nickname ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.08)', alignSelf: msg.sender_name === nickname ? 'flex-end' : 'flex-start', maxWidth: '90%'}}>
-                                    {msg.sender_name !== nickname && <p className="text-secondary" style={{fontSize: '0.65rem'}}>{msg.sender_name}</p>}
+                                    {msg.sender_name !== nickname && (
+                                      <div className="flex items-center gap-1">
+                                        <p className="text-secondary" style={{fontSize: '0.65rem'}}>{msg.sender_name}</p>
+                                        {moderationMenu({ author: msg.sender_name, type: 'telepathy_chat', id: msg.id, snapshot: msg.content })}
+                                      </div>
+                                    )}
                                     <p className="text-white" style={{fontSize: '0.8rem'}}>{msg.content}</p>
                                   </div>
                                 ))}
@@ -4247,6 +4509,26 @@
                         </div>
                       )}
 
+                      {/* Utenti bloccati (SP1) — solo registrati */}
+                      {!isGuest && (
+                        <div style={{borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1.25rem'}}>
+                          <label className="text-white text-sm mb-2" style={{display: 'block'}}>{t.moderation.blockedUsers}</label>
+                          {blockedUsers.length === 0 ? (
+                            <p className="text-secondary text-xs">{t.moderation.noBlocked}</p>
+                          ) : blockedUsers.map(nick => (
+                            <div key={nick} className="flex items-center gap-2" style={{padding: '0.35rem 0'}}>
+                              <span className="text-white text-sm">{nick}</span>
+                              <button className="btn-secondary"
+                                style={{marginLeft: 'auto', fontSize: '0.75rem', padding: '0.3rem 0.7rem'}}
+                                onClick={() => doUnblock(nick)}>{t.moderation.unblock}</button>
+                            </div>
+                          ))}
+                          <a href="regole.html" target="_blank" rel="noopener"
+                             className="text-secondary text-xs"
+                             style={{display: 'inline-block', marginTop: '0.5rem'}}>{t.moderation.reportRules}</a>
+                        </div>
+                      )}
+
                       {/* I tuoi dati (GDPR) — solo registrati */}
                       {!isGuest && (
                         <div style={{borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1.25rem'}}>
@@ -4306,6 +4588,23 @@
                           {viewingProfile.bio && (
                             <div className="bg-glass-dark rounded-xl p-4">
                               <p className="text-white" style={{whiteSpace: 'pre-wrap'}}>{viewingProfile.bio}</p>
+                            </div>
+                          )}
+
+                          {viewingProfile.nickname !== nickname && !isGuest && (
+                            <div className="flex gap-2" style={{justifyContent: 'center'}}>
+                              <button className="btn-secondary" style={{fontSize: '0.8rem'}}
+                                onClick={() => setReportTarget({
+                                  author: viewingProfile.nickname, type: 'profile',
+                                  id: null, snapshot: viewingProfile.bio || ''
+                                })}>{t.moderation.report}</button>
+                              {blockedUsers.includes(viewingProfile.nickname) ? (
+                                <button className="btn-secondary" style={{fontSize: '0.8rem'}}
+                                  onClick={() => doUnblock(viewingProfile.nickname)}>{t.moderation.unblock}</button>
+                              ) : (
+                                <button className="btn-secondary" style={{fontSize: '0.8rem', color: '#fca5a5'}}
+                                  onClick={() => setBlockTarget(viewingProfile.nickname)}>{t.moderation.block}</button>
+                              )}
                             </div>
                           )}
 
@@ -4388,9 +4687,12 @@
                                       }}>
                                         <p className="text-white" style={{fontSize: '0.8rem'}}>{msg.content}</p>
                                       </div>
-                                      <p style={{fontSize: '0.6rem', color: '#c4b5fd', marginTop: '0.1rem', textAlign: isMe ? 'right' : 'left'}}>
-                                        {new Date(msg.created_at).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'})}
-                                      </p>
+                                      <div className="flex items-center gap-1" style={{justifyContent: isMe ? 'flex-end' : 'flex-start'}}>
+                                        <p style={{fontSize: '0.6rem', color: '#c4b5fd', marginTop: '0.1rem'}}>
+                                          {new Date(msg.created_at).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'})}
+                                        </p>
+                                        {!isMe && moderationMenu({ author: msg.sender_name, type: 'private_message', id: msg.id, snapshot: msg.content })}
+                                      </div>
                                     </div>
                                   );
                                 })
@@ -4445,6 +4747,123 @@
                   animation: 'toast-rise 0.35s ease-out'
                 }}>
                   <p className="text-white font-bold" style={{fontSize: '0.9rem', margin: 0, textAlign: 'center'}}>⚠️ {errorToast}</p>
+                </div>
+              )}
+
+              {openMenu && (
+                <div
+                  data-moderation-menu
+                  onClick={e => e.stopPropagation()}
+                  style={{position: 'fixed', zIndex: 9997,
+                          top: openMenu.top != null ? `${openMenu.top}px` : undefined,
+                          bottom: openMenu.bottom != null ? `${openMenu.bottom}px` : undefined,
+                          right: `${openMenu.right}px`,
+                          background: 'rgba(17,12,30,0.98)', border: '1px solid rgba(167,139,250,0.35)',
+                          borderRadius: '0.75rem', padding: '0.25rem', minWidth: '11rem',
+                          boxShadow: '0 10px 30px rgba(0,0,0,0.55)'}}>
+                  <button
+                    onClick={() => {
+                      const m = openMenu;
+                      setOpenMenu(null);
+                      setReportTarget({ author: m.author, type: m.type, id: m.id, snapshot: m.snapshot });
+                    }}
+                    style={{display: 'block', width: '100%', textAlign: 'left', background: 'none',
+                            border: 'none', color: '#e9d5ff', padding: '0.6rem 0.75rem', cursor: 'pointer'}}
+                  >{t.moderation.report}</button>
+                  <button
+                    onClick={() => { const a = openMenu.author; setOpenMenu(null); setBlockTarget(a); }}
+                    style={{display: 'block', width: '100%', textAlign: 'left', background: 'none',
+                            border: 'none', color: '#fca5a5', padding: '0.6rem 0.75rem', cursor: 'pointer'}}
+                  >{t.moderation.block}</button>
+                </div>
+              )}
+
+              {blockTarget && (
+                <div style={{position: 'fixed', inset: 0, zIndex: 9998, display: 'flex',
+                             alignItems: 'center', justifyContent: 'center', padding: '1rem',
+                             background: 'rgba(0,0,0,0.7)'}}
+                     onClick={() => setBlockTarget(null)}>
+                  <div className="bg-glass rounded-2xl border-glass p-4"
+                       style={{maxWidth: '22rem', width: '100%'}}
+                       onClick={e => e.stopPropagation()}>
+                    <h3 className="text-white font-bold mb-2">{t.moderation.blockTitle}</h3>
+                    <p className="text-primary font-medium mb-1">{blockTarget}</p>
+                    <p className="text-secondary text-sm">{t.moderation.blockConfirm}</p>
+                    <div className="flex gap-2" style={{marginTop: '1rem'}}>
+                      <button
+                        style={{padding: '0.6rem 1rem', borderRadius: '0.75rem', flex: 1,
+                                border: '1px solid rgba(248,113,113,0.5)', background: 'rgba(248,113,113,0.12)',
+                                color: '#fca5a5', cursor: 'pointer', fontWeight: 600}}
+                        onClick={() => { const n = blockTarget; setBlockTarget(null); doBlock(n); }}
+                      >{t.moderation.block}</button>
+                      <button className="btn-secondary" style={{flex: 1}}
+                        onClick={() => setBlockTarget(null)}>{t.moderation.cancel}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {reportTarget && (
+                <div style={{position: 'fixed', inset: 0, zIndex: 9998, display: 'flex',
+                             alignItems: 'center', justifyContent: 'center', padding: '1rem',
+                             background: 'rgba(0,0,0,0.7)'}}
+                     onClick={() => setReportTarget(null)}>
+                  <div className="bg-glass rounded-2xl border-glass p-4"
+                       style={{maxWidth: '26rem', width: '100%', maxHeight: '90vh', overflowY: 'auto'}}
+                       onClick={e => e.stopPropagation()}>
+                    <h3 className="text-white font-bold mb-2">{t.moderation.reportTitle}</h3>
+                    <p className="text-primary font-medium" style={{marginBottom: '0.25rem'}}>{reportTarget.author}</p>
+                    {reportTarget.snapshot && (
+                      <p className="text-secondary text-xs"
+                         style={{marginBottom: '0.75rem', fontStyle: 'italic',
+                                 overflow: 'hidden', display: '-webkit-box',
+                                 WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'}}>
+                        «{String(reportTarget.snapshot).slice(0, 160)}»
+                      </p>
+                    )}
+                    <p className="text-secondary text-xs mb-2">{t.moderation.reportWhy}</p>
+                    {['spam','harassment','hate','sexual','violence','self_harm','other'].map(k => (
+                      <label key={k} style={{display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                             color: '#e9d5ff', padding: '0.35rem 0', cursor: 'pointer'}}>
+                        <input type="radio" name="report-reason" value={k}
+                               checked={reportReason === k}
+                               onChange={() => setReportReason(k)} />
+                        {t.moderation.reasons[k]}
+                      </label>
+                    ))}
+                    <textarea
+                      value={reportNotes}
+                      onChange={e => setReportNotes(e.target.value)}
+                      placeholder={t.moderation.reportNotes}
+                      aria-label={t.moderation.reportNotes}
+                      maxLength={1000}
+                      style={{width: '100%', marginTop: '0.75rem', minHeight: '4.5rem',
+                              background: 'rgba(255,255,255,0.06)', color: '#fff',
+                              border: '1px solid rgba(167,139,250,0.3)', borderRadius: '0.6rem',
+                              padding: '0.5rem'}}
+                    />
+                    <div className="flex gap-2" style={{marginTop: '0.75rem'}}>
+                      <button className="btn-primary" onClick={doReport}>{t.moderation.reportSend}</button>
+                      <button className="btn-secondary" onClick={() => setReportTarget(null)}>{t.moderation.cancel}</button>
+                    </div>
+                    <a href="regole.html" target="_blank" rel="noopener"
+                       className="text-secondary text-xs"
+                       style={{display: 'inline-block', marginTop: '0.75rem'}}>{t.moderation.reportRules}</a>
+                  </div>
+                </div>
+              )}
+
+              {infoToast && (
+                <div role="status" style={{
+                  position: 'fixed', bottom: '1rem', left: '50%', transform: 'translateX(-50%)',
+                  width: 'min(360px, calc(100vw - 2rem))',
+                  background: 'linear-gradient(135deg, rgba(109,40,217,0.96) 0%, rgba(167,139,250,0.93) 100%)',
+                  border: '1px solid rgba(255,255,255,0.25)',
+                  boxShadow: '0 12px 40px rgba(109,40,217,0.45)',
+                  borderRadius: '0.85rem', padding: '0.85rem 1rem', zIndex: 9999,
+                  animation: 'toast-rise 0.35s ease-out'
+                }}>
+                  <p className="text-white font-bold" style={{fontSize: '0.9rem', margin: 0, textAlign: 'center'}}>✅ {infoToast}</p>
                 </div>
               )}
 

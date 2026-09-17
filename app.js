@@ -2,7 +2,8 @@ function _extends() { return _extends = Object.assign ? Object.assign.bind() : f
 const {
   useState,
   useEffect,
-  useRef
+  useRef,
+  useCallback
 } = React;
 async function hashPassword(password) {
   const encoder = new TextEncoder();
@@ -630,6 +631,35 @@ const translations = {
       inviteExpired: "Expired",
       trainingFloatingPrefix: "Training in progress with",
       trainingFloatingCta: "Return"
+    },
+    moderation: {
+      menu: "Actions",
+      report: "Report",
+      block: "Block",
+      unblock: "Unblock",
+      cancel: "Cancel",
+      blockedUsers: "Blocked users",
+      noBlocked: "You haven't blocked anyone.",
+      blockTitle: "Block this person?",
+      blockConfirm: "You won't see their content and they won't be able to message you. You can undo this anytime.",
+      blockDone: "User blocked.",
+      unblockDone: "User unblocked.",
+      reportTitle: "Report content",
+      reportWhy: "Why are you reporting this?",
+      reportNotes: "Notes (optional)",
+      reportSend: "Send report",
+      reportDone: "Report sent. We'll review it within 48 hours.",
+      reportRules: "Content rules",
+      guestOnly: "You need a registered account to report or block.",
+      reasons: {
+        spam: "Spam or advertising",
+        harassment: "Harassment or insults",
+        hate: "Hate or discrimination",
+        sexual: "Sexual content",
+        violence: "Violence or threats",
+        self_harm: "Self-harm or suicide",
+        other: "Something else"
+      }
     }
   },
   it: {
@@ -940,6 +970,35 @@ const translations = {
       inviteExpired: "Scaduto",
       trainingFloatingPrefix: "Training in corso con",
       trainingFloatingCta: "Torna"
+    },
+    moderation: {
+      menu: "Azioni",
+      report: "Segnala",
+      block: "Blocca",
+      unblock: "Sblocca",
+      cancel: "Annulla",
+      blockedUsers: "Utenti bloccati",
+      noBlocked: "Non hai bloccato nessuno.",
+      blockTitle: "Vuoi bloccare questa persona?",
+      blockConfirm: "Non vedrai più i suoi contenuti e non potrà scriverti. Puoi annullare quando vuoi.",
+      blockDone: "Utente bloccato.",
+      unblockDone: "Utente sbloccato.",
+      reportTitle: "Segnala contenuto",
+      reportWhy: "Perché lo segnali?",
+      reportNotes: "Note (facoltative)",
+      reportSend: "Invia segnalazione",
+      reportDone: "Segnalazione inviata. La esamineremo entro 48 ore.",
+      reportRules: "Regolamento dei contenuti",
+      guestOnly: "Serve un account registrato per segnalare o bloccare.",
+      reasons: {
+        spam: "Spam o pubblicità",
+        harassment: "Molestie o insulti",
+        hate: "Odio o discriminazione",
+        sexual: "Contenuto sessuale",
+        violence: "Violenza o minacce",
+        self_harm: "Autolesionismo o suicidio",
+        other: "Altro"
+      }
     }
   }
 };
@@ -1099,6 +1158,18 @@ function GlobalAwakeningPlatform() {
   const [profilePasswordMsg, setProfilePasswordMsg] = useState('');
   const [isGuest, setIsGuest] = useState(() => localStorage.getItem('ga_is_guest') === 'true');
   const [userEmail, setUserEmail] = useState(() => localStorage.getItem('ga_email') || '');
+  const [blockedUsers, setBlockedUsers] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('ga_blocked') || '[]');
+    } catch {
+      return [];
+    }
+  });
+  const blockedUsersRef = useRef(blockedUsers);
+  useEffect(() => {
+    blockedUsersRef.current = blockedUsers;
+  }, [blockedUsers]);
+  const [infoToast, setInfoToast] = useState(null);
   const [authTab, setAuthTab] = useState('login');
   const [showResetForm, setShowResetForm] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
@@ -1190,6 +1261,171 @@ function GlobalAwakeningPlatform() {
     const tmr = setTimeout(() => setErrorToast(null), 4000);
     return () => clearTimeout(tmr);
   }, [errorToast]);
+  useEffect(() => {
+    if (!infoToast) return;
+    const tmr = setTimeout(() => setInfoToast(null), 4000);
+    return () => clearTimeout(tmr);
+  }, [infoToast]);
+  const reloadBlocks = useCallback(async () => {
+    if (!nickname || isGuest || !passwordHash) {
+      setBlockedUsers([]);
+      return;
+    }
+    const {
+      data,
+      error
+    } = await supabase.rpc('get_my_blocks', {
+      p_nickname: nickname,
+      p_password_hash: passwordHash
+    });
+    if (error) return;
+    const list = (data || []).map(x => typeof x === 'string' ? x : x.get_my_blocks).filter(Boolean);
+    setBlockedUsers(list);
+    blockedUsersRef.current = list;
+    try {
+      localStorage.setItem('ga_blocked', JSON.stringify(list));
+    } catch {}
+  }, [nickname, isGuest, passwordHash]);
+  useEffect(() => {
+    reloadBlocks();
+  }, [reloadBlocks]);
+  const isBlocked = nick => !!nick && blockedUsersRef.current.includes(nick);
+  const [openMenu, setOpenMenu] = useState(null);
+  const [blockTarget, setBlockTarget] = useState(null);
+  const [reportTarget, setReportTarget] = useState(null);
+  const [reportReason, setReportReason] = useState('spam');
+  const [reportNotes, setReportNotes] = useState('');
+  useEffect(() => {
+    if (!openMenu) return;
+    const chiudi = () => setOpenMenu(null);
+    const onEsc = e => {
+      if (e.key === 'Escape') setOpenMenu(null);
+    };
+    const apertoDa = Date.now();
+    const onScroll = e => {
+      if (Date.now() - apertoDa < 250) return;
+      if (e.target && e.target.closest && e.target.closest('[data-moderation-menu]')) return;
+      setOpenMenu(null);
+    };
+    document.addEventListener('click', chiudi);
+    document.addEventListener('keydown', onEsc);
+    document.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('click', chiudi);
+      document.removeEventListener('keydown', onEsc);
+      document.removeEventListener('scroll', onScroll, true);
+    };
+  }, [openMenu]);
+  const doBlock = async nick => {
+    if (isGuest || !passwordHash) {
+      setErrorToast(t.moderation.guestOnly);
+      return;
+    }
+    const {
+      error
+    } = await supabase.rpc('block_user', {
+      p_nickname: nickname,
+      p_password_hash: passwordHash,
+      p_blocked_nickname: nick
+    });
+    if (error) {
+      setErrorToast(error.message);
+      return;
+    }
+    await reloadBlocks();
+    setInfoToast(t.moderation.blockDone);
+  };
+  const doUnblock = async nick => {
+    if (isGuest || !passwordHash) return;
+    const {
+      error
+    } = await supabase.rpc('unblock_user', {
+      p_nickname: nickname,
+      p_password_hash: passwordHash,
+      p_blocked_nickname: nick
+    });
+    if (error) {
+      setErrorToast(error.message);
+      return;
+    }
+    await reloadBlocks();
+    setInfoToast(t.moderation.unblockDone);
+  };
+  const doReport = async () => {
+    if (!reportTarget) return;
+    if (isGuest || !passwordHash) {
+      setErrorToast(t.moderation.guestOnly);
+      return;
+    }
+    const {
+      error
+    } = await supabase.rpc('report_content', {
+      p_reporter_nickname: nickname,
+      p_password_hash: passwordHash,
+      p_target_nickname: reportTarget.author,
+      p_content_type: reportTarget.type,
+      p_content_id: reportTarget.id ? String(reportTarget.id) : null,
+      p_content_snapshot: reportTarget.snapshot || null,
+      p_reason: reportReason,
+      p_details: reportNotes || null
+    });
+    setReportTarget(null);
+    setReportNotes('');
+    setReportReason('spam');
+    if (error) setErrorToast(error.message);else setInfoToast(t.moderation.reportDone);
+  };
+  const moderationMenu = ({
+    author,
+    type,
+    id,
+    snapshot
+  }) => {
+    if (!author || author === nickname) return null;
+    const key = `${type}:${id || author}`;
+    const open = openMenu && openMenu.key === key;
+    const apri = e => {
+      e.stopPropagation();
+      if (isGuest) {
+        setErrorToast(t.moderation.guestOnly);
+        return;
+      }
+      if (open) {
+        setOpenMenu(null);
+        return;
+      }
+      const r = e.currentTarget.getBoundingClientRect();
+      const flipUp = window.innerHeight - r.bottom < 110;
+      setOpenMenu({
+        key,
+        author,
+        type,
+        id,
+        snapshot,
+        top: flipUp ? null : r.bottom + 4,
+        bottom: flipUp ? window.innerHeight - r.top + 4 : null,
+        right: Math.min(Math.max(8, window.innerWidth - 184), Math.max(8, window.innerWidth - r.right))
+      });
+    };
+    return React.createElement("span", {
+      style: {
+        marginLeft: 'auto'
+      }
+    }, React.createElement("button", {
+      "aria-label": t.moderation.menu,
+      "aria-expanded": !!open,
+      onClick: apri,
+      className: "text-secondary",
+      style: {
+        background: 'none',
+        border: 'none',
+        cursor: 'pointer',
+        fontSize: '1.1rem',
+        lineHeight: 1,
+        padding: '0.25rem 0.5rem',
+        minHeight: '32px'
+      }
+    }, "\u22EF"));
+  };
   const matchIdRef = React.useRef(null);
   const sessionIdRef = React.useRef(null);
   React.useEffect(() => {
@@ -1309,12 +1545,13 @@ function GlobalAwakeningPlatform() {
             ...u,
             status: busyIds.has(u.id) ? 'busy' : 'available'
           }));
-          setOnlineUsersForTelepathy(usersWithStatus.filter(u => u.nickname !== nickname));
+          setOnlineUsersForTelepathy(usersWithStatus.filter(u => u.nickname !== nickname && !isBlocked(u.nickname)));
           const {
             data: invites
           } = await supabase.from('telepathy_invites').select('*').eq('to_id', sessionId).eq('status', 'pending');
-          if (invites && invites.length > 0) {
-            const inv = invites[0];
+          const visibili = (invites || []).filter(i => !isBlocked(i.from_name));
+          if (visibili.length > 0) {
+            const inv = visibili[0];
             setIncomingInvite({
               from_id: inv.from_id,
               from_name: inv.from_name,
@@ -1363,14 +1600,14 @@ function GlobalAwakeningPlatform() {
         if (expired.length > 0) {
           await supabase.rpc('cleanup_expired_rituals');
         }
-        setRituals(ritualsData.filter(r => !expired.find(e => e.id === r.id)));
+        setRituals(ritualsData.filter(r => !expired.find(e => e.id === r.id) && !isBlocked(r.creator)));
       }
       const {
         data: postsData
       } = await supabase.from('consciousness_posts').select('*').order('created_at', {
         ascending: false
       }).limit(50);
-      if (postsData) setPosts(postsData);
+      if (postsData) setPosts(postsData.filter(x => !isBlocked(x.author_nickname)));
       if (expandedPostIdRef.current) {
         const {
           data: commentsData
@@ -1379,7 +1616,7 @@ function GlobalAwakeningPlatform() {
         });
         if (commentsData) setCommentsMap(prev => ({
           ...prev,
-          [expandedPostIdRef.current]: commentsData
+          [expandedPostIdRef.current]: commentsData.filter(x => !isBlocked(x.author_nickname))
         }));
       }
       if (expandedRitualIdRef.current) {
@@ -1390,7 +1627,7 @@ function GlobalAwakeningPlatform() {
         });
         if (rCommentsData) setRitualCommentsMap(prev => ({
           ...prev,
-          [expandedRitualIdRef.current]: rCommentsData
+          [expandedRitualIdRef.current]: rCommentsData.filter(x => !isBlocked(x.author_nickname))
         }));
       }
     };
@@ -1420,9 +1657,19 @@ function GlobalAwakeningPlatform() {
         const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
         if (myMatch) {
           const amUser1 = myMatch.user1_id === sessionId;
+          const altroNick = amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname;
+          if (isBlocked(altroNick)) {
+            try {
+              await supabase.rpc('end_telepathy_match', {
+                p_match_id: myMatch.id,
+                p_ended_by: sessionId
+              });
+            } catch (e) {}
+            return;
+          }
           setPartner({
             id: amUser1 ? myMatch.user2_id : myMatch.user1_id,
-            nickname: amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname
+            nickname: altroNick
           });
           setRole(amUser1 ? myMatch.user1_role : myMatch.user2_role);
           setMatchId(myMatch.id);
@@ -1436,8 +1683,9 @@ function GlobalAwakeningPlatform() {
       } = await supabase.from('telepathy_queue').select('*').neq('id', sessionId).order('timestamp', {
         ascending: true
       });
-      if (queue && queue.length > 0) {
-        const available = queue[0];
+      const queueLibera = (queue || []).filter(q => !isBlocked(q.nickname));
+      if (queueLibera.length > 0) {
+        const available = queueLibera[0];
         const {
           data: precheck
         } = await supabase.from('telepathy_matches').select('*');
@@ -2005,6 +2253,8 @@ function GlobalAwakeningPlatform() {
     setIsGuest(false);
     setPasswordHash(null);
     localStorage.removeItem('ga_pwhash');
+    setBlockedUsers([]);
+    localStorage.removeItem('ga_blocked');
     setTempNickname('');
     setTempEmail('');
     setTempPassword('');
@@ -2288,7 +2538,7 @@ function GlobalAwakeningPlatform() {
       } = await supabase.from('telepathy_chat').select('*').eq('match_id', matchId).order('created_at', {
         ascending: true
       });
-      if (data) setTelepathyChatMessages(data);
+      if (data) setTelepathyChatMessages(data.filter(x => !isBlocked(x.sender_name)));
     };
     loadChat();
     const interval = setInterval(loadChat, 3000);
@@ -2764,15 +3014,19 @@ function GlobalAwakeningPlatform() {
     if (isExpiredInvite) return;
     if (notif.type === 'private_message') {
       try {
-        const {
-          data: sent
-        } = await supabase.from('private_messages').select('*').eq('sender_name', nickname);
-        const {
-          data: received
-        } = await supabase.from('private_messages').select('*').eq('receiver_name', nickname);
-        const all = [...(sent || []), ...(received || [])];
-        all.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-        setPrivateMessages(all);
+        if (!isGuest && passwordHash) {
+          const {
+            data
+          } = await supabase.rpc('get_my_messages', {
+            p_nickname: nickname,
+            p_password_hash: passwordHash
+          });
+          if (Array.isArray(data)) {
+            const all = [...data];
+            all.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            setPrivateMessages(all);
+          }
+        }
       } catch (err) {
         console.warn('reload private_messages failed', err);
       }
@@ -2783,8 +3037,9 @@ function GlobalAwakeningPlatform() {
         const {
           data: invites
         } = await supabase.from('telepathy_invites').select('*').eq('to_id', sessionId).eq('status', 'pending');
-        if (invites && invites.length > 0) {
-          const inv = invites[0];
+        const visibili = (invites || []).filter(i => !isBlocked(i.from_name));
+        if (visibili.length > 0) {
+          const inv = visibili[0];
           setIncomingInvite({
             from_id: inv.from_id,
             from_name: inv.from_name,
@@ -2987,7 +3242,7 @@ function GlobalAwakeningPlatform() {
       });
       if (data) setRitualCommentsMap(prev => ({
         ...prev,
-        [ritualId]: data
+        [ritualId]: data.filter(x => !isBlocked(x.author_nickname))
       }));
     }
   };
@@ -3062,7 +3317,7 @@ function GlobalAwakeningPlatform() {
     });
     if (data) setCommentsMap(prev => ({
       ...prev,
-      [postId]: data
+      [postId]: data.filter(x => !isBlocked(x.author_nickname))
     }));
   };
   const createComment = async postId => {
@@ -3864,11 +4119,19 @@ function GlobalAwakeningPlatform() {
       },
       onClick: () => openProfile(ritual.creator)
     }, "\u2726 ", ritual.creator)), React.createElement("div", {
+      className: "flex items-start gap-1"
+    }, React.createElement("div", {
       className: "text-2xl",
       style: {
         color: '#fbbf24'
       }
-    }, ritual.sacred_number)), React.createElement("div", {
+    }, ritual.sacred_number), moderationMenu({
+      author: ritual.creator,
+      type: 'ritual',
+      id: ritual.id,
+      snapshot: `${ritual.name}
+${ritual.description || ''}`
+    }))), React.createElement("div", {
       className: "flex items-center gap-2 mb-3"
     }, React.createElement(Calendar, {
       style: {
@@ -3951,34 +4214,42 @@ function GlobalAwakeningPlatform() {
         paddingTop: '1rem',
         borderTop: '1px solid rgba(255,255,255,0.08)'
       }
-    }, ritualComments.map(c => React.createElement("div", {
-      key: c.id,
-      style: {
-        marginBottom: '0.75rem',
-        paddingLeft: '1rem',
-        borderLeft: '2px solid rgba(124,58,237,0.4)'
-      }
-    }, React.createElement("div", {
-      className: "flex items-center gap-2 mb-1"
-    }, React.createElement("span", {
-      className: "text-primary font-medium text-xs",
-      style: {
-        cursor: 'pointer',
-        textDecoration: 'underline',
-        textDecorationColor: 'rgba(167,139,250,0.4)'
-      },
-      onClick: () => openProfile(c.author_nickname)
-    }, c.author_nickname), React.createElement("span", {
-      style: {
-        color: '#c4b5fd'
-      },
-      className: "text-xs"
-    }, new Date(c.created_at).toLocaleTimeString())), React.createElement("p", {
-      className: "text-white",
-      style: {
-        fontSize: '0.9rem'
-      }
-    }, c.content))), React.createElement("div", {
+    }, ritualComments.map(c => {
+      const commentKind = 'ritual_comment';
+      return React.createElement("div", {
+        key: c.id,
+        style: {
+          marginBottom: '0.75rem',
+          paddingLeft: '1rem',
+          borderLeft: '2px solid rgba(124,58,237,0.4)'
+        }
+      }, React.createElement("div", {
+        className: "flex items-center gap-2 mb-1"
+      }, React.createElement("span", {
+        className: "text-primary font-medium text-xs",
+        style: {
+          cursor: 'pointer',
+          textDecoration: 'underline',
+          textDecorationColor: 'rgba(167,139,250,0.4)'
+        },
+        onClick: () => openProfile(c.author_nickname)
+      }, c.author_nickname), React.createElement("span", {
+        style: {
+          color: '#c4b5fd'
+        },
+        className: "text-xs"
+      }, new Date(c.created_at).toLocaleTimeString()), moderationMenu({
+        author: c.author_nickname,
+        type: commentKind,
+        id: c.id,
+        snapshot: c.content
+      })), React.createElement("p", {
+        className: "text-white",
+        style: {
+          fontSize: '0.9rem'
+        }
+      }, c.content));
+    }), React.createElement("div", {
       className: "flex gap-2",
       style: {
         marginTop: '0.75rem'
@@ -4075,7 +4346,12 @@ function GlobalAwakeningPlatform() {
         color: '#c4b5fd'
       },
       className: "text-xs"
-    }, new Date(post.created_at).toLocaleString())), React.createElement("p", {
+    }, new Date(post.created_at).toLocaleString()), moderationMenu({
+      author: post.author_nickname,
+      type: 'post',
+      id: post.id,
+      snapshot: post.content
+    })), React.createElement("p", {
       className: "text-white",
       style: {
         marginBottom: '0.75rem',
@@ -4111,34 +4387,42 @@ function GlobalAwakeningPlatform() {
         paddingTop: '1rem',
         borderTop: '1px solid rgba(255,255,255,0.08)'
       }
-    }, postComments.map(c => React.createElement("div", {
-      key: c.id,
-      style: {
-        marginBottom: '0.75rem',
-        paddingLeft: '1rem',
-        borderLeft: '2px solid rgba(124,58,237,0.4)'
-      }
-    }, React.createElement("div", {
-      className: "flex items-center gap-2 mb-1"
-    }, React.createElement("span", {
-      className: "text-primary font-medium text-xs",
-      style: {
-        cursor: 'pointer',
-        textDecoration: 'underline',
-        textDecorationColor: 'rgba(167,139,250,0.4)'
-      },
-      onClick: () => openProfile(c.author_nickname)
-    }, c.author_nickname), React.createElement("span", {
-      style: {
-        color: '#c4b5fd'
-      },
-      className: "text-xs"
-    }, new Date(c.created_at).toLocaleTimeString())), React.createElement("p", {
-      className: "text-white",
-      style: {
-        fontSize: '0.9rem'
-      }
-    }, c.content))), React.createElement("div", {
+    }, postComments.map(c => {
+      const commentKind = 'post_comment';
+      return React.createElement("div", {
+        key: c.id,
+        style: {
+          marginBottom: '0.75rem',
+          paddingLeft: '1rem',
+          borderLeft: '2px solid rgba(124,58,237,0.4)'
+        }
+      }, React.createElement("div", {
+        className: "flex items-center gap-2 mb-1"
+      }, React.createElement("span", {
+        className: "text-primary font-medium text-xs",
+        style: {
+          cursor: 'pointer',
+          textDecoration: 'underline',
+          textDecorationColor: 'rgba(167,139,250,0.4)'
+        },
+        onClick: () => openProfile(c.author_nickname)
+      }, c.author_nickname), React.createElement("span", {
+        style: {
+          color: '#c4b5fd'
+        },
+        className: "text-xs"
+      }, new Date(c.created_at).toLocaleTimeString()), moderationMenu({
+        author: c.author_nickname,
+        type: commentKind,
+        id: c.id,
+        snapshot: c.content
+      })), React.createElement("p", {
+        className: "text-white",
+        style: {
+          fontSize: '0.9rem'
+        }
+      }, c.content));
+    }), React.createElement("div", {
       className: "flex gap-2",
       style: {
         marginTop: '0.75rem'
@@ -4903,12 +5187,19 @@ function GlobalAwakeningPlatform() {
       alignSelf: msg.sender_name === nickname ? 'flex-end' : 'flex-start',
       maxWidth: '90%'
     }
-  }, msg.sender_name !== nickname && React.createElement("p", {
+  }, msg.sender_name !== nickname && React.createElement("div", {
+    className: "flex items-center gap-1"
+  }, React.createElement("p", {
     className: "text-secondary",
     style: {
       fontSize: '0.65rem'
     }
-  }, msg.sender_name), React.createElement("p", {
+  }, msg.sender_name), moderationMenu({
+    author: msg.sender_name,
+    type: 'telepathy_chat',
+    id: msg.id,
+    snapshot: msg.content
+  })), React.createElement("p", {
     className: "text-white",
     style: {
       fontSize: '0.8rem'
@@ -5249,6 +5540,43 @@ function GlobalAwakeningPlatform() {
     style: {
       display: 'block'
     }
+  }, t.moderation.blockedUsers), blockedUsers.length === 0 ? React.createElement("p", {
+    className: "text-secondary text-xs"
+  }, t.moderation.noBlocked) : blockedUsers.map(nick => React.createElement("div", {
+    key: nick,
+    className: "flex items-center gap-2",
+    style: {
+      padding: '0.35rem 0'
+    }
+  }, React.createElement("span", {
+    className: "text-white text-sm"
+  }, nick), React.createElement("button", {
+    className: "btn-secondary",
+    style: {
+      marginLeft: 'auto',
+      fontSize: '0.75rem',
+      padding: '0.3rem 0.7rem'
+    },
+    onClick: () => doUnblock(nick)
+  }, t.moderation.unblock))), React.createElement("a", {
+    href: "regole.html",
+    target: "_blank",
+    rel: "noopener",
+    className: "text-secondary text-xs",
+    style: {
+      display: 'inline-block',
+      marginTop: '0.5rem'
+    }
+  }, t.moderation.reportRules)), !isGuest && React.createElement("div", {
+    style: {
+      borderTop: '1px solid rgba(255,255,255,0.1)',
+      paddingTop: '1.25rem'
+    }
+  }, React.createElement("label", {
+    className: "text-white text-sm mb-2",
+    style: {
+      display: 'block'
+    }
   }, t.gdprTitle), React.createElement("div", {
     style: {
       display: 'flex',
@@ -5350,7 +5678,36 @@ function GlobalAwakeningPlatform() {
     style: {
       whiteSpace: 'pre-wrap'
     }
-  }, viewingProfile.bio)), viewingProfile.country && React.createElement("div", {
+  }, viewingProfile.bio)), viewingProfile.nickname !== nickname && !isGuest && React.createElement("div", {
+    className: "flex gap-2",
+    style: {
+      justifyContent: 'center'
+    }
+  }, React.createElement("button", {
+    className: "btn-secondary",
+    style: {
+      fontSize: '0.8rem'
+    },
+    onClick: () => setReportTarget({
+      author: viewingProfile.nickname,
+      type: 'profile',
+      id: null,
+      snapshot: viewingProfile.bio || ''
+    })
+  }, t.moderation.report), blockedUsers.includes(viewingProfile.nickname) ? React.createElement("button", {
+    className: "btn-secondary",
+    style: {
+      fontSize: '0.8rem'
+    },
+    onClick: () => doUnblock(viewingProfile.nickname)
+  }, t.moderation.unblock) : React.createElement("button", {
+    className: "btn-secondary",
+    style: {
+      fontSize: '0.8rem',
+      color: '#fca5a5'
+    },
+    onClick: () => setBlockTarget(viewingProfile.nickname)
+  }, t.moderation.block)), viewingProfile.country && React.createElement("div", {
     className: "bg-glass-dark rounded-xl p-3 text-center"
   }, React.createElement("p", {
     className: "text-secondary text-xs mb-1"
@@ -5446,16 +5803,25 @@ function GlobalAwakeningPlatform() {
       style: {
         fontSize: '0.8rem'
       }
-    }, msg.content)), React.createElement("p", {
+    }, msg.content)), React.createElement("div", {
+      className: "flex items-center gap-1",
+      style: {
+        justifyContent: isMe ? 'flex-end' : 'flex-start'
+      }
+    }, React.createElement("p", {
       style: {
         fontSize: '0.6rem',
         color: '#c4b5fd',
-        marginTop: '0.1rem',
-        textAlign: isMe ? 'right' : 'left'
+        marginTop: '0.1rem'
       }
     }, new Date(msg.created_at).toLocaleTimeString(undefined, {
       hour: '2-digit',
       minute: '2-digit'
+    })), !isMe && moderationMenu({
+      author: msg.sender_name,
+      type: 'private_message',
+      id: msg.id,
+      snapshot: msg.content
     })));
   })), React.createElement("div", {
     style: {
@@ -5524,7 +5890,227 @@ function GlobalAwakeningPlatform() {
       margin: 0,
       textAlign: 'center'
     }
-  }, "\u26A0\uFE0F ", errorToast)), incomingInvite && (!partner || sessionEnded) && React.createElement("div", {
+  }, "\u26A0\uFE0F ", errorToast)), openMenu && React.createElement("div", {
+    "data-moderation-menu": true,
+    onClick: e => e.stopPropagation(),
+    style: {
+      position: 'fixed',
+      zIndex: 9997,
+      top: openMenu.top != null ? `${openMenu.top}px` : undefined,
+      bottom: openMenu.bottom != null ? `${openMenu.bottom}px` : undefined,
+      right: `${openMenu.right}px`,
+      background: 'rgba(17,12,30,0.98)',
+      border: '1px solid rgba(167,139,250,0.35)',
+      borderRadius: '0.75rem',
+      padding: '0.25rem',
+      minWidth: '11rem',
+      boxShadow: '0 10px 30px rgba(0,0,0,0.55)'
+    }
+  }, React.createElement("button", {
+    onClick: () => {
+      const m = openMenu;
+      setOpenMenu(null);
+      setReportTarget({
+        author: m.author,
+        type: m.type,
+        id: m.id,
+        snapshot: m.snapshot
+      });
+    },
+    style: {
+      display: 'block',
+      width: '100%',
+      textAlign: 'left',
+      background: 'none',
+      border: 'none',
+      color: '#e9d5ff',
+      padding: '0.6rem 0.75rem',
+      cursor: 'pointer'
+    }
+  }, t.moderation.report), React.createElement("button", {
+    onClick: () => {
+      const a = openMenu.author;
+      setOpenMenu(null);
+      setBlockTarget(a);
+    },
+    style: {
+      display: 'block',
+      width: '100%',
+      textAlign: 'left',
+      background: 'none',
+      border: 'none',
+      color: '#fca5a5',
+      padding: '0.6rem 0.75rem',
+      cursor: 'pointer'
+    }
+  }, t.moderation.block)), blockTarget && React.createElement("div", {
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 9998,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '1rem',
+      background: 'rgba(0,0,0,0.7)'
+    },
+    onClick: () => setBlockTarget(null)
+  }, React.createElement("div", {
+    className: "bg-glass rounded-2xl border-glass p-4",
+    style: {
+      maxWidth: '22rem',
+      width: '100%'
+    },
+    onClick: e => e.stopPropagation()
+  }, React.createElement("h3", {
+    className: "text-white font-bold mb-2"
+  }, t.moderation.blockTitle), React.createElement("p", {
+    className: "text-primary font-medium mb-1"
+  }, blockTarget), React.createElement("p", {
+    className: "text-secondary text-sm"
+  }, t.moderation.blockConfirm), React.createElement("div", {
+    className: "flex gap-2",
+    style: {
+      marginTop: '1rem'
+    }
+  }, React.createElement("button", {
+    style: {
+      padding: '0.6rem 1rem',
+      borderRadius: '0.75rem',
+      flex: 1,
+      border: '1px solid rgba(248,113,113,0.5)',
+      background: 'rgba(248,113,113,0.12)',
+      color: '#fca5a5',
+      cursor: 'pointer',
+      fontWeight: 600
+    },
+    onClick: () => {
+      const n = blockTarget;
+      setBlockTarget(null);
+      doBlock(n);
+    }
+  }, t.moderation.block), React.createElement("button", {
+    className: "btn-secondary",
+    style: {
+      flex: 1
+    },
+    onClick: () => setBlockTarget(null)
+  }, t.moderation.cancel)))), reportTarget && React.createElement("div", {
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 9998,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '1rem',
+      background: 'rgba(0,0,0,0.7)'
+    },
+    onClick: () => setReportTarget(null)
+  }, React.createElement("div", {
+    className: "bg-glass rounded-2xl border-glass p-4",
+    style: {
+      maxWidth: '26rem',
+      width: '100%',
+      maxHeight: '90vh',
+      overflowY: 'auto'
+    },
+    onClick: e => e.stopPropagation()
+  }, React.createElement("h3", {
+    className: "text-white font-bold mb-2"
+  }, t.moderation.reportTitle), React.createElement("p", {
+    className: "text-primary font-medium",
+    style: {
+      marginBottom: '0.25rem'
+    }
+  }, reportTarget.author), reportTarget.snapshot && React.createElement("p", {
+    className: "text-secondary text-xs",
+    style: {
+      marginBottom: '0.75rem',
+      fontStyle: 'italic',
+      overflow: 'hidden',
+      display: '-webkit-box',
+      WebkitLineClamp: 2,
+      WebkitBoxOrient: 'vertical'
+    }
+  }, "\xAB", String(reportTarget.snapshot).slice(0, 160), "\xBB"), React.createElement("p", {
+    className: "text-secondary text-xs mb-2"
+  }, t.moderation.reportWhy), ['spam', 'harassment', 'hate', 'sexual', 'violence', 'self_harm', 'other'].map(k => React.createElement("label", {
+    key: k,
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '0.5rem',
+      color: '#e9d5ff',
+      padding: '0.35rem 0',
+      cursor: 'pointer'
+    }
+  }, React.createElement("input", {
+    type: "radio",
+    name: "report-reason",
+    value: k,
+    checked: reportReason === k,
+    onChange: () => setReportReason(k)
+  }), t.moderation.reasons[k])), React.createElement("textarea", {
+    value: reportNotes,
+    onChange: e => setReportNotes(e.target.value),
+    placeholder: t.moderation.reportNotes,
+    "aria-label": t.moderation.reportNotes,
+    maxLength: 1000,
+    style: {
+      width: '100%',
+      marginTop: '0.75rem',
+      minHeight: '4.5rem',
+      background: 'rgba(255,255,255,0.06)',
+      color: '#fff',
+      border: '1px solid rgba(167,139,250,0.3)',
+      borderRadius: '0.6rem',
+      padding: '0.5rem'
+    }
+  }), React.createElement("div", {
+    className: "flex gap-2",
+    style: {
+      marginTop: '0.75rem'
+    }
+  }, React.createElement("button", {
+    className: "btn-primary",
+    onClick: doReport
+  }, t.moderation.reportSend), React.createElement("button", {
+    className: "btn-secondary",
+    onClick: () => setReportTarget(null)
+  }, t.moderation.cancel)), React.createElement("a", {
+    href: "regole.html",
+    target: "_blank",
+    rel: "noopener",
+    className: "text-secondary text-xs",
+    style: {
+      display: 'inline-block',
+      marginTop: '0.75rem'
+    }
+  }, t.moderation.reportRules))), infoToast && React.createElement("div", {
+    role: "status",
+    style: {
+      position: 'fixed',
+      bottom: '1rem',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      width: 'min(360px, calc(100vw - 2rem))',
+      background: 'linear-gradient(135deg, rgba(109,40,217,0.96) 0%, rgba(167,139,250,0.93) 100%)',
+      border: '1px solid rgba(255,255,255,0.25)',
+      boxShadow: '0 12px 40px rgba(109,40,217,0.45)',
+      borderRadius: '0.85rem',
+      padding: '0.85rem 1rem',
+      zIndex: 9999,
+      animation: 'toast-rise 0.35s ease-out'
+    }
+  }, React.createElement("p", {
+    className: "text-white font-bold",
+    style: {
+      fontSize: '0.9rem',
+      margin: 0,
+      textAlign: 'center'
+    }
+  }, "\u2705 ", infoToast)), incomingInvite && (!partner || sessionEnded) && React.createElement("div", {
     className: "invite-toast",
     style: {
       position: 'fixed',
