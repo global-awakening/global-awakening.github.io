@@ -193,10 +193,24 @@ Tutte le stringhe passano dall'oggetto `translations` esistente, **IT ed EN**.
 
 ### 6. Canale di moderazione
 
-Ogni `report_content` andato a buon fine invia una notifica email a
-`global.awakening.app@gmail.com`, riusando come modello le Edge Function esistenti in
-`supabase/functions/`, con oggetto tipizzato e corpo contenente tipo, motivazione, id
-del contenuto e autore.
+> **Aggiornato in implementazione (2026-09-17).** L'ipotesi iniziale — una Edge Function
+> che manda l'email — si è rivelata la strada sbagliata: il client Supabase fatto in casa
+> non ha `functions.invoke`, nessuna Edge Function viene oggi invocata dal client, e il
+> token di automazione è volutamente limitato al solo permesso `Database`, quindi non può
+> pubblicarne una. Costruito invece `scripts/segnalazioni.js`: elenca le segnalazioni
+> aperte, ne mostra testo e contesto e permette di chiuderle
+> (`--chiudi <id> actioned|dismissed|reviewed`). Usa lo stesso token di `apply-sql.js`,
+> quindi **nessuna infrastruttura e nessun segreto in più**. Verificato end-to-end.
+>
+> La **notifica push via email resta possibile senza Edge Function**: EmailJS è già
+> caricato nel client e la CSP consente `api.emailjs.com` (lo usano reset password e magic
+> link). Serve solo un template nuovo nella dashboard EmailJS — un passo manuale di Irene.
+> Non implementato ora per non lasciare in codice un percorso che punta a un template
+> inesistente.
+
+Ipotesi originale, conservata come traccia: ogni `report_content` andato a buon fine
+invia una notifica email a `global.awakening.app@gmail.com`, con oggetto tipizzato e corpo
+contenente tipo, motivazione, id del contenuto e autore.
 
 Scelta deliberata: **nessun pannello admin web**. Una pagina di amministrazione
 significa autenticazione privilegiata, una superficie d'attacco nuova e codice da
