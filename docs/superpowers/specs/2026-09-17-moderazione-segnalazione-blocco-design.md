@@ -116,7 +116,7 @@ Tutte autenticano `(p_nickname, p_password_hash)` contro `profiles`, altrimenti
 | `block_user` | `(p_nickname, p_password_hash, p_blocked_nickname)` | INSERT idempotente (`ON CONFLICT DO NOTHING`). Rifiuta l'auto-blocco e il nickname inesistente. |
 | `unblock_user` | `(p_nickname, p_password_hash, p_blocked_nickname)` | DELETE della coppia. |
 | `get_my_blocks` | `(p_nickname, p_password_hash)` | `SETOF text`: i nickname che ho bloccato. |
-| `report_content` | `(p_reporter_nickname, p_password_hash, p_target_nickname, p_content_type, p_content_id, p_content_snapshot, p_reason, p_details)` | Valida i domini di `content_type` e `reason`, tronca `details` a 1000 e `content_snapshot` a 2000 caratteri, INSERT. **Rate limit**: max 20 segnalazioni per `reporter_nickname` nelle ultime 24h, altrimenti `RAISE EXCEPTION 'Rate limit'`. |
+| `report_content` | `(p_reporter_nickname, p_password_hash, p_target_nickname, p_content_type, p_content_id, p_content_snapshot, p_reason, p_details)` | Valida i domini di `content_type` e `reason`, tronca `details` a 1000 e `content_snapshot` a 2000 caratteri, INSERT. **Rate limit**: max 20 segnalazioni per `reporter_nickname` nelle ultime 24h, altrimenti `RAISE EXCEPTION 'rate_limited'` (stessa stringa usata da B9). |
 
 Il rate limit riusa **esattamente** il pattern di `13_rate_limit.sql` (B9): nessuna
 tabella nuova, si contano le righe già scritte nella finestra usando `created_at`, il
@@ -223,10 +223,10 @@ eseguito contro il progetto Supabase reale come gli altri:
 9. `report_content` con `content_type` fuori dominio → errore
 10. `report_content` con `reason` fuori dominio → errore
 11. `report_content` valida → riga creata con `status = 'open'`
-12. 21 segnalazioni in 24h → `Rate limit` alla ventunesima
+12. 21 segnalazioni in 24h → `rate_limited` alla ventunesima
 13. SELECT diretta anon su `content_reports` → 0 righe (RLS senza policy)
 14. SELECT diretta anon su `user_blocks` → 0 righe
-15. **Non-regressione B9**: 21 messaggi privati in un minuto → `Rate limit` alla
+15. **Non-regressione B9**: 21 messaggi privati in un minuto → `rate_limited` alla
     ventunesima, a conferma che il `CREATE OR REPLACE` di `16_` non ha perso il corpo
     di `13_rate_limit.sql`
 
