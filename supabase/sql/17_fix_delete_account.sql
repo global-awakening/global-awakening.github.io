@@ -1,4 +1,13 @@
 -- ============================================================================
+-- /!\  ATTENZIONE — QUESTO FILE E' STATO SUPERATO DA 18_
+-- ============================================================================
+-- delete_my_account qui sotto cancella anche i blocchi SUBITI, il che permette
+-- di evadere un blocco cancellandosi e ri-registrandosi con lo stesso nickname.
+-- La versione corretta e' in supabase/sql/18_moderazione_review.sql: se
+-- riapplichi questo file, riapplica SUBITO DOPO anche 18_.
+-- ============================================================================
+
+-- ============================================================================
 -- Fix — delete_my_account era rotta da 08_drop_dead_tables.sql — 2026-09-17
 -- ============================================================================
 -- SINTOMO: POST /rest/v1/rpc/delete_my_account -> HTTP 404

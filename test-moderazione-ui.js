@@ -45,12 +45,15 @@ async function cleanup() {
   for (const m of [EMAIL_A, EMAIL_B]) {
     await sbFetch(`profiles?email=eq.${e(m)}`, { method: 'DELETE' });
   }
-  await purge(SUPABASE_URL, [
+  // Senza chiave privilegiata purge() salta in silenzio e lascia righe in
+  // content_reports e user_blocks, col test comunque verde. Meglio un rosso onesto.
+  const res = await purge(SUPABASE_URL, [
     `user_blocks?blocker_nickname=eq.${e(NICK_A)}`,
     `user_blocks?blocker_nickname=eq.${e(NICK_B)}`,
     `content_reports?reporter_nickname=eq.${e(NICK_A)}`,
     `content_reports?reporter_nickname=eq.${e(NICK_B)}`,
   ], { label: 'moderazione-ui' });
+  if (!res.ran) fail('pulizia NON eseguita: SUPABASE_SERVICE_KEY assente, il DB resta sporco');
 }
 
 async function register(page, nick, email) {

@@ -1094,11 +1094,25 @@
             if (!openMenu) return;
             const chiudi = () => setOpenMenu(null);
             const onEsc = (e) => { if (e.key === 'Escape') setOpenMenu(null); };
+            // Lo scroll va chiuso perche' il menu e' position:fixed con coordinate
+            // catturate al click: scorrendo resterebbe sopra una card diversa da
+            // quella che lo ha aperto. Ma si ignorano gli scroll che nascono DENTRO
+            // il menu e quelli dei primi 250ms: il browser scrolla da solo per
+            // portare un elemento in vista, e il menu si richiuderebbe per colpa
+            // dello stesso gesto che lo ha aperto.
+            const apertoDa = Date.now();
+            const onScroll = (e) => {
+              if (Date.now() - apertoDa < 250) return;
+              if (e.target && e.target.closest && e.target.closest('[data-moderation-menu]')) return;
+              setOpenMenu(null);
+            };
             document.addEventListener('click', chiudi);
             document.addEventListener('keydown', onEsc);
+            document.addEventListener('scroll', onScroll, true);
             return () => {
               document.removeEventListener('click', chiudi);
               document.removeEventListener('keydown', onEsc);
+              document.removeEventListener('scroll', onScroll, true);
             };
           }, [openMenu]);
 
@@ -1162,7 +1176,8 @@
                 key, author, type, id, snapshot,
                 top: flipUp ? null : r.bottom + 4,
                 bottom: flipUp ? (window.innerHeight - r.top + 4) : null,
-                right: Math.max(8, window.innerWidth - r.right)
+                right: Math.min(Math.max(8, window.innerWidth - 184),
+                                Math.max(8, window.innerWidth - r.right))
               });
             };
 
@@ -1310,7 +1325,7 @@
                     ...u,
                     status: busyIds.has(u.id) ? 'busy' : 'available'
                   }));
-                  setOnlineUsersForTelepathy(usersWithStatus.filter(u => u.nickname !== nickname));
+                  setOnlineUsersForTelepathy(usersWithStatus.filter(u => u.nickname !== nickname && !isBlocked(u.nickname)));
 
                   // Controlla inviti in arrivo
                   const { data: invites } = await supabase.from('telepathy_invites')
@@ -4737,6 +4752,7 @@ ${ritual.description || ''}` })}
 
               {openMenu && (
                 <div
+                  data-moderation-menu
                   onClick={e => e.stopPropagation()}
                   style={{position: 'fixed', zIndex: 9997,
                           top: openMenu.top != null ? `${openMenu.top}px` : undefined,
@@ -4795,7 +4811,16 @@ ${ritual.description || ''}` })}
                   <div className="bg-glass rounded-2xl border-glass p-4"
                        style={{maxWidth: '26rem', width: '100%', maxHeight: '90vh', overflowY: 'auto'}}
                        onClick={e => e.stopPropagation()}>
-                    <h3 className="text-white font-bold mb-3">{t.moderation.reportTitle}</h3>
+                    <h3 className="text-white font-bold mb-2">{t.moderation.reportTitle}</h3>
+                    <p className="text-primary font-medium" style={{marginBottom: '0.25rem'}}>{reportTarget.author}</p>
+                    {reportTarget.snapshot && (
+                      <p className="text-secondary text-xs"
+                         style={{marginBottom: '0.75rem', fontStyle: 'italic',
+                                 overflow: 'hidden', display: '-webkit-box',
+                                 WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'}}>
+                        «{String(reportTarget.snapshot).slice(0, 160)}»
+                      </p>
+                    )}
                     <p className="text-secondary text-xs mb-2">{t.moderation.reportWhy}</p>
                     {['spam','harassment','hate','sexual','violence','self_harm','other'].map(k => (
                       <label key={k} style={{display: 'flex', alignItems: 'center', gap: '0.5rem',

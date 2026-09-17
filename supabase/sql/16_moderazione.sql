@@ -1,4 +1,14 @@
 -- ============================================================================
+-- /!\  ATTENZIONE — QUESTO FILE E' STATO IN PARTE SUPERATO DA 18_
+-- ============================================================================
+-- block_user qui sotto NON ha il rate limit: la versione corrente e' in
+-- supabase/sql/18_moderazione_review.sql. Se riapplichi questo file, riapplica
+-- SUBITO DOPO anche 18_, altrimenti il rate limit sparisce in silenzio e
+-- nessun test lo segnala al momento dell'apply.
+-- (E' la stessa trappola descritta al BLOCCO 4 per send_private_message.)
+-- ============================================================================
+
+-- ============================================================================
 -- SP1 — Moderazione: blocco utenti e segnalazione contenuti — 2026-09-17
 -- ============================================================================
 -- Requisito Google Play (policy UGC): ogni app con contenuti generati dagli
