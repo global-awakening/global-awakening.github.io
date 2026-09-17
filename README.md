@@ -72,6 +72,24 @@ npx serve . -p 4321         # → http://localhost:4321/app.html
 > `node build.js` or the browser will block it. Run the E2E suite
 > (`node test-telepathy.js`, `test-messaggi.js`, `test-rituali.js`) before pushing.
 
+### Database Migrations
+
+Schema changes live as numbered, idempotent SQL files in `supabase/sql/`. Apply one
+with:
+
+```bash
+node scripts/apply-sql.js supabase/sql/16_moderazione.sql
+node scripts/apply-sql.js supabase/sql/16_moderazione.sql --dry-run   # inspect only
+```
+
+This needs a **scoped** Supabase token (prefix `sbp_fc`) limited to this project with
+*Database → Read-write* permission only. Create one at
+[supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens),
+then copy `.env.local.example` to `.env.local` (gitignored) and paste it there. The
+project ref is read from `supabase/.temp/project-ref`, never hardcoded.
+
+Pasting the file into the dashboard SQL editor still works and remains the fallback.
+
 ---
 
 ## 🌍 Starseed Types
