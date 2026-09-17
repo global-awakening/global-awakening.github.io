@@ -901,6 +901,9 @@
             try { return JSON.parse(localStorage.getItem('ga_blocked') || '[]'); }
             catch { return []; }
           });
+          // Copia sempre aggiornata della lista, letta dalle closure di polling.
+          const blockedUsersRef = useRef(blockedUsers);
+          useEffect(() => { blockedUsersRef.current = blockedUsers; }, [blockedUsers]);
           // Toast neutro per gli esiti positivi (blocco riuscito, segnalazione inviata).
           // errorToast esiste già ma è rosso con ⚠️: userebbe il tono sbagliato.
           const [infoToast, setInfoToast] = useState(null);
@@ -1003,13 +1006,17 @@
             if (error) return;   // rete giù o auth non ancora pronta: si tiene la cache
             const list = (data || []).map(x => (typeof x === 'string' ? x : x.get_my_blocks)).filter(Boolean);
             setBlockedUsers(list);
+            blockedUsersRef.current = list;
             try { localStorage.setItem('ga_blocked', JSON.stringify(list)); } catch {}
           }, [nickname, isGuest, passwordHash]);
 
           useEffect(() => { reloadBlocks(); }, [reloadBlocks]);
 
-          // Usato da tutti i filtri di visibilità.
-          const isBlocked = (nick) => !!nick && blockedUsers.includes(nick);
+          // Usato da tutti i filtri di visibilità. Legge dal ref e non dallo stato:
+          // i cicli di polling catturano isBlocked in una closure creata una volta
+          // sola, quindi con lo stato leggerebbero per sempre la lista del primo
+          // render e il filtro smetterebbe di aggiornarsi dopo un blocco.
+          const isBlocked = (nick) => !!nick && blockedUsersRef.current.includes(nick);
 
           // Pulizia stato remoto alla chiusura del tab.
           // sendBeacon non supporta DELETE: usiamo fetch con keepalive=true che il browser
@@ -1142,8 +1149,10 @@
                   // Controlla inviti in arrivo
                   const { data: invites } = await supabase.from('telepathy_invites')
                     .select('*').eq('to_id', sessionId).eq('status', 'pending');
-                  if (invites && invites.length > 0) {
-                    const inv = invites[0];
+                  // SP1: un invito da un utente bloccato non viene mostrato.
+                  const visibili = (invites || []).filter(i => !isBlocked(i.from_name));
+                  if (visibili.length > 0) {
+                    const inv = visibili[0];
                     setIncomingInvite({ from_id: inv.from_id, from_name: inv.from_name, invite_id: inv.id });
                   } else {
                     setIncomingInvite(null);
@@ -1187,19 +1196,19 @@
                 if (expired.length > 0) {
                   await supabase.rpc('cleanup_expired_rituals');
                 }
-                setRituals(ritualsData.filter(r => !expired.find(e => e.id === r.id)));
+                setRituals(ritualsData.filter(r => !expired.find(e => e.id === r.id) && !isBlocked(r.creator)));
               }
 
               const { data: postsData } = await supabase.from('consciousness_posts').select('*').order('created_at', { ascending: false }).limit(50);
-              if (postsData) setPosts(postsData);
+              if (postsData) setPosts(postsData.filter(x => !isBlocked(x.author_nickname)));
 
               if (expandedPostIdRef.current) {
                 const { data: commentsData } = await supabase.from('consciousness_comments').select('*').eq('post_id', expandedPostIdRef.current).order('created_at', { ascending: true });
-                if (commentsData) setCommentsMap(prev => ({ ...prev, [expandedPostIdRef.current]: commentsData }));
+                if (commentsData) setCommentsMap(prev => ({ ...prev, [expandedPostIdRef.current]: commentsData.filter(x => !isBlocked(x.author_nickname)) }));
               }
               if (expandedRitualIdRef.current) {
                 const { data: rCommentsData } = await supabase.from('ritual_comments').select('*').eq('ritual_id', expandedRitualIdRef.current).order('created_at', { ascending: true });
-                if (rCommentsData) setRitualCommentsMap(prev => ({ ...prev, [expandedRitualIdRef.current]: rCommentsData }));
+                if (rCommentsData) setRitualCommentsMap(prev => ({ ...prev, [expandedRitualIdRef.current]: rCommentsData.filter(x => !isBlocked(x.author_nickname)) }));
               }
             };
             
@@ -2108,7 +2117,7 @@
             if (!matchId) return;
             const loadChat = async () => {
               const { data } = await supabase.from('telepathy_chat').select('*').eq('match_id', matchId).order('created_at', { ascending: true });
-              if (data) setTelepathyChatMessages(data);
+              if (data) setTelepathyChatMessages(data.filter(x => !isBlocked(x.sender_name)));
             };
             loadChat();
             const interval = setInterval(loadChat, 3000);
@@ -2656,8 +2665,9 @@
                 // Fetch immediato dell'invito senza aspettare il prossimo ciclo di updatePresence
                 const { data: invites } = await supabase.from('telepathy_invites')
                   .select('*').eq('to_id', sessionId).eq('status', 'pending');
-                if (invites && invites.length > 0) {
-                  const inv = invites[0];
+                const visibili = (invites || []).filter(i => !isBlocked(i.from_name));
+                if (visibili.length > 0) {
+                  const inv = visibili[0];
                   setIncomingInvite({ from_id: inv.from_id, from_name: inv.from_name, invite_id: inv.id });
                 }
               }
@@ -2850,7 +2860,7 @@
             setExpandedRitualId(ritualId);
             if (!ritualCommentsMap[ritualId]) {
               const { data } = await supabase.from('ritual_comments').select('*').eq('ritual_id', ritualId).order('created_at', { ascending: true });
-              if (data) setRitualCommentsMap(prev => ({ ...prev, [ritualId]: data }));
+              if (data) setRitualCommentsMap(prev => ({ ...prev, [ritualId]: data.filter(x => !isBlocked(x.author_nickname)) }));
             }
           };
 
@@ -2908,7 +2918,7 @@
             }
             setExpandedPostId(postId);
             const { data } = await supabase.from('consciousness_comments').select('*').eq('post_id', postId).order('created_at', { ascending: true });
-            if (data) setCommentsMap(prev => ({ ...prev, [postId]: data }));
+            if (data) setCommentsMap(prev => ({ ...prev, [postId]: data.filter(x => !isBlocked(x.author_nickname)) }));
           };
 
           const createComment = async (postId) => {

@@ -1107,6 +1107,10 @@ function GlobalAwakeningPlatform() {
       return [];
     }
   });
+  const blockedUsersRef = useRef(blockedUsers);
+  useEffect(() => {
+    blockedUsersRef.current = blockedUsers;
+  }, [blockedUsers]);
   const [infoToast, setInfoToast] = useState(null);
   const [authTab, setAuthTab] = useState('login');
   const [showResetForm, setShowResetForm] = useState(false);
@@ -1219,6 +1223,7 @@ function GlobalAwakeningPlatform() {
     if (error) return;
     const list = (data || []).map(x => typeof x === 'string' ? x : x.get_my_blocks).filter(Boolean);
     setBlockedUsers(list);
+    blockedUsersRef.current = list;
     try {
       localStorage.setItem('ga_blocked', JSON.stringify(list));
     } catch {}
@@ -1226,7 +1231,7 @@ function GlobalAwakeningPlatform() {
   useEffect(() => {
     reloadBlocks();
   }, [reloadBlocks]);
-  const isBlocked = nick => !!nick && blockedUsers.includes(nick);
+  const isBlocked = nick => !!nick && blockedUsersRef.current.includes(nick);
   const matchIdRef = React.useRef(null);
   const sessionIdRef = React.useRef(null);
   React.useEffect(() => {
@@ -1350,8 +1355,9 @@ function GlobalAwakeningPlatform() {
           const {
             data: invites
           } = await supabase.from('telepathy_invites').select('*').eq('to_id', sessionId).eq('status', 'pending');
-          if (invites && invites.length > 0) {
-            const inv = invites[0];
+          const visibili = (invites || []).filter(i => !isBlocked(i.from_name));
+          if (visibili.length > 0) {
+            const inv = visibili[0];
             setIncomingInvite({
               from_id: inv.from_id,
               from_name: inv.from_name,
@@ -1400,14 +1406,14 @@ function GlobalAwakeningPlatform() {
         if (expired.length > 0) {
           await supabase.rpc('cleanup_expired_rituals');
         }
-        setRituals(ritualsData.filter(r => !expired.find(e => e.id === r.id)));
+        setRituals(ritualsData.filter(r => !expired.find(e => e.id === r.id) && !isBlocked(r.creator)));
       }
       const {
         data: postsData
       } = await supabase.from('consciousness_posts').select('*').order('created_at', {
         ascending: false
       }).limit(50);
-      if (postsData) setPosts(postsData);
+      if (postsData) setPosts(postsData.filter(x => !isBlocked(x.author_nickname)));
       if (expandedPostIdRef.current) {
         const {
           data: commentsData
@@ -1416,7 +1422,7 @@ function GlobalAwakeningPlatform() {
         });
         if (commentsData) setCommentsMap(prev => ({
           ...prev,
-          [expandedPostIdRef.current]: commentsData
+          [expandedPostIdRef.current]: commentsData.filter(x => !isBlocked(x.author_nickname))
         }));
       }
       if (expandedRitualIdRef.current) {
@@ -1427,7 +1433,7 @@ function GlobalAwakeningPlatform() {
         });
         if (rCommentsData) setRitualCommentsMap(prev => ({
           ...prev,
-          [expandedRitualIdRef.current]: rCommentsData
+          [expandedRitualIdRef.current]: rCommentsData.filter(x => !isBlocked(x.author_nickname))
         }));
       }
     };
@@ -2327,7 +2333,7 @@ function GlobalAwakeningPlatform() {
       } = await supabase.from('telepathy_chat').select('*').eq('match_id', matchId).order('created_at', {
         ascending: true
       });
-      if (data) setTelepathyChatMessages(data);
+      if (data) setTelepathyChatMessages(data.filter(x => !isBlocked(x.sender_name)));
     };
     loadChat();
     const interval = setInterval(loadChat, 3000);
@@ -2822,8 +2828,9 @@ function GlobalAwakeningPlatform() {
         const {
           data: invites
         } = await supabase.from('telepathy_invites').select('*').eq('to_id', sessionId).eq('status', 'pending');
-        if (invites && invites.length > 0) {
-          const inv = invites[0];
+        const visibili = (invites || []).filter(i => !isBlocked(i.from_name));
+        if (visibili.length > 0) {
+          const inv = visibili[0];
           setIncomingInvite({
             from_id: inv.from_id,
             from_name: inv.from_name,
@@ -3026,7 +3033,7 @@ function GlobalAwakeningPlatform() {
       });
       if (data) setRitualCommentsMap(prev => ({
         ...prev,
-        [ritualId]: data
+        [ritualId]: data.filter(x => !isBlocked(x.author_nickname))
       }));
     }
   };
@@ -3101,7 +3108,7 @@ function GlobalAwakeningPlatform() {
     });
     if (data) setCommentsMap(prev => ({
       ...prev,
-      [postId]: data
+      [postId]: data.filter(x => !isBlocked(x.author_nickname))
     }));
   };
   const createComment = async postId => {
