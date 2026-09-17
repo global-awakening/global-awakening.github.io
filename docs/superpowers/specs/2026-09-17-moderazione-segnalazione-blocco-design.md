@@ -266,6 +266,45 @@ Più verifica manuale in UI del filtraggio del feed dopo un blocco.
 - [ ] Review di un sub-agente indipendente sull'intero branch: nessun rilievo aperto
 - [ ] Nessuna segnalazione o blocco leggibile via REST anon
 
+## Esito della review indipendente (2026-09-17)
+
+La review ha prodotto otto rilievi. Correzioni applicate in `18_moderazione_review.sql`
+e nel client:
+
+| Rilievo | Esito |
+|---|---|
+| Matchmaking telepatia non escludeva i bloccati (il piano lo chiedeva) | **Corretto.** Sia la coda sia il ramo «qualcuno mi ha già matchato»; in quest'ultimo il match viene chiuso, altrimenti il polling lo riproporrebbe a ogni tick. |
+| Conferma di blocco assente, `blockTitle`/`blockConfirm` stringhe morte | **Corretto.** Dialog di conferma prima di bloccare, da menu e da profilo. |
+| Menu tagliato dagli `overflow` delle due chat | **Corretto**, e con una causa più profonda di quella segnalata: dentro la card il dropdown restava confinato nel contesto di impilamento della card e finiva **sotto le card successive**. Ora è uno solo, a livello radice, in `position: fixed` con coordinate misurate e ribaltamento verso l'alto a fine schermo. Si chiude con Esc e con un click fuori. |
+| Ospiti senza spiegazione | **Corretto.** Il menu compare anche agli ospiti e al tocco mostra l'invito a registrarsi. |
+| `block_user` senza rate limit | **Corretto.** 50 blocchi / 24h, pattern B9. |
+| `delete_my_account` cancellava i blocchi **subiti** | **Corretto**, ed era il rilievo più importante dopo il primo: cancellarsi e ri-registrarsi con lo stesso nickname era una via d'uscita dal blocco altrui. Ora spariscono solo i blocchi impostati da chi si cancella. |
+| Pulizia dei test silenziosamente saltata senza chiave privilegiata | **Corretto.** Ora il test fallisce invece di restare verde lasciando 21 segnalazioni nel DB. |
+| `markOneNotifRead` leggeva `private_messages` con una SELECT diretta | **Corretto.** Passa da `get_my_messages`, l'unica via che applica il filtro dei bloccati. |
+
+### Scostamenti deliberati, rispetto a quanto scritto sopra
+
+- **`block_user` NON verifica che il nickname esista in `profiles`**, benché questa spec
+  lo chiedesse. Gli **ospiti non hanno riga `profiles` ma possono pubblicare nel feed**
+  (`createPost` non ha alcun gate su `isGuest`): quel controllo renderebbe impossibile
+  bloccare un ospite molesto, cioè toglierebbe protezione proprio nel caso che ne ha più
+  bisogno. Il prezzo è che si può bloccare un nickname scritto male.
+- **`get_my_messages` nasconde l'intera conversazione**, non solo i messaggi ricevuti dal
+  bloccato. È la semantica di blocco dei social ed è reversibile (lo sblocco fa
+  riapparire tutto, nulla viene cancellato), ma va detto: **si perde temporaneamente
+  anche il proprio storico** verso quella persona.
+
+### Debito noto, non risolto qui
+
+- Il **pannello notifiche** non filtra i bloccati: il nickname è annegato nel testo
+  libero di `notifications.message`, quindi filtrarlo richiede un cambio di schema.
+  Effetto: un bloccato che commenta un tuo post genera ancora la riga «Tizio ha
+  commentato il tuo post».
+- La **lista presenze** (`online_users`) mostra i bloccati come online.
+- `test-inviti-telepatia.js` ha **un rosso preesistente** («B non ha ricevuto il secondo
+  invito nella campanella»), verificato identico sul client di `main`: **non introdotto da
+  questo branch**, da indagare a parte.
+
 ## Fuori scope — cosa NON fare
 
 - **Nessun refactor** di `src/app.jsx` (4705 righe monolitiche): si tocca solo il necessario.

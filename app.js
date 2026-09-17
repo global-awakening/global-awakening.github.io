@@ -1290,10 +1290,24 @@ function GlobalAwakeningPlatform() {
     reloadBlocks();
   }, [reloadBlocks]);
   const isBlocked = nick => !!nick && blockedUsersRef.current.includes(nick);
-  const [openMenuKey, setOpenMenuKey] = useState(null);
+  const [openMenu, setOpenMenu] = useState(null);
+  const [blockTarget, setBlockTarget] = useState(null);
   const [reportTarget, setReportTarget] = useState(null);
   const [reportReason, setReportReason] = useState('spam');
   const [reportNotes, setReportNotes] = useState('');
+  useEffect(() => {
+    if (!openMenu) return;
+    const chiudi = () => setOpenMenu(null);
+    const onEsc = e => {
+      if (e.key === 'Escape') setOpenMenu(null);
+    };
+    document.addEventListener('click', chiudi);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('click', chiudi);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [openMenu]);
   const doBlock = async nick => {
     if (isGuest || !passwordHash) {
       setErrorToast(t.moderation.guestOnly);
@@ -1358,18 +1372,40 @@ function GlobalAwakeningPlatform() {
     id,
     snapshot
   }) => {
-    if (!author || author === nickname || isGuest) return null;
+    if (!author || author === nickname) return null;
     const key = `${type}:${id || author}`;
-    const open = openMenuKey === key;
+    const open = openMenu && openMenu.key === key;
+    const apri = e => {
+      e.stopPropagation();
+      if (isGuest) {
+        setErrorToast(t.moderation.guestOnly);
+        return;
+      }
+      if (open) {
+        setOpenMenu(null);
+        return;
+      }
+      const r = e.currentTarget.getBoundingClientRect();
+      const flipUp = window.innerHeight - r.bottom < 110;
+      setOpenMenu({
+        key,
+        author,
+        type,
+        id,
+        snapshot,
+        top: flipUp ? null : r.bottom + 4,
+        bottom: flipUp ? window.innerHeight - r.top + 4 : null,
+        right: Math.max(8, window.innerWidth - r.right)
+      });
+    };
     return React.createElement("span", {
       style: {
-        position: 'relative',
         marginLeft: 'auto'
       }
     }, React.createElement("button", {
       "aria-label": t.moderation.menu,
-      "aria-expanded": open,
-      onClick: () => setOpenMenuKey(open ? null : key),
+      "aria-expanded": !!open,
+      onClick: apri,
       className: "text-secondary",
       style: {
         background: 'none',
@@ -1380,54 +1416,7 @@ function GlobalAwakeningPlatform() {
         padding: '0.25rem 0.5rem',
         minHeight: '32px'
       }
-    }, "\u22EF"), open && React.createElement("div", {
-      style: {
-        position: 'absolute',
-        right: 0,
-        top: '100%',
-        zIndex: 40,
-        background: 'rgba(17,12,30,0.98)',
-        border: '1px solid rgba(167,139,250,0.35)',
-        borderRadius: '0.75rem',
-        padding: '0.25rem',
-        minWidth: '11rem'
-      }
-    }, React.createElement("button", {
-      onClick: () => {
-        setOpenMenuKey(null);
-        setReportTarget({
-          author,
-          type,
-          id,
-          snapshot
-        });
-      },
-      style: {
-        display: 'block',
-        width: '100%',
-        textAlign: 'left',
-        background: 'none',
-        border: 'none',
-        color: '#e9d5ff',
-        padding: '0.6rem 0.75rem',
-        cursor: 'pointer'
-      }
-    }, t.moderation.report), React.createElement("button", {
-      onClick: () => {
-        setOpenMenuKey(null);
-        doBlock(author);
-      },
-      style: {
-        display: 'block',
-        width: '100%',
-        textAlign: 'left',
-        background: 'none',
-        border: 'none',
-        color: '#fca5a5',
-        padding: '0.6rem 0.75rem',
-        cursor: 'pointer'
-      }
-    }, t.moderation.block)));
+    }, "\u22EF"));
   };
   const matchIdRef = React.useRef(null);
   const sessionIdRef = React.useRef(null);
@@ -1660,9 +1649,19 @@ function GlobalAwakeningPlatform() {
         const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
         if (myMatch) {
           const amUser1 = myMatch.user1_id === sessionId;
+          const altroNick = amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname;
+          if (isBlocked(altroNick)) {
+            try {
+              await supabase.rpc('end_telepathy_match', {
+                p_match_id: myMatch.id,
+                p_ended_by: sessionId
+              });
+            } catch (e) {}
+            return;
+          }
           setPartner({
             id: amUser1 ? myMatch.user2_id : myMatch.user1_id,
-            nickname: amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname
+            nickname: altroNick
           });
           setRole(amUser1 ? myMatch.user1_role : myMatch.user2_role);
           setMatchId(myMatch.id);
@@ -1676,8 +1675,9 @@ function GlobalAwakeningPlatform() {
       } = await supabase.from('telepathy_queue').select('*').neq('id', sessionId).order('timestamp', {
         ascending: true
       });
-      if (queue && queue.length > 0) {
-        const available = queue[0];
+      const queueLibera = (queue || []).filter(q => !isBlocked(q.nickname));
+      if (queueLibera.length > 0) {
+        const available = queueLibera[0];
         const {
           data: precheck
         } = await supabase.from('telepathy_matches').select('*');
@@ -3006,15 +3006,19 @@ function GlobalAwakeningPlatform() {
     if (isExpiredInvite) return;
     if (notif.type === 'private_message') {
       try {
-        const {
-          data: sent
-        } = await supabase.from('private_messages').select('*').eq('sender_name', nickname);
-        const {
-          data: received
-        } = await supabase.from('private_messages').select('*').eq('receiver_name', nickname);
-        const all = [...(sent || []), ...(received || [])];
-        all.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-        setPrivateMessages(all);
+        if (!isGuest && passwordHash) {
+          const {
+            data
+          } = await supabase.rpc('get_my_messages', {
+            p_nickname: nickname,
+            p_password_hash: passwordHash
+          });
+          if (Array.isArray(data)) {
+            const all = [...data];
+            all.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            setPrivateMessages(all);
+          }
+        }
       } catch (err) {
         console.warn('reload private_messages failed', err);
       }
@@ -5694,7 +5698,7 @@ ${ritual.description || ''}`
       fontSize: '0.8rem',
       color: '#fca5a5'
     },
-    onClick: () => doBlock(viewingProfile.nickname)
+    onClick: () => setBlockTarget(viewingProfile.nickname)
   }, t.moderation.block)), viewingProfile.country && React.createElement("div", {
     className: "bg-glass-dark rounded-xl p-3 text-center"
   }, React.createElement("p", {
@@ -5878,7 +5882,111 @@ ${ritual.description || ''}`
       margin: 0,
       textAlign: 'center'
     }
-  }, "\u26A0\uFE0F ", errorToast)), reportTarget && React.createElement("div", {
+  }, "\u26A0\uFE0F ", errorToast)), openMenu && React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    style: {
+      position: 'fixed',
+      zIndex: 9997,
+      top: openMenu.top != null ? `${openMenu.top}px` : undefined,
+      bottom: openMenu.bottom != null ? `${openMenu.bottom}px` : undefined,
+      right: `${openMenu.right}px`,
+      background: 'rgba(17,12,30,0.98)',
+      border: '1px solid rgba(167,139,250,0.35)',
+      borderRadius: '0.75rem',
+      padding: '0.25rem',
+      minWidth: '11rem',
+      boxShadow: '0 10px 30px rgba(0,0,0,0.55)'
+    }
+  }, React.createElement("button", {
+    onClick: () => {
+      const m = openMenu;
+      setOpenMenu(null);
+      setReportTarget({
+        author: m.author,
+        type: m.type,
+        id: m.id,
+        snapshot: m.snapshot
+      });
+    },
+    style: {
+      display: 'block',
+      width: '100%',
+      textAlign: 'left',
+      background: 'none',
+      border: 'none',
+      color: '#e9d5ff',
+      padding: '0.6rem 0.75rem',
+      cursor: 'pointer'
+    }
+  }, t.moderation.report), React.createElement("button", {
+    onClick: () => {
+      const a = openMenu.author;
+      setOpenMenu(null);
+      setBlockTarget(a);
+    },
+    style: {
+      display: 'block',
+      width: '100%',
+      textAlign: 'left',
+      background: 'none',
+      border: 'none',
+      color: '#fca5a5',
+      padding: '0.6rem 0.75rem',
+      cursor: 'pointer'
+    }
+  }, t.moderation.block)), blockTarget && React.createElement("div", {
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 9998,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '1rem',
+      background: 'rgba(0,0,0,0.7)'
+    },
+    onClick: () => setBlockTarget(null)
+  }, React.createElement("div", {
+    className: "bg-glass rounded-2xl border-glass p-4",
+    style: {
+      maxWidth: '22rem',
+      width: '100%'
+    },
+    onClick: e => e.stopPropagation()
+  }, React.createElement("h3", {
+    className: "text-white font-bold mb-2"
+  }, t.moderation.blockTitle), React.createElement("p", {
+    className: "text-primary font-medium mb-1"
+  }, blockTarget), React.createElement("p", {
+    className: "text-secondary text-sm"
+  }, t.moderation.blockConfirm), React.createElement("div", {
+    className: "flex gap-2",
+    style: {
+      marginTop: '1rem'
+    }
+  }, React.createElement("button", {
+    style: {
+      padding: '0.6rem 1rem',
+      borderRadius: '0.75rem',
+      flex: 1,
+      border: '1px solid rgba(248,113,113,0.5)',
+      background: 'rgba(248,113,113,0.12)',
+      color: '#fca5a5',
+      cursor: 'pointer',
+      fontWeight: 600
+    },
+    onClick: () => {
+      const n = blockTarget;
+      setBlockTarget(null);
+      doBlock(n);
+    }
+  }, t.moderation.block), React.createElement("button", {
+    className: "btn-secondary",
+    style: {
+      flex: 1
+    },
+    onClick: () => setBlockTarget(null)
+  }, t.moderation.cancel)))), reportTarget && React.createElement("div", {
     style: {
       position: 'fixed',
       inset: 0,

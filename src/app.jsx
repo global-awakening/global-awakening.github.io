@@ -1080,10 +1080,27 @@
           // openMenuKey sta QUI e non dentro il menu: un componente definito dentro
           // GlobalAwakeningPlatform verrebbe rimontato a ogni render, e con il polling
           // ogni 2s il menu aperto si richiuderebbe da solo.
-          const [openMenuKey, setOpenMenuKey] = useState(null);
+          // { key, top|bottom, right }: le coordinate servono perche' il dropdown e'
+          // position:fixed. Dentro i contenitori scrollabili (chat telepatia 220px,
+          // messaggi privati 180px) un dropdown in position:absolute veniva TAGLIATO
+          // dall'overflow, proprio sulle due superfici di chat.
+          const [openMenu, setOpenMenu] = useState(null);
+          const [blockTarget, setBlockTarget] = useState(null);   // conferma prima di bloccare
           const [reportTarget, setReportTarget] = useState(null);   // { author, type, id, snapshot }
           const [reportReason, setReportReason] = useState('spam');
           const [reportNotes, setReportNotes] = useState('');
+
+          useEffect(() => {
+            if (!openMenu) return;
+            const chiudi = () => setOpenMenu(null);
+            const onEsc = (e) => { if (e.key === 'Escape') setOpenMenu(null); };
+            document.addEventListener('click', chiudi);
+            document.addEventListener('keydown', onEsc);
+            return () => {
+              document.removeEventListener('click', chiudi);
+              document.removeEventListener('keydown', onEsc);
+            };
+          }, [openMenu]);
 
           const doBlock = async (nick) => {
             if (isGuest || !passwordHash) { setErrorToast(t.moderation.guestOnly); return; }
@@ -1129,35 +1146,40 @@
           // Funzione che ritorna JSX, non un componente: nessuna identita' da
           // riconciliare, nessuno stato interno da perdere.
           const moderationMenu = ({ author, type, id, snapshot }) => {
-            if (!author || author === nickname || isGuest) return null;
+            if (!author || author === nickname) return null;
             const key = `${type}:${id || author}`;
-            const open = openMenuKey === key;
+            const open = openMenu && openMenu.key === key;
+
+            const apri = (e) => {
+              e.stopPropagation();   // senza questo il listener su document richiude subito
+              // Gli ospiti non hanno credenziale: invece di un menu che non farebbe nulla,
+              // si spiega perche' serve un account.
+              if (isGuest) { setErrorToast(t.moderation.guestOnly); return; }
+              if (open) { setOpenMenu(null); return; }
+              const r = e.currentTarget.getBoundingClientRect();
+              const flipUp = (window.innerHeight - r.bottom) < 110;
+              setOpenMenu({
+                key, author, type, id, snapshot,
+                top: flipUp ? null : r.bottom + 4,
+                bottom: flipUp ? (window.innerHeight - r.top + 4) : null,
+                right: Math.max(8, window.innerWidth - r.right)
+              });
+            };
+
+            // Il dropdown NON sta qui dentro: renderizzato dentro la card, il suo
+            // z-index resterebbe confinato nel contesto di impilamento della card e
+            // finirebbe SOTTO le card successive (e tagliato dagli overflow delle chat).
+            // Vive a livello radice, uno solo, guidato da openMenu.
             return (
-              <span style={{position: 'relative', marginLeft: 'auto'}}>
+              <span style={{marginLeft: 'auto'}}>
                 <button
                   aria-label={t.moderation.menu}
-                  aria-expanded={open}
-                  onClick={() => setOpenMenuKey(open ? null : key)}
+                  aria-expanded={!!open}
+                  onClick={apri}
                   className="text-secondary"
                   style={{background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem',
                           lineHeight: 1, padding: '0.25rem 0.5rem', minHeight: '32px'}}
                 >⋯</button>
-                {open && (
-                  <div style={{position: 'absolute', right: 0, top: '100%', zIndex: 40,
-                               background: 'rgba(17,12,30,0.98)', border: '1px solid rgba(167,139,250,0.35)',
-                               borderRadius: '0.75rem', padding: '0.25rem', minWidth: '11rem'}}>
-                    <button
-                      onClick={() => { setOpenMenuKey(null); setReportTarget({ author, type, id, snapshot }); }}
-                      style={{display: 'block', width: '100%', textAlign: 'left', background: 'none',
-                              border: 'none', color: '#e9d5ff', padding: '0.6rem 0.75rem', cursor: 'pointer'}}
-                    >{t.moderation.report}</button>
-                    <button
-                      onClick={() => { setOpenMenuKey(null); doBlock(author); }}
-                      style={{display: 'block', width: '100%', textAlign: 'left', background: 'none',
-                              border: 'none', color: '#fca5a5', padding: '0.6rem 0.75rem', cursor: 'pointer'}}
-                    >{t.moderation.block}</button>
-                  </div>
-                )}
               </span>
             );
           };
@@ -1388,7 +1410,15 @@
                 const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
                 if (myMatch) {
                   const amUser1 = myMatch.user1_id === sessionId;
-                  setPartner({ id: amUser1 ? myMatch.user2_id : myMatch.user1_id, nickname: amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname });
+                  // SP1: mai una sessione con chi ho bloccato. Il match si chiude, se no
+                  // il polling lo ritroverebbe a ogni tick e non cercherei mai un altro.
+                  const altroNick = amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname;
+                  if (isBlocked(altroNick)) {
+                    try { await supabase.rpc('end_telepathy_match', { p_match_id: myMatch.id, p_ended_by: sessionId }); }
+                    catch (e) { /* RPC non applicata: il match scade comunque a TTL */ }
+                    return;
+                  }
+                  setPartner({ id: amUser1 ? myMatch.user2_id : myMatch.user1_id, nickname: altroNick });
                   setRole(amUser1 ? myMatch.user1_role : myMatch.user2_role);
                   setMatchId(myMatch.id);
                   setSearchingPartner(false);
@@ -1401,8 +1431,12 @@
               // 2. Look for someone in queue
               const { data: queue } = await supabase.from('telepathy_queue').select('*').neq('id', sessionId).order('timestamp', { ascending: true });
 
-              if (queue && queue.length > 0) {
-                const available = queue[0];
+              // SP1: scarta dalla coda chi ho bloccato; se resta solo lui, si attende
+              // il tick successivo invece di accoppiarsi.
+              const queueLibera = (queue || []).filter(q => !isBlocked(q.nickname));
+
+              if (queueLibera.length > 0) {
+                const available = queueLibera[0];
 
                 // Re-check pre-insert: tra il primo SELECT (riga sopra) e l'INSERT, un altro
                 // client puo' avermi appena matchato o aver matchato 'available' con un terzo.
@@ -2795,12 +2829,21 @@
             if (notif.type === 'private_message') {
               // Forza reload immediato dei messaggi privati prima di aprire il profilo,
               // così la conversazione non appare vuota anche se il poll (8s) non è ancora scattato.
+              // Via RPC e non con una SELECT diretta: la lettura pubblica di
+              // private_messages e' chiusa da Messaggi Step B (tornerebbe 0 righe e
+              // svuoterebbe la conversazione) e solo get_my_messages applica il filtro
+              // dei bloccati introdotto da SP1.
               try {
-                const { data: sent } = await supabase.from('private_messages').select('*').eq('sender_name', nickname);
-                const { data: received } = await supabase.from('private_messages').select('*').eq('receiver_name', nickname);
-                const all = [...(sent || []), ...(received || [])];
-                all.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-                setPrivateMessages(all);
+                if (!isGuest && passwordHash) {
+                  const { data } = await supabase.rpc('get_my_messages', {
+                    p_nickname: nickname, p_password_hash: passwordHash
+                  });
+                  if (Array.isArray(data)) {
+                    const all = [...data];
+                    all.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+                    setPrivateMessages(all);
+                  }
+                }
               } catch (err) { console.warn('reload private_messages failed', err); }
               const senderMatch = notif.message.match(/^(.+) ti ha inviato/);
               if (senderMatch) openProfile(senderMatch[1]);
@@ -4545,7 +4588,7 @@ ${ritual.description || ''}` })}
                                   onClick={() => doUnblock(viewingProfile.nickname)}>{t.moderation.unblock}</button>
                               ) : (
                                 <button className="btn-secondary" style={{fontSize: '0.8rem', color: '#fca5a5'}}
-                                  onClick={() => doBlock(viewingProfile.nickname)}>{t.moderation.block}</button>
+                                  onClick={() => setBlockTarget(viewingProfile.nickname)}>{t.moderation.block}</button>
                               )}
                             </div>
                           )}
@@ -4689,6 +4732,58 @@ ${ritual.description || ''}` })}
                   animation: 'toast-rise 0.35s ease-out'
                 }}>
                   <p className="text-white font-bold" style={{fontSize: '0.9rem', margin: 0, textAlign: 'center'}}>⚠️ {errorToast}</p>
+                </div>
+              )}
+
+              {openMenu && (
+                <div
+                  onClick={e => e.stopPropagation()}
+                  style={{position: 'fixed', zIndex: 9997,
+                          top: openMenu.top != null ? `${openMenu.top}px` : undefined,
+                          bottom: openMenu.bottom != null ? `${openMenu.bottom}px` : undefined,
+                          right: `${openMenu.right}px`,
+                          background: 'rgba(17,12,30,0.98)', border: '1px solid rgba(167,139,250,0.35)',
+                          borderRadius: '0.75rem', padding: '0.25rem', minWidth: '11rem',
+                          boxShadow: '0 10px 30px rgba(0,0,0,0.55)'}}>
+                  <button
+                    onClick={() => {
+                      const m = openMenu;
+                      setOpenMenu(null);
+                      setReportTarget({ author: m.author, type: m.type, id: m.id, snapshot: m.snapshot });
+                    }}
+                    style={{display: 'block', width: '100%', textAlign: 'left', background: 'none',
+                            border: 'none', color: '#e9d5ff', padding: '0.6rem 0.75rem', cursor: 'pointer'}}
+                  >{t.moderation.report}</button>
+                  <button
+                    onClick={() => { const a = openMenu.author; setOpenMenu(null); setBlockTarget(a); }}
+                    style={{display: 'block', width: '100%', textAlign: 'left', background: 'none',
+                            border: 'none', color: '#fca5a5', padding: '0.6rem 0.75rem', cursor: 'pointer'}}
+                  >{t.moderation.block}</button>
+                </div>
+              )}
+
+              {blockTarget && (
+                <div style={{position: 'fixed', inset: 0, zIndex: 9998, display: 'flex',
+                             alignItems: 'center', justifyContent: 'center', padding: '1rem',
+                             background: 'rgba(0,0,0,0.7)'}}
+                     onClick={() => setBlockTarget(null)}>
+                  <div className="bg-glass rounded-2xl border-glass p-4"
+                       style={{maxWidth: '22rem', width: '100%'}}
+                       onClick={e => e.stopPropagation()}>
+                    <h3 className="text-white font-bold mb-2">{t.moderation.blockTitle}</h3>
+                    <p className="text-primary font-medium mb-1">{blockTarget}</p>
+                    <p className="text-secondary text-sm">{t.moderation.blockConfirm}</p>
+                    <div className="flex gap-2" style={{marginTop: '1rem'}}>
+                      <button
+                        style={{padding: '0.6rem 1rem', borderRadius: '0.75rem', flex: 1,
+                                border: '1px solid rgba(248,113,113,0.5)', background: 'rgba(248,113,113,0.12)',
+                                color: '#fca5a5', cursor: 'pointer', fontWeight: 600}}
+                        onClick={() => { const n = blockTarget; setBlockTarget(null); doBlock(n); }}
+                      >{t.moderation.block}</button>
+                      <button className="btn-secondary" style={{flex: 1}}
+                        onClick={() => setBlockTarget(null)}>{t.moderation.cancel}</button>
+                    </div>
+                  </div>
                 </div>
               )}
 

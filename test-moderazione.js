@@ -9,7 +9,7 @@
  * Esecuzione: node test-moderazione.js
  * Prerequisito: aver applicato supabase/sql/16_moderazione.sql in Studio.
  */
-const { purge } = require('./test-helpers');
+const { purge, getServiceKey } = require('./test-helpers');
 
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
@@ -69,12 +69,28 @@ async function cleanup() {
 
   // user_blocks e content_reports hanno RLS ON senza policy: la anon key non cancella
   // nulla (PostgREST risponde comunque 2xx). Serve la chiave privilegiata via purge().
-  await purge(SUPABASE_URL, [
+  //
+  // Senza chiave, purge() salta in silenzio e il test 12 lascerebbe 21 segnalazioni
+  // nel DB — inquinando la coda che scripts/segnalazioni.js deve leggere — mentre il
+  // test resterebbe verde. Meglio un rosso onesto.
+  const res = await purge(SUPABASE_URL, [
     `user_blocks?blocker_nickname=eq.${e(NICK_A)}`,
     `user_blocks?blocker_nickname=eq.${e(NICK_B)}`,
     `content_reports?reporter_nickname=eq.${e(NICK_A)}`,
     `content_reports?reporter_nickname=eq.${e(NICK_B)}`,
   ], { label: 'moderazione' });
+  if (!res.ran) {
+    fail('pulizia NON eseguita: SUPABASE_SERVICE_KEY assente, il DB resta sporco');
+  }
+}
+
+/** Lettura privilegiata: user_blocks e content_reports non sono leggibili da anon. */
+async function sbPriv(path) {
+  const key = getServiceKey();
+  if (!key) return null;
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: { apikey: key, Authorization: `Bearer ${key}` } });
+  return r.json().catch(() => null);
 }
 
 async function testBlocco() {
@@ -210,6 +226,41 @@ async function testRlsERegressione() {
     : fail(`non-regressione B9: atteso rate_limited alla 21ª, ricevuto ${JSON.stringify(last)}`);
 }
 
+/** Rilievi 4 e 8 della review indipendente (migration 18_). */
+async function testReview() {
+  console.log('— Correzioni dalla review —');
+
+  // 16) rate limit su block_user: 50 blocchi in 24h, il 51esimo fallisce.
+  //     A ha già usato qualche blocco nei test precedenti: si parte da quanti ne ha.
+  let r = null;
+  for (let i = 0; i < 52; i++) {
+    r = await rpc('block_user', {
+      p_nickname: NICK_A, p_password_hash: HASH_A, p_blocked_nickname: `_rl_${TS}_${i}`
+    });
+    if (isError(r, 'rate_limited')) break;
+  }
+  isError(r, 'rate_limited')
+    ? pass('block_user è rate-limitata (51º blocco in 24h → rate_limited)')
+    : fail(`rate limit su block_user assente: ultimo esito ${JSON.stringify(r)}`);
+
+  // Ripulisce i blocchi di riempimento prima del test successivo.
+  await purge(SUPABASE_URL, [`user_blocks?blocker_nickname=eq.${encodeURIComponent(NICK_A)}`],
+              { label: 'moderazione-rl' });
+
+  // 17) i blocchi SUBITI sopravvivono alla cancellazione dell'account:
+  //     altrimenti cancellarsi e ri-registrarsi è un modo per farsi sbloccare.
+  await rpc('block_user', { p_nickname: NICK_A, p_password_hash: HASH_A, p_blocked_nickname: NICK_B });
+  await rpc('delete_my_account', { p_nickname: NICK_B, p_password_hash: HASH_B });
+  const righe = await sbPriv(`user_blocks?blocker_nickname=eq.${encodeURIComponent(NICK_A)}&blocked_nickname=eq.${encodeURIComponent(NICK_B)}&select=id`);
+  if (righe === null) {
+    fail('chiave privilegiata assente: evasione del blocco NON verificata');
+  } else {
+    (Array.isArray(righe) && righe.length === 1)
+      ? pass('il blocco subito sopravvive alla cancellazione dell\'account del bloccato')
+      : fail(`evasione del blocco possibile: atteso 1 blocco superstite, trovato ${JSON.stringify(righe)}`);
+  }
+}
+
 (async () => {
   console.log('— Setup —');
   await cleanup();
@@ -219,6 +270,7 @@ async function testRlsERegressione() {
   await testBloccoMessaggi();
   await testSegnalazione();
   await testRlsERegressione();
+  await testReview();   // per ultimo: cancella l'account B
 
   console.log('— Pulizia —');
   await cleanup();

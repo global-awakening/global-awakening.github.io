@@ -152,24 +152,39 @@ const cardCon = (page, text) =>
       console.warn('  ⚠️  chiave privilegiata assente: contenuto della segnalazione non verificato.');
     }
 
-    // 6) blocco dal menu ⋯
+    // 6) blocco dal menu ⋯ — passa da un dialog di conferma
     await menuAltrui.first().click();
     await pageB.locator('button:has-text("Blocca"), button:has-text("Block")').first().click();
+
+    const dialogBlocco = pageB.locator('h3:has-text("Vuoi bloccare"), h3:has-text("Block this person")');
+    try {
+      await dialogBlocco.first().waitFor({ state: 'visible', timeout: 8000 });
+      pass('il blocco chiede conferma prima di agire');
+    } catch { fail('il blocco avviene senza chiedere conferma'); }
+
+    // conferma: il pulsante dentro il dialog, non la voce di menu
+    await pageB.locator('div').filter({ has: dialogBlocco })
+      .locator('button:has-text("Blocca"), button:has-text("Block")').last().click();
     try {
       await pageB.locator('text=/Utente bloccato|User blocked/').first().waitFor({ state: 'visible', timeout: 8000 });
-      pass('il blocco viene confermato');
+      pass('il blocco viene eseguito dopo la conferma');
     } catch { fail('nessuna conferma dopo il blocco'); }
 
-    // 7) dopo il blocco il post di A sparisce dal feed di B
+    // 7) il proprio post resta visibile — e serve come PROVA CHE IL FEED È CARICATO.
+    //    Va verificato per primo: se si controllasse prima l'assenza del post
+    //    bloccato, un feed non ancora caricato farebbe passare quel controllo per
+    //    il motivo sbagliato (falso verde).
     await pageB.reload();
     await goToFeed(pageB);
-    await pageB.waitForTimeout(3000);   // un ciclo di polling
+    try {
+      await pageB.locator(`text=${POST_B}`).first().waitFor({ state: 'visible', timeout: TIMEOUT });
+      pass('il proprio post resta visibile dopo il blocco');
+    } catch { fail('anche il proprio post è sparito dopo il blocco'); }
+
+    // 8) ora l'assenza del post del bloccato è significativa
+    await pageB.waitForTimeout(2500);   // un ciclo di polling
     if (await pageB.locator(`text=${POST_A}`).count() === 0) pass('dopo il blocco il post del bloccato non è più visibile');
     else fail('dopo il blocco il post del bloccato è ancora visibile');
-
-    // 8) il proprio post resta visibile (il filtro non ha nascosto tutto)
-    if (await pageB.locator(`text=${POST_B}`).count() > 0) pass('il proprio post resta visibile dopo il blocco');
-    else fail('anche il proprio post è sparito dopo il blocco');
 
     // 9) il bloccato compare nella lista del profilo e si può sbloccare
     // Il proprio profilo si apre cliccando il nickname nell'intestazione
