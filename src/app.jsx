@@ -150,6 +150,8 @@
             pwaIosTitle: "Install on iPhone",
             pwaIosBody: "Tap Share ⬆️ then \"Add to Home Screen\".",
             pwaIosClose: "Got it",
+            pwaIosBrowserTitle: "Open in Safari",
+            pwaIosBrowserBody: "You can't install the app from here. Tap \"•••\" at the top right, choose \"Open in Safari\" and try again.",
             pwaBannerText: "Keep Global Awakening on your phone",
             pwaBannerClose: "Close",
             setPassword: "Set Password",
@@ -474,6 +476,8 @@
             pwaIosTitle: "Installa su iPhone",
             pwaIosBody: "Tocca Condividi ⬆️ poi \"Aggiungi alla schermata Home\".",
             pwaIosClose: "Ho capito",
+            pwaIosBrowserTitle: "Apri in Safari",
+            pwaIosBrowserBody: "Da qui l'app non si può installare. Tocca «•••» in alto a destra, scegli «Apri in Safari» e riprova.",
             pwaBannerText: "Tieni Risveglio Globale sul telefono",
             pwaBannerClose: "Chiudi",
             setPassword: "Imposta Password",
@@ -836,6 +840,12 @@
           const isStandalone = (typeof window !== 'undefined') &&
             (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true);
           const isIos = (typeof navigator !== 'undefined') && /iphone|ipad|ipod/i.test(navigator.userAgent);
+          // Browser interni dei social: lì il menù Condividi non ha "Aggiungi alla schermata
+          // Home", quindi le istruzioni normali sarebbero ineseguibili. L'unica cosa utile da
+          // dire è di riaprire il link in Safari.
+          const isInAppBrowser = (typeof navigator !== 'undefined') &&
+            /Instagram|FBAN|FBAV|FB_IAB|TikTok|musical_ly|BytedanceWebview|Snapchat|Twitter|LinkedIn|Pinterest|WhatsApp/i
+              .test(navigator.userAgent);
           useEffect(() => {
             const onBip = (e) => { e.preventDefault(); setDeferredPrompt(e); };
             window.addEventListener('beforeinstallprompt', onBip);
@@ -3195,8 +3205,8 @@
           const renderIosInstallModal = () => showIosInstall && (
             <div className="modal-overlay" onClick={() => setShowIosInstall(false)} style={{zIndex: 70}}>
               <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{maxWidth: '22rem'}}>
-                <h3 className="text-xl font-bold text-white mb-2">{t.pwaIosTitle}</h3>
-                <p className="text-secondary text-sm mb-4">{t.pwaIosBody}</p>
+                <h3 className="text-xl font-bold text-white mb-2">{isInAppBrowser ? t.pwaIosBrowserTitle : t.pwaIosTitle}</h3>
+                <p className="text-secondary text-sm mb-4">{isInAppBrowser ? t.pwaIosBrowserBody : t.pwaIosBody}</p>
                 <button className="btn-primary w-full" onClick={() => setShowIosInstall(false)}>{t.pwaIosClose}</button>
               </div>
             </div>

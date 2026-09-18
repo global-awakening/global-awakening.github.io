@@ -345,6 +345,8 @@ const translations = {
     pwaIosTitle: "Install on iPhone",
     pwaIosBody: "Tap Share ⬆️ then \"Add to Home Screen\".",
     pwaIosClose: "Got it",
+    pwaIosBrowserTitle: "Open in Safari",
+    pwaIosBrowserBody: "You can't install the app from here. Tap \"•••\" at the top right, choose \"Open in Safari\" and try again.",
     pwaBannerText: "Keep Global Awakening on your phone",
     pwaBannerClose: "Close",
     setPassword: "Set Password",
@@ -686,6 +688,8 @@ const translations = {
     pwaIosTitle: "Installa su iPhone",
     pwaIosBody: "Tocca Condividi ⬆️ poi \"Aggiungi alla schermata Home\".",
     pwaIosClose: "Ho capito",
+    pwaIosBrowserTitle: "Apri in Safari",
+    pwaIosBrowserBody: "Da qui l'app non si può installare. Tocca «•••» in alto a destra, scegli «Apri in Safari» e riprova.",
     pwaBannerText: "Tieni Risveglio Globale sul telefono",
     pwaBannerClose: "Chiudi",
     setPassword: "Imposta Password",
@@ -1058,6 +1062,7 @@ function GlobalAwakeningPlatform() {
   };
   const isStandalone = typeof window !== 'undefined' && (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true);
   const isIos = typeof navigator !== 'undefined' && /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isInAppBrowser = typeof navigator !== 'undefined' && /Instagram|FBAN|FBAV|FB_IAB|TikTok|musical_ly|BytedanceWebview|Snapchat|Twitter|LinkedIn|Pinterest|WhatsApp/i.test(navigator.userAgent);
   useEffect(() => {
     const onBip = e => {
       e.preventDefault();
@@ -3438,9 +3443,9 @@ function GlobalAwakeningPlatform() {
     }
   }, React.createElement("h3", {
     className: "text-xl font-bold text-white mb-2"
-  }, t.pwaIosTitle), React.createElement("p", {
+  }, isInAppBrowser ? t.pwaIosBrowserTitle : t.pwaIosTitle), React.createElement("p", {
     className: "text-secondary text-sm mb-4"
-  }, t.pwaIosBody), React.createElement("button", {
+  }, isInAppBrowser ? t.pwaIosBrowserBody : t.pwaIosBody), React.createElement("button", {
     className: "btn-primary w-full",
     onClick: () => setShowIosInstall(false)
   }, t.pwaIosClose)));
