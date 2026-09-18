@@ -3177,6 +3177,19 @@
             </footer>
           );
 
+          // Helper condiviso perché il modale serve in DUE rami di render: la schermata
+          // di ingresso e l'app vera. Su iPhone la prima è l'unica che un visitatore
+          // nuovo vede, e senza il modale lì il bottone "Installa app" non fa nulla.
+          const renderIosInstallModal = () => showIosInstall && (
+            <div className="modal-overlay" onClick={() => setShowIosInstall(false)} style={{zIndex: 70}}>
+              <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{maxWidth: '22rem'}}>
+                <h3 className="text-xl font-bold text-white mb-2">{t.pwaIosTitle}</h3>
+                <p className="text-secondary text-sm mb-4">{t.pwaIosBody}</p>
+                <button className="btn-primary w-full" onClick={() => setShowIosInstall(false)}>{t.pwaIosClose}</button>
+              </div>
+            </div>
+          );
+
           const renderPrivacyModal = () => showPrivacy && (
             <div className="modal-overlay" onClick={() => setShowPrivacy(false)}>
               <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{maxWidth: '560px', maxHeight: '80vh', overflowY: 'auto'}}>
@@ -3410,6 +3423,7 @@
                 </div>
               {renderFooter()}
               {renderPrivacyModal()}
+              {renderIosInstallModal()}
               </div>
             );
           }
@@ -4984,15 +4998,7 @@ ${ritual.description || ''}` })}
                 </div>
               )}
 
-              {showIosInstall && (
-                <div className="modal-overlay" onClick={() => setShowIosInstall(false)} style={{zIndex: 70}}>
-                  <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{maxWidth: '22rem'}}>
-                    <h3 className="text-xl font-bold text-white mb-2">{t.pwaIosTitle}</h3>
-                    <p className="text-secondary text-sm mb-4">{t.pwaIosBody}</p>
-                    <button className="btn-primary w-full" onClick={() => setShowIosInstall(false)}>{t.pwaIosClose}</button>
-                  </div>
-                </div>
-              )}
+              {renderIosInstallModal()}
 
               {showDeleteAccount && (
                 <div className="modal-overlay" onClick={() => !gdprBusy && setShowDeleteAccount(false)} style={{zIndex: 60}}>

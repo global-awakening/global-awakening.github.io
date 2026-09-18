@@ -3407,6 +3407,26 @@ function GlobalAwakeningPlatform() {
       minHeight: '40px'
     }
   }, t.pwaInstall)));
+  const renderIosInstallModal = () => showIosInstall && React.createElement("div", {
+    className: "modal-overlay",
+    onClick: () => setShowIosInstall(false),
+    style: {
+      zIndex: 70
+    }
+  }, React.createElement("div", {
+    className: "modal-content",
+    onClick: e => e.stopPropagation(),
+    style: {
+      maxWidth: '22rem'
+    }
+  }, React.createElement("h3", {
+    className: "text-xl font-bold text-white mb-2"
+  }, t.pwaIosTitle), React.createElement("p", {
+    className: "text-secondary text-sm mb-4"
+  }, t.pwaIosBody), React.createElement("button", {
+    className: "btn-primary w-full",
+    onClick: () => setShowIosInstall(false)
+  }, t.pwaIosClose)));
   const renderPrivacyModal = () => showPrivacy && React.createElement("div", {
     className: "modal-overlay",
     onClick: () => setShowPrivacy(false)
@@ -3759,7 +3779,7 @@ function GlobalAwakeningPlatform() {
         color: '#4ade80'
       },
       className: "font-bold"
-    }, loginSuccess)))), renderFooter(), renderPrivacyModal());
+    }, loginSuccess)))), renderFooter(), renderPrivacyModal(), renderIosInstallModal());
   }
   return React.createElement("div", {
     className: "min-h-screen bg-gradient app-shell",
@@ -6277,26 +6297,7 @@ ${ritual.description || ''}`
       handleLogout();
     },
     className: "btn-primary"
-  }, t.logoutConfirmYes)))), showIosInstall && React.createElement("div", {
-    className: "modal-overlay",
-    onClick: () => setShowIosInstall(false),
-    style: {
-      zIndex: 70
-    }
-  }, React.createElement("div", {
-    className: "modal-content",
-    onClick: e => e.stopPropagation(),
-    style: {
-      maxWidth: '22rem'
-    }
-  }, React.createElement("h3", {
-    className: "text-xl font-bold text-white mb-2"
-  }, t.pwaIosTitle), React.createElement("p", {
-    className: "text-secondary text-sm mb-4"
-  }, t.pwaIosBody), React.createElement("button", {
-    className: "btn-primary w-full",
-    onClick: () => setShowIosInstall(false)
-  }, t.pwaIosClose))), showDeleteAccount && React.createElement("div", {
+  }, t.logoutConfirmYes)))), renderIosInstallModal(), showDeleteAccount && React.createElement("div", {
     className: "modal-overlay",
     onClick: () => !gdprBusy && setShowDeleteAccount(false),
     style: {
