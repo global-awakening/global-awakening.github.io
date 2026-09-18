@@ -150,6 +150,8 @@
             pwaIosTitle: "Install on iPhone",
             pwaIosBody: "Tap Share ⬆️ then \"Add to Home Screen\".",
             pwaIosClose: "Got it",
+            pwaBannerText: "Keep Global Awakening on your phone",
+            pwaBannerClose: "Close",
             setPassword: "Set Password",
             changePassword: "Change Password",
             passwordSet: "Password set!",
@@ -472,6 +474,8 @@
             pwaIosTitle: "Installa su iPhone",
             pwaIosBody: "Tocca Condividi ⬆️ poi \"Aggiungi alla schermata Home\".",
             pwaIosClose: "Ho capito",
+            pwaBannerText: "Tieni Risveglio Globale sul telefono",
+            pwaBannerClose: "Chiudi",
             setPassword: "Imposta Password",
             changePassword: "Cambia Password",
             passwordSet: "Password impostata!",
@@ -821,6 +825,14 @@
           const [showPrivacy, setShowPrivacy] = useState(false);
           const [deferredPrompt, setDeferredPrompt] = useState(null);
           const [showIosInstall, setShowIosInstall] = useState(false);
+          // La chiusura del banner è per telefono, non per account: vive in localStorage.
+          const [installBannerDismissed, setInstallBannerDismissed] = useState(() => {
+            try { return localStorage.getItem('ga_install_banner_dismissed') === '1'; } catch { return false; }
+          });
+          const dismissInstallBanner = () => {
+            setInstallBannerDismissed(true);
+            try { localStorage.setItem('ga_install_banner_dismissed', '1'); } catch { /* Safari privato: pazienza */ }
+          };
           const isStandalone = (typeof window !== 'undefined') &&
             (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true);
           const isIos = (typeof navigator !== 'undefined') && /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -3190,6 +3202,18 @@
             </div>
           );
 
+          // L'invito a installare: su iPhone la PWA è l'unico canale di distribuzione,
+          // quindi non può restare un link sottile in fondo alla pagina. Stesse condizioni
+          // del link nel footer, più "non l'hai già chiuso". Il footer resta come ripiego.
+          const renderInstallBanner = (variant = '') => !isStandalone && (deferredPrompt || isIos) && !installBannerDismissed && (
+            <div className={'install-banner ' + variant}>
+              <button className="install-banner-close" aria-label={t.pwaBannerClose}
+                      onClick={dismissInstallBanner}>✕</button>
+              <span className="install-banner-text">{t.pwaBannerText}</span>
+              <button className="btn-primary install-banner-cta" onClick={handleInstall}>{t.pwaInstall}</button>
+            </div>
+          );
+
           const renderPrivacyModal = () => showPrivacy && (
             <div className="modal-overlay" onClick={() => setShowPrivacy(false)}>
               <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{maxWidth: '560px', maxHeight: '80vh', overflowY: 'auto'}}>
@@ -3212,6 +3236,8 @@
           if (showNicknamePrompt) {
             return (
               <div className="min-h-screen bg-gradient flex flex-col items-center justify-center p-4" style={{paddingBottom: '3.5rem'}}>
+                {renderInstallBanner('install-banner--landing')}
+
                 <div className="absolute top-4 right-4">
                   <button onClick={() => setLang(lang === 'en' ? 'it' : 'en')} className="btn-secondary">
                     {lang === 'en' ? '🌐 EN' : '🌐 IT'}
@@ -3551,6 +3577,10 @@
                   </div>
                 </div>
               </header>
+
+              <div className="container" style={{paddingTop: '1rem'}}>
+                {renderInstallBanner()}
+              </div>
 
               <div className="container py-3">
                 <div className="bg-glass rounded-2xl p-4 border-glass" style={{background: 'rgba(124, 58, 237, 0.12)', border: '1px solid rgba(124, 58, 237, 0.2)'}}>
