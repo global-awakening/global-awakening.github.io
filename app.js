@@ -463,7 +463,7 @@ const translations = {
       type: "Type",
       sacredNumber: "Sacred Number",
       date: "Date",
-      time: "Time (UTC)",
+      time: "Time",
       duration: "Duration (minutes)",
       create: "Create Ritual",
       cancel: "Cancel"
@@ -810,7 +810,7 @@ const translations = {
       type: "Tipo",
       sacredNumber: "Numero Sacro",
       date: "Data",
-      time: "Ora (UTC)",
+      time: "Ora",
       duration: "Durata (minuti)",
       create: "Crea Rituale",
       cancel: "Annulla"
@@ -3135,6 +3135,13 @@ function GlobalAwakeningPlatform() {
       alert('Please fill in name, date and time.');
       return;
     }
+    const istanteLocale = new Date(`${newRitual.date}T${newRitual.time}`);
+    if (isNaN(istanteLocale.getTime())) {
+      alert('Please fill in name, date and time.');
+      return;
+    }
+    const dataUtc = istanteLocale.toISOString().slice(0, 10);
+    const oraUtc = istanteLocale.toISOString().slice(11, 16);
     const ritualData = {
       creator: nickname || 'Anonymous',
       creator_id: sessionId,
@@ -3142,8 +3149,8 @@ function GlobalAwakeningPlatform() {
       description: newRitual.description,
       type: newRitual.type,
       sacred_number: newRitual.sacredNumber,
-      date: newRitual.date,
-      time: newRitual.time,
+      date: dataUtc,
+      time: oraUtc,
       duration: newRitual.duration,
       participants: [sessionId],
       energy: 0
@@ -3257,6 +3264,19 @@ function GlobalAwakeningPlatform() {
     const minutes = Math.floor(diff % 3600000 / 60000);
     if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
+  };
+  const formatRitualWhen = ritual => {
+    const istante = new Date(`${ritual.date}T${ritual.time}Z`);
+    if (isNaN(istante.getTime())) return `${ritual.date} ${ritual.time}`;
+    return new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZoneName: 'short'
+    }).format(istante);
   };
   const MUSIC_SRC = 'assets/meditation-music-rockot.mp3';
   const MUSIC_VOLUME = 0.35;
@@ -4287,7 +4307,7 @@ ${ritual.description || ''}`
       }
     }), React.createElement("span", {
       className: "text-primary text-sm"
-    }, ritual.date, " ", ritual.time, " UTC")), React.createElement("div", {
+    }, formatRitualWhen(ritual))), React.createElement("div", {
       className: "flex items-center justify-between mb-4"
     }, React.createElement("div", {
       className: "flex items-center gap-2"
