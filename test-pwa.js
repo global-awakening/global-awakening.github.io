@@ -28,10 +28,10 @@ const fail = (m) => { console.log('  ❌ ' + m); failed++; process.exitCode = 1;
   // Contesto iPhone riusabile. Lo stub su 'beforeinstallprompt' serve perché Safari non
   // emette MAI quell'evento mentre Chromium sì: senza, handleInstall prende l'altro ramo
   // e i test iOS non verificherebbero il percorso vero di un iPhone.
-  const openIphone = async () => {
+  const openIphone = async (uaSuffix = '') => {
     const ctx = await browser.newContext({
       userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 ' +
-                 '(KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1',
+                 '(KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1' + uaSuffix,
       viewport: { width: 390, height: 844 },
     });
     const iphonePage = await ctx.newPage();
@@ -112,6 +112,23 @@ const fail = (m) => { console.log('  ❌ ' + m); failed++; process.exitCode = 1;
   else fail('iOS: il banner ricompare dopo il reload — la chiusura non viene ricordata');
   await iphone2.close();
 
+  // 5. iPhone dentro il browser interno di un social: lì "Aggiungi alla schermata Home"
+  //    non esiste proprio, quindi quelle istruzioni sono ineseguibili. L'unica cosa utile
+  //    da dire è di riaprire il link in Safari.
+  const { ctx: iphone3, page: ip3 } = await openIphone(' Instagram 312.0.0.32.111');
+  const bannerBtn = ip3.locator('.install-banner button', { hasText: /Install/i }).first();
+  if (await bannerBtn.isVisible().catch(() => false)) pass('iOS in-app: il banner compare anche nel browser di un social');
+  else fail('iOS in-app: il banner non compare nel browser di un social');
+  await bannerBtn.click().catch(() => {});
+  const diceSafari = await ip3.locator('text=/Open in Safari|Apri in Safari/i').first()
+    .waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false);
+  if (diceSafari) pass('iOS in-app: le istruzioni dicono di riaprire il link in Safari');
+  else fail('iOS in-app: non dice di aprire in Safari');
+  const diceHome = await ip3.locator('text=/Add to Home Screen|schermata Home/i').first()
+    .isVisible().catch(() => false);
+  if (!diceHome) pass('iOS in-app: non mostra istruzioni ineseguibili da lì');
+  else fail('iOS in-app: mostra ancora "Aggiungi alla schermata Home", che lì non esiste');
+  await iphone3.close();
   await browser.close();
   console.log(`\nRisultato: ${passed} passati, ${failed} falliti`);
 })();
