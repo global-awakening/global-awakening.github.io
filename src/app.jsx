@@ -264,7 +264,7 @@
               type: "Type",
               sacredNumber: "Sacred Number",
               date: "Date",
-              time: "Time (UTC)",
+              time: "Time",
               duration: "Duration (minutes)",
               create: "Create Ritual",
               cancel: "Cancel"
@@ -594,7 +594,7 @@
               type: "Tipo",
               sacredNumber: "Numero Sacro",
               date: "Data",
-              time: "Ora (UTC)",
+              time: "Ora",
               duration: "Durata (minuti)",
               create: "Crea Rituale",
               cancel: "Annulla"
@@ -2969,6 +2969,17 @@
               return;
             }
 
+            // Il modulo raccoglie data e ora nel fuso di chi scrive; il database vuole UTC.
+            // Senza questa conversione le 21:00 di Roma finivano salvate come 21:00 UTC, cioè
+            // le 23:00 locali — e lo scarto cambiava da solo al cambio dell'ora legale.
+            const istanteLocale = new Date(`${newRitual.date}T${newRitual.time}`);
+            if (isNaN(istanteLocale.getTime())) {
+              alert('Please fill in name, date and time.');
+              return;
+            }
+            const dataUtc = istanteLocale.toISOString().slice(0, 10);
+            const oraUtc = istanteLocale.toISOString().slice(11, 16);
+
             const ritualData = {
               creator: nickname || 'Anonymous',
               creator_id: sessionId,
@@ -2976,8 +2987,8 @@
               description: newRitual.description,
               type: newRitual.type,
               sacred_number: newRitual.sacredNumber,
-              date: newRitual.date,
-              time: newRitual.time,
+              date: dataUtc,
+              time: oraUtc,
               duration: newRitual.duration,
               participants: [sessionId],
               energy: 0
@@ -3085,6 +3096,20 @@
             
             if (hours > 0) return `${hours}h ${minutes}m`;
             return `${minutes}m`;
+          };
+
+          // Data e ora del rituale nel fuso di chi guarda. Nel database restano in UTC:
+          // un rituale mondiale è un istante solo, che ognuno legge sul proprio orologio.
+          const formatRitualWhen = (ritual) => {
+            const istante = new Date(`${ritual.date}T${ritual.time}Z`);
+            if (isNaN(istante.getTime())) return `${ritual.date} ${ritual.time}`;
+            // dateStyle/timeStyle non si possono combinare con timeZoneName: Intl lancia
+            // "Invalid option : option" e la pagina va in bianco. Opzioni per componenti.
+            return new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB', {
+              day: '2-digit', month: 'short', year: 'numeric',
+              hour: '2-digit', minute: '2-digit', hour12: false,
+              timeZoneName: 'short'
+            }).format(istante);
           };
 
           // Musica di sottofondo. Suona solo quando una sessione è davvero in corso: un rituale
@@ -3804,7 +3829,7 @@ ${ritual.description || ''}` })}
 
                             <div className="flex items-center gap-2 mb-3">
                               <Calendar style={{width: '1rem', height: '1rem', color: '#a78bfa'}} />
-                              <span className="text-primary text-sm">{ritual.date} {ritual.time} UTC</span>
+                              <span className="text-primary text-sm">{formatRitualWhen(ritual)}</span>
                             </div>
 
                             <div className="flex items-center justify-between mb-4">
