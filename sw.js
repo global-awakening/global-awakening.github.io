@@ -1,7 +1,7 @@
 // Service worker PWA Global Awakening.
 // Strategia: network-first per navigazione/app.html/app.js (aggiornamenti sempre freschi,
 // cache solo come fallback offline), cache-first per CDN immutabili e icone, no-cache per Supabase/EmailJS.
-const CACHE = 'ga-pwa-v5';
+const CACHE = 'ga-pwa-v6';
 const PRECACHE = [
   'app.html', 'app.js', 'index.html', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
@@ -35,6 +35,11 @@ self.addEventListener('fetch', (e) => {
 
   // Supabase / EmailJS: sempre rete, mai cache (dati freschi; offline -> errore gestito dall'app)
   if (/supabase\.co$/.test(url.hostname) || /emailjs\.com$/.test(url.hostname)) return;
+
+  // Audio: file grandi (il brano dei rituali pesa 18 MB). Fuori dalla cache offline, altrimenti
+  // se li porta sul telefono chiunque installi l'app. Vanno sempre in rete, con la cache HTTP
+  // del browser a fare da cuscino sui riascolti.
+  if (/\.(mp3|ogg|m4a|wav)$/i.test(url.pathname)) return;
 
   // Navigazione, app.html e app.js (codice dell'app): network-first, fallback cache.
   // app.js DEVE essere preso fresco, altrimenti le PWA installate restano sulla versione vecchia.
