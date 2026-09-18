@@ -345,6 +345,10 @@ const translations = {
     pwaIosTitle: "Install on iPhone",
     pwaIosBody: "Tap Share ⬆️ then \"Add to Home Screen\".",
     pwaIosClose: "Got it",
+    musicCredit: "Music by",
+    musicFrom: "from",
+    musicMute: "Mute music",
+    musicUnmute: "Unmute music",
     pwaIosBrowserTitle: "Open in Safari",
     pwaIosBrowserBody: "You can't install the app from here. Tap \"•••\" at the top right, choose \"Open in Safari\" and try again.",
     pwaBannerText: "Keep Global Awakening on your phone",
@@ -688,6 +692,10 @@ const translations = {
     pwaIosTitle: "Installa su iPhone",
     pwaIosBody: "Tocca Condividi ⬆️ poi \"Aggiungi alla schermata Home\".",
     pwaIosClose: "Ho capito",
+    musicCredit: "Musica di",
+    musicFrom: "da",
+    musicMute: "Silenzia la musica",
+    musicUnmute: "Riattiva la musica",
     pwaIosBrowserTitle: "Apri in Safari",
     pwaIosBrowserBody: "Da qui l'app non si può installare. Tocca «•••» in alto a destra, scegli «Apri in Safari» e riprova.",
     pwaBannerText: "Tieni Risveglio Globale sul telefono",
@@ -3250,6 +3258,58 @@ function GlobalAwakeningPlatform() {
     if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
   };
+  const MUSIC_SRC = 'assets/meditation-music-rockot.mp3';
+  const MUSIC_VOLUME = 0.35;
+  const musicRef = React.useRef(null);
+  const [musicMuted, setMusicMuted] = useState(() => {
+    try {
+      return localStorage.getItem('ga_music_muted') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleMusic = () => {
+    setMusicMuted(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('ga_music_muted', next ? '1' : '0');
+      } catch {}
+      return next;
+    });
+  };
+  const inLiveRitual = rituals.some(r => Array.isArray(r.participants) && r.participants.includes(sessionId) && getRitualStatus(r) === 'live');
+  const inTelepathySession = !!partner && !sessionEnded;
+  const musicOn = (inLiveRitual || inTelepathySession) && !musicMuted;
+  React.useEffect(() => {
+    const el = musicRef.current;
+    if (!el) return;
+    let annullato = false;
+    const dissolvi = (verso, poi) => {
+      const passo = () => {
+        if (annullato || !musicRef.current) return;
+        const delta = verso - el.volume;
+        if (Math.abs(delta) < 0.03) {
+          el.volume = verso;
+          if (poi) poi();
+          return;
+        }
+        el.volume = Math.max(0, Math.min(1, el.volume + (delta > 0 ? 0.03 : -0.03)));
+        setTimeout(passo, 60);
+      };
+      passo();
+    };
+    if (musicOn) {
+      el.volume = 0;
+      const p = el.play();
+      if (p && p.catch) p.catch(() => {});
+      dissolvi(MUSIC_VOLUME);
+    } else if (!el.paused) {
+      dissolvi(0, () => el.pause());
+    }
+    return () => {
+      annullato = true;
+    };
+  }, [musicOn]);
   const toggleRitualComments = async ritualId => {
     if (expandedRitualId === ritualId) {
       setExpandedRitualId(null);
@@ -3412,7 +3472,27 @@ function GlobalAwakeningPlatform() {
       display: 'inline-flex',
       alignItems: 'center'
     }
-  }, t.reportIssue), !isStandalone && (deferredPrompt || isIos) && React.createElement(React.Fragment, null, React.createElement("span", {
+  }, t.reportIssue), React.createElement("span", {
+    style: {
+      margin: '0 0.4rem'
+    }
+  }, "\xB7"), React.createElement("span", null, t.musicCredit, ' ', React.createElement("a", {
+    href: "https://pixabay.com/users/rockot-1947599/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=184575",
+    target: "_blank",
+    rel: "noopener noreferrer",
+    style: {
+      color: '#a78bfa',
+      textDecoration: 'underline'
+    }
+  }, "Rockot"), ' ', t.musicFrom, ' ', React.createElement("a", {
+    href: "https://pixabay.com/music/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=184575",
+    target: "_blank",
+    rel: "noopener noreferrer",
+    style: {
+      color: '#a78bfa',
+      textDecoration: 'underline'
+    }
+  }, "Pixabay")), !isStandalone && (deferredPrompt || isIos) && React.createElement(React.Fragment, null, React.createElement("span", {
     style: {
       margin: '0 0.4rem'
     }
@@ -3880,7 +3960,14 @@ function GlobalAwakeningPlatform() {
     style: {
       position: 'relative'
     }
-  }, React.createElement("button", {
+  }, (inLiveRitual || inTelepathySession) && React.createElement("button", {
+    onClick: toggleMusic,
+    className: "btn-secondary px-3 py-2",
+    style: {
+      fontSize: '0.8rem'
+    },
+    "aria-label": musicMuted ? t.musicUnmute : t.musicMute
+  }, musicMuted ? '🔇' : '🔊'), React.createElement("button", {
     onClick: () => setShowNotifPanel(p => !p),
     className: "btn-secondary px-3 py-2",
     style: {
@@ -6512,7 +6599,12 @@ ${ritual.description || ''}`
     onClick: createRitual,
     className: "btn-primary w-full",
     disabled: savingContent
-  }, savingContent ? '…' : t.rituals.create))))), renderFooter(), renderPrivacyModal());
+  }, savingContent ? '…' : t.rituals.create))))), React.createElement("audio", {
+    ref: musicRef,
+    src: MUSIC_SRC,
+    loop: true,
+    preload: "none"
+  }), renderFooter(), renderPrivacyModal());
 }
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(React.createElement(GlobalAwakeningPlatform));

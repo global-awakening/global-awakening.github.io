@@ -150,6 +150,10 @@
             pwaIosTitle: "Install on iPhone",
             pwaIosBody: "Tap Share ⬆️ then \"Add to Home Screen\".",
             pwaIosClose: "Got it",
+            musicCredit: "Music by",
+            musicFrom: "from",
+            musicMute: "Mute music",
+            musicUnmute: "Unmute music",
             pwaIosBrowserTitle: "Open in Safari",
             pwaIosBrowserBody: "You can't install the app from here. Tap \"•••\" at the top right, choose \"Open in Safari\" and try again.",
             pwaBannerText: "Keep Global Awakening on your phone",
@@ -476,6 +480,10 @@
             pwaIosTitle: "Installa su iPhone",
             pwaIosBody: "Tocca Condividi ⬆️ poi \"Aggiungi alla schermata Home\".",
             pwaIosClose: "Ho capito",
+            musicCredit: "Musica di",
+            musicFrom: "da",
+            musicMute: "Silenzia la musica",
+            musicUnmute: "Riattiva la musica",
             pwaIosBrowserTitle: "Apri in Safari",
             pwaIosBrowserBody: "Da qui l'app non si può installare. Tocca «•••» in alto a destra, scegli «Apri in Safari» e riprova.",
             pwaBannerText: "Tieni Risveglio Globale sul telefono",
@@ -3079,6 +3087,55 @@
             return `${minutes}m`;
           };
 
+          // Musica di sottofondo. Suona solo quando una sessione è davvero in corso: un rituale
+          // a cui si partecipa mentre è live, oppure una sessione di telepatia. Mai all'apertura
+          // dell'app — un suono che parte da solo su un telefono in mezzo agli altri fa chiudere
+          // la pagina, e i browser lo bloccherebbero comunque senza un gesto dell'utente.
+          const MUSIC_SRC = 'assets/meditation-music-rockot.mp3';
+          const MUSIC_VOLUME = 0.35;
+          const musicRef = React.useRef(null);
+          const [musicMuted, setMusicMuted] = useState(() => {
+            try { return localStorage.getItem('ga_music_muted') === '1'; } catch { return false; }
+          });
+          const toggleMusic = () => {
+            setMusicMuted(prev => {
+              const next = !prev;
+              try { localStorage.setItem('ga_music_muted', next ? '1' : '0'); } catch { /* Safari privato: pazienza */ }
+              return next;
+            });
+          };
+          const inLiveRitual = rituals.some(r =>
+            Array.isArray(r.participants) && r.participants.includes(sessionId) && getRitualStatus(r) === 'live');
+          const inTelepathySession = !!partner && !sessionEnded;
+          const musicOn = (inLiveRitual || inTelepathySession) && !musicMuted;
+          React.useEffect(() => {
+            const el = musicRef.current;
+            if (!el) return;
+            // Dissolvenza: un audio che parte a volume pieno o si tronca di netto rompe proprio
+            // l'atmosfera per cui la musica c'è.
+            let annullato = false;
+            const dissolvi = (verso, poi) => {
+              const passo = () => {
+                if (annullato || !musicRef.current) return;
+                const delta = verso - el.volume;
+                if (Math.abs(delta) < 0.03) { el.volume = verso; if (poi) poi(); return; }
+                el.volume = Math.max(0, Math.min(1, el.volume + (delta > 0 ? 0.03 : -0.03)));
+                setTimeout(passo, 60);
+              };
+              passo();
+            };
+            if (musicOn) {
+              el.volume = 0;
+              const p = el.play();
+              // senza un gesto dell'utente il browser può rifiutare: non è un errore da mostrare
+              if (p && p.catch) p.catch(() => {});
+              dissolvi(MUSIC_VOLUME);
+            } else if (!el.paused) {
+              dissolvi(0, () => el.pause());
+            }
+            return () => { annullato = true; };
+          }, [musicOn]);
+
           const toggleRitualComments = async (ritualId) => {
             if (expandedRitualId === ritualId) { setExpandedRitualId(null); return; }
             setExpandedRitualId(ritualId);
@@ -3187,6 +3244,17 @@
                  style={{color: '#a78bfa', textDecoration: 'underline', cursor: 'pointer', minHeight: '40px', display: 'inline-flex', alignItems: 'center'}}>
                 {t.reportIssue}
               </a>
+              <span style={{margin: '0 0.4rem'}}>·</span>
+              <span>
+                {t.musicCredit}{' '}
+                <a href="https://pixabay.com/users/rockot-1947599/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=184575"
+                   target="_blank" rel="noopener noreferrer"
+                   style={{color: '#a78bfa', textDecoration: 'underline'}}>Rockot</a>
+                {' '}{t.musicFrom}{' '}
+                <a href="https://pixabay.com/music/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=184575"
+                   target="_blank" rel="noopener noreferrer"
+                   style={{color: '#a78bfa', textDecoration: 'underline'}}>Pixabay</a>
+              </span>
               {!isStandalone && (deferredPrompt || isIos) && (
                 <>
                   <span style={{margin: '0 0.4rem'}}>·</span>
@@ -3505,6 +3573,16 @@
                         </span>
                       )}
                       <div style={{position: 'relative'}}>
+                        {(inLiveRitual || inTelepathySession) && (
+                          <button
+                            onClick={toggleMusic}
+                            className="btn-secondary px-3 py-2"
+                            style={{fontSize: '0.8rem'}}
+                            aria-label={musicMuted ? t.musicUnmute : t.musicMute}
+                          >
+                            {musicMuted ? '🔇' : '🔊'}
+                          </button>
+                        )}
                         <button
                           onClick={() => setShowNotifPanel(p => !p)}
                           className="btn-secondary px-3 py-2"
@@ -5160,6 +5238,9 @@ ${ritual.description || ''}` })}
                   </div>
                 </div>
               )}
+
+              {/* preload="none": il brano pesa, non lo scarica chi non entra mai in una sessione */}
+              <audio ref={musicRef} src={MUSIC_SRC} loop preload="none" />
               {renderFooter()}
               {renderPrivacyModal()}
             </div>
