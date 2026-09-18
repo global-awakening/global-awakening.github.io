@@ -345,6 +345,8 @@ const translations = {
     pwaIosTitle: "Install on iPhone",
     pwaIosBody: "Tap Share ⬆️ then \"Add to Home Screen\".",
     pwaIosClose: "Got it",
+    pwaBannerText: "Keep Global Awakening on your phone",
+    pwaBannerClose: "Close",
     setPassword: "Set Password",
     changePassword: "Change Password",
     passwordSet: "Password set!",
@@ -684,6 +686,8 @@ const translations = {
     pwaIosTitle: "Installa su iPhone",
     pwaIosBody: "Tocca Condividi ⬆️ poi \"Aggiungi alla schermata Home\".",
     pwaIosClose: "Ho capito",
+    pwaBannerText: "Tieni Risveglio Globale sul telefono",
+    pwaBannerClose: "Chiudi",
     setPassword: "Imposta Password",
     changePassword: "Cambia Password",
     passwordSet: "Password impostata!",
@@ -1039,6 +1043,19 @@ function GlobalAwakeningPlatform() {
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [showIosInstall, setShowIosInstall] = useState(false);
+  const [installBannerDismissed, setInstallBannerDismissed] = useState(() => {
+    try {
+      return localStorage.getItem('ga_install_banner_dismissed') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const dismissInstallBanner = () => {
+    setInstallBannerDismissed(true);
+    try {
+      localStorage.setItem('ga_install_banner_dismissed', '1');
+    } catch {}
+  };
   const isStandalone = typeof window !== 'undefined' && (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true);
   const isIos = typeof navigator !== 'undefined' && /iphone|ipad|ipod/i.test(navigator.userAgent);
   useEffect(() => {
@@ -3407,6 +3424,38 @@ function GlobalAwakeningPlatform() {
       minHeight: '40px'
     }
   }, t.pwaInstall)));
+  const renderIosInstallModal = () => showIosInstall && React.createElement("div", {
+    className: "modal-overlay",
+    onClick: () => setShowIosInstall(false),
+    style: {
+      zIndex: 70
+    }
+  }, React.createElement("div", {
+    className: "modal-content",
+    onClick: e => e.stopPropagation(),
+    style: {
+      maxWidth: '22rem'
+    }
+  }, React.createElement("h3", {
+    className: "text-xl font-bold text-white mb-2"
+  }, t.pwaIosTitle), React.createElement("p", {
+    className: "text-secondary text-sm mb-4"
+  }, t.pwaIosBody), React.createElement("button", {
+    className: "btn-primary w-full",
+    onClick: () => setShowIosInstall(false)
+  }, t.pwaIosClose)));
+  const renderInstallBanner = (variant = '') => !isStandalone && (deferredPrompt || isIos) && !installBannerDismissed && React.createElement("div", {
+    className: 'install-banner ' + variant
+  }, React.createElement("button", {
+    className: "install-banner-close",
+    "aria-label": t.pwaBannerClose,
+    onClick: dismissInstallBanner
+  }, "\u2715"), React.createElement("span", {
+    className: "install-banner-text"
+  }, t.pwaBannerText), React.createElement("button", {
+    className: "btn-primary install-banner-cta",
+    onClick: handleInstall
+  }, t.pwaInstall));
   const renderPrivacyModal = () => showPrivacy && React.createElement("div", {
     className: "modal-overlay",
     onClick: () => setShowPrivacy(false)
@@ -3474,7 +3523,7 @@ function GlobalAwakeningPlatform() {
       style: {
         paddingBottom: '3.5rem'
       }
-    }, React.createElement("div", {
+    }, renderInstallBanner('install-banner--landing'), React.createElement("div", {
       className: "absolute top-4 right-4"
     }, React.createElement("button", {
       onClick: () => setLang(lang === 'en' ? 'it' : 'en'),
@@ -3759,7 +3808,7 @@ function GlobalAwakeningPlatform() {
         color: '#4ade80'
       },
       className: "font-bold"
-    }, loginSuccess)))), renderFooter(), renderPrivacyModal());
+    }, loginSuccess)))), renderFooter(), renderPrivacyModal(), renderIosInstallModal());
   }
   return React.createElement("div", {
     className: "min-h-screen bg-gradient app-shell",
@@ -3929,6 +3978,11 @@ function GlobalAwakeningPlatform() {
       fontSize: '0.8rem'
     }
   }, t.logout))))), React.createElement("div", {
+    className: "container",
+    style: {
+      paddingTop: '1rem'
+    }
+  }, renderInstallBanner()), React.createElement("div", {
     className: "container py-3"
   }, React.createElement("div", {
     className: "bg-glass rounded-2xl p-4 border-glass",
@@ -6277,26 +6331,7 @@ ${ritual.description || ''}`
       handleLogout();
     },
     className: "btn-primary"
-  }, t.logoutConfirmYes)))), showIosInstall && React.createElement("div", {
-    className: "modal-overlay",
-    onClick: () => setShowIosInstall(false),
-    style: {
-      zIndex: 70
-    }
-  }, React.createElement("div", {
-    className: "modal-content",
-    onClick: e => e.stopPropagation(),
-    style: {
-      maxWidth: '22rem'
-    }
-  }, React.createElement("h3", {
-    className: "text-xl font-bold text-white mb-2"
-  }, t.pwaIosTitle), React.createElement("p", {
-    className: "text-secondary text-sm mb-4"
-  }, t.pwaIosBody), React.createElement("button", {
-    className: "btn-primary w-full",
-    onClick: () => setShowIosInstall(false)
-  }, t.pwaIosClose))), showDeleteAccount && React.createElement("div", {
+  }, t.logoutConfirmYes)))), renderIosInstallModal(), showDeleteAccount && React.createElement("div", {
     className: "modal-overlay",
     onClick: () => !gdprBusy && setShowDeleteAccount(false),
     style: {

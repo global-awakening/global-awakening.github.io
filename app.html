@@ -313,6 +313,39 @@
         .left-0 { left: 0; }
         .bottom-0 { bottom: 0; }
         .z-50 { z-index: 50; }
+        /* Invito a installare la PWA. Sta nel flusso, sopra il contenuto: niente
+           position:fixed, così non litiga con l'intestazione sticky né con la nav in basso. */
+        .install-banner {
+            position: relative;
+            width: 100%; max-width: 28rem;
+            margin: 0 auto 1rem;
+            padding: 0.85rem 2.75rem 0.85rem 1rem;
+            display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 0.75rem;
+            background: linear-gradient(135deg, rgba(124, 58, 237, 0.95), rgba(76, 29, 149, 0.95));
+            border: 1px solid rgba(167, 139, 250, 0.45);
+            border-radius: 1rem;
+            box-shadow: 0 6px 20px rgba(76, 29, 149, 0.35);
+        }
+        /* Sulla schermata di ingresso il selettore della lingua sta in alto a destra,
+           in posizione assoluta: senza questo margine coprirebbe la ✕ del banner. */
+        .install-banner--landing { margin-top: 3.25rem; }
+        .install-banner-text {
+            flex: 1 1 11rem;
+            color: #fff; font-size: 0.92rem; line-height: 1.35; font-weight: 500;
+        }
+        .install-banner .install-banner-cta {
+            flex: 0 0 auto;
+            padding: 0.5rem 1.1rem; font-size: 0.9rem; min-height: 40px;
+            background: #fff; color: #5b21b6;
+        }
+        .install-banner .install-banner-cta:hover { background: #ede9fe; }
+        .install-banner-close {
+            position: absolute; top: 0.15rem; right: 0.15rem;
+            background: none; border: none; color: rgba(255, 255, 255, 0.8);
+            font-size: 0.95rem; line-height: 1; cursor: pointer;
+            min-width: 40px; min-height: 40px;
+        }
+        .install-banner-close:hover { color: #fff; }
         .app-footer {
             position: fixed; bottom: 0; left: 0; right: 0;
             text-align: center; padding: 0.5rem 1rem;
