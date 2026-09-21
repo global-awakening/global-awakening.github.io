@@ -2026,6 +2026,12 @@
           }, [magicToken]);
 
           const handleLogout = () => {
+            // Le notifiche push restano legate al TELEFONO, non alla persona: senza questa
+            // pulizia, chi entra dopo sullo stesso telefono continuerebbe a ricevere
+            // «Luna piena sta iniziando ora» per i rituali di chi è appena uscito — col nome
+            // del rituale in chiaro sulla schermata di blocco. E chi è uscito smetterebbe di
+            // ricevere le sue notifiche senza saperlo.
+            spegniPushAlLogout();
             localStorage.removeItem('ga_nickname');
             localStorage.removeItem('ga_email');
             localStorage.removeItem('ga_is_guest');
@@ -3115,18 +3121,52 @@
               applicationServerKey: b64UrlToUint8(VAPID_PUBLIC_KEY)
             });
             const j = sub.toJSON();
-            await supabase.rpc('register_push_subscription', {
+            // Il client Supabase fatto a mano NON solleva: ritorna { data, error }. Senza
+            // questo controllo l'app dichiarava le notifiche attive anche quando sul server
+            // non era stata scritta nessuna riga — interruttore verde e nessun abbonamento.
+            const { error } = await supabase.rpc('register_push_subscription', {
               p_session_id: sessionId,
               p_endpoint: sub.endpoint,
               p_p256dh: j.keys.p256dh,
               p_auth: j.keys.auth,
               p_locale: lang === 'it' ? 'it' : 'en'
             });
+            if (error) throw new Error('registrazione push non riuscita');
+
             await salvaConfigPush();
             localStorage.removeItem('ga_push_spento');
             localStorage.removeItem('ga_push_rifiutato_il');
             setPushAttive(true);
           };
+
+          // Uscita dall'account: si disfa l'abbonamento SENZA scrivere il segno di
+          // spegnimento, perché non è una scelta di chi entrerà dopo su questo telefono.
+          const spegniPushAlLogout = () => {
+            setPushAttive(false);
+            (async () => {
+              try {
+                const reg = await navigator.serviceWorker.ready;
+                const sub = await reg.pushManager.getSubscription();
+                if (sub) {
+                  await supabase.rpc('delete_push_subscription', { p_endpoint: sub.endpoint });
+                  await sub.unsubscribe();
+                }
+              } catch (_) { /* niente da disfare */ }
+              // La config serve al service worker per ri-registrarsi da solo: lasciarla qui
+              // significherebbe farlo ri-registrare col sessionId di chi è uscito.
+              try { await caches.delete('ga-push-config'); } catch (_) {}
+            })();
+          };
+
+          // La config lasciata al service worker va tenuta al passo con l'identità e la lingua
+          // correnti. Senza, al primo rinnovo dell'indirizzo il service worker ri-registrerebbe
+          // l'abbonamento con il sessionId di PRIMA — tipicamente quello da ospite, dopo che la
+          // persona si è registrata — sovrascrivendo quello giusto: la persona smette di
+          // ricevere notifiche e niente lo segnala. Stessa cosa per la lingua.
+          React.useEffect(() => {
+            if (!pushAttive || !sessionId) return;
+            salvaConfigPush();
+          }, [sessionId, lang, pushAttive]);
 
           const spegniPush = async () => {
             // Il segno in localStorage viene prima di tutto: è quello che distingue uno
@@ -3172,6 +3212,16 @@
 
           const rispondiPush = async (si) => {
             setChiediPush(false);
+            // Guardia indispensabile: questa funzione è anche l'onClick dell'interruttore nel
+            // profilo, e su iPhone in Safari non installato `Notification` non esiste. Senza il
+            // controllo, il tocco sollevava un TypeError dentro una promise: il bottone non
+            // faceva nulla, nessun messaggio, nessuna spiegazione.
+            if (!pushDisponibile()) {
+              const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+              const installata = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+              if (iOS && !installata) setMostraInstallaPerPush(true);
+              return;
+            }
             if (!si) {
               // Un no nostro, non del browser: fra sette giorni si può ri-proporre.
               localStorage.setItem('ga_push_rifiutato_il', new Date().toISOString());

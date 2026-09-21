@@ -92,14 +92,36 @@ self.addEventListener('push', (e) => {
     let payload = {};
     try { payload = e.data ? e.data.json() : {}; } catch (_) { payload = {}; }
 
-    const n = self.PushHelpers.costruisciNotifica(payload);
-    await self.registration.showNotification(n.titolo, {
-      body: n.corpo,
-      tag: n.tag,
-      icon: 'icons/icon-192.png',
-      badge: 'icons/icon-192.png',
-      data: { url: n.url }
-    });
+    // Ripiego assoluto. costruisciNotifica non solleva su payload storti, ma self.PushHelpers
+    // puo' essere undefined se importScripts non e' andato a buon fine (file fuori cache e
+    // rete assente, o deploy parziale). In quel caso, senza questo try, non verrebbe mostrata
+    // NESSUNA notifica — che e' esattamente la condizione che fa mostrare al browser la sua
+    // notifica generica di sistema e, a forza di quelle, revocarci il permesso.
+    let n;
+    try {
+      n = self.PushHelpers.costruisciNotifica(payload);
+    } catch (_) {
+      n = {
+        titolo: 'Global Awakening',
+        corpo: payload && payload.locale === 'it' ? 'Un rituale sta iniziando.' : 'A ritual is starting.',
+        tag: 'rituale-ripiego',
+        url: 'app.html'
+      };
+    }
+
+    try {
+      await self.registration.showNotification(n.titolo, {
+        body: n.corpo,
+        tag: n.tag,
+        icon: 'icons/icon-192.png',
+        badge: 'icons/icon-192.png',
+        data: { url: n.url }
+      });
+    } catch (_) {
+      // Anche showNotification puo' rigettare (opzioni non supportate su qualche browser).
+      // Meglio una notifica scarna che nessuna notifica.
+      await self.registration.showNotification('Global Awakening', { body: n.corpo });
+    }
   })());
 });
 

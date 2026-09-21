@@ -2290,6 +2290,7 @@ function GlobalAwakeningPlatform() {
     loginWithMagicToken();
   }, [magicToken]);
   const handleLogout = () => {
+    spegniPushAlLogout();
     localStorage.removeItem('ga_nickname');
     localStorage.removeItem('ga_email');
     localStorage.removeItem('ga_is_guest');
@@ -3266,18 +3267,43 @@ function GlobalAwakeningPlatform() {
       applicationServerKey: b64UrlToUint8(VAPID_PUBLIC_KEY)
     }));
     const j = sub.toJSON();
-    await supabase.rpc('register_push_subscription', {
+    const {
+      error
+    } = await supabase.rpc('register_push_subscription', {
       p_session_id: sessionId,
       p_endpoint: sub.endpoint,
       p_p256dh: j.keys.p256dh,
       p_auth: j.keys.auth,
       p_locale: lang === 'it' ? 'it' : 'en'
     });
+    if (error) throw new Error('registrazione push non riuscita');
     await salvaConfigPush();
     localStorage.removeItem('ga_push_spento');
     localStorage.removeItem('ga_push_rifiutato_il');
     setPushAttive(true);
   };
+  const spegniPushAlLogout = () => {
+    setPushAttive(false);
+    (async () => {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await supabase.rpc('delete_push_subscription', {
+            p_endpoint: sub.endpoint
+          });
+          await sub.unsubscribe();
+        }
+      } catch (_) {}
+      try {
+        await caches.delete('ga-push-config');
+      } catch (_) {}
+    })();
+  };
+  React.useEffect(() => {
+    if (!pushAttive || !sessionId) return;
+    salvaConfigPush();
+  }, [sessionId, lang, pushAttive]);
   const spegniPush = async () => {
     localStorage.setItem('ga_push_spento', '1');
     setPushAttive(false);
@@ -3313,6 +3339,12 @@ function GlobalAwakeningPlatform() {
   };
   const rispondiPush = async si => {
     setChiediPush(false);
+    if (!pushDisponibile()) {
+      const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      const installata = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+      if (iOS && !installata) setMostraInstallaPerPush(true);
+      return;
+    }
     if (!si) {
       localStorage.setItem('ga_push_rifiutato_il', new Date().toISOString());
       return;

@@ -47,15 +47,20 @@ const STUB = `
   }
 
   if (typeof PushManager !== 'undefined') {
-    PushManager.prototype.getSubscription = async function () { return null; };
+    // Lo stub ricorda l'abbonamento, come fa un browser vero: se getSubscription tornasse
+    // sempre null, lo spegnimento e il logout non troverebbero niente da disfare e i controlli
+    // relativi passerebbero — o fallirebbero — per il motivo sbagliato.
+    window.__subFinta = null;
+    PushManager.prototype.getSubscription = async function () { return window.__subFinta; };
     PushManager.prototype.subscribe = async function () {
       window.__push.subscribeChiamato++;
       const endpoint = 'https://fcm.googleapis.com/fcm/send/finto_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-      return {
+      window.__subFinta = {
         endpoint,
         toJSON: () => ({ endpoint, keys: { p256dh: 'p256dh_finta', auth: 'auth_finta' } }),
-        unsubscribe: async () => true
+        unsubscribe: async () => { window.__subFinta = null; return true; }
       };
+      return window.__subFinta;
     };
   }
 `;
@@ -81,6 +86,14 @@ async function creaRitualeDiProva() {
   const corpo = await res.json();
   if (!Array.isArray(corpo) || !corpo[0]) throw new Error('rituale di prova non creato: ' + JSON.stringify(corpo));
   return corpo[0].id;
+}
+
+/** Le righe scritte dallo stub, riconoscibili dall'endpoint. Serve a non fidarsi dello stub. */
+async function righeConEndpointFinto() {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/push_subscriptions?endpoint=like.*fcm.googleapis.com/fcm/send/finto_*&select=id,endpoint,session_id`,
+    { headers: { apikey: KEY, Authorization: `Bearer ${KEY}` } });
+  return await res.json();
 }
 
 async function pulisci(ritualeId) {
@@ -177,6 +190,26 @@ async function entraEPartecipa(page, nick) {
       const spento = await page.evaluate(() => localStorage.getItem('ga_push_spento'));
       spento === null ? ok('dopo l\'iscrizione il segno di spegnimento è pulito')
                       : ko('dopo l\'iscrizione il segno di spegnimento è pulito', spento);
+
+      // Il controllo che mancava: che la riga sia arrivata DAVVERO sul server. Senza, il test
+      // restava verde anche con la RPC completamente rotta — bastava che lo stub di subscribe
+      // fosse stato chiamato. Era il falso verde più costoso della suite.
+      const righe = await righeConEndpointFinto();
+      righe.length >= 1
+        ? ok('l\'abbonamento è stato scritto davvero nel database')
+        : ko('l\'abbonamento è stato scritto davvero nel database', 'nessuna riga');
+
+      // Uscendo dall'account l'abbonamento deve sparire, altrimenti chi entra dopo sullo stesso
+      // telefono riceve le notifiche dei rituali di chi è uscito.
+      // Il logout passa da un dialogo di conferma: il primo click lo apre, il secondo esce.
+      await page.locator('button:has-text("Logout"), button:has-text("Esci")').first().click();
+      await page.waitForTimeout(400);
+      await page.locator('.modal-content button').last().click();
+      await page.waitForTimeout(2500);
+      const dopoLogout = await righeConEndpointFinto();
+      dopoLogout.length === 0
+        ? ok('il logout cancella l\'abbonamento push')
+        : ko('il logout cancella l\'abbonamento push', `rimaste ${dopoLogout.length} righe`);
 
       await ctx.close();
     }
