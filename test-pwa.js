@@ -130,5 +130,31 @@ const fail = (m) => { console.log('  ❌ ' + m); failed++; process.exitCode = 1;
   else fail('iOS in-app: mostra ancora "Aggiungi alla schermata Home", che lì non esiste');
   await iphone3.close();
   await browser.close();
+
+  // 5. Notifiche push: il service worker deve dichiarare i tre handler.
+  //    Si controlla il sorgente e non il comportamento perché un push vero non si può
+  //    innescare da Playwright: senza un servizio push reale non arriva nessun evento.
+  //    Questo non prova che le notifiche funzionino — prova che il codice per riceverle
+  //    non sia sparito, che è l'unica cosa che un test statico può onestamente garantire.
+  const fs = require('fs');
+  const swTesto = fs.readFileSync('sw.js', 'utf8');
+
+  for (const evento of ['push', 'notificationclick', 'pushsubscriptionchange']) {
+    if (swTesto.includes(`addEventListener('${evento}'`)) pass(`sw.js gestisce l'evento ${evento}`);
+    else fail(`sw.js non gestisce l'evento ${evento}`);
+  }
+
+  if (swTesto.includes("importScripts('push-helpers.js')")) pass('sw.js carica push-helpers.js');
+  else fail('sw.js non carica push-helpers.js');
+
+  // Se push-helpers.js non è nel precache, offline il service worker non parte affatto:
+  // importScripts fallisce e con lui tutto il resto, cache compresa.
+  const bloccoPrecache = swTesto.match(/PRECACHE\s*=\s*\[[\s\S]*?\]/);
+  if (bloccoPrecache && bloccoPrecache[0].includes('push-helpers.js')) pass('push-helpers.js è nel precache');
+  else fail('push-helpers.js manca dal PRECACHE: offline il service worker non partirebbe');
+
+  const rPh = await fetch(`${BASE}/push-helpers.js`);
+  if (rPh.ok) pass('push-helpers.js raggiungibile via HTTP'); else fail(`push-helpers.js HTTP ${rPh.status}`);
+
   console.log(`\nRisultato: ${passed} passati, ${failed} falliti`);
 })();
