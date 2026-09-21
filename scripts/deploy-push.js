@@ -73,7 +73,7 @@ function main() {
   }
 
   console.log(`Progetto Supabase: ${ref}`);
-  console.log('Funzione da pubblicare: notify-ritual-start');
+  console.log('Funzioni da pubblicare: notify-ritual-start, alert-cron');
   console.log('Segreti da caricare: VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT');
 
   if (prova) {
@@ -83,7 +83,8 @@ function main() {
 
   const ambiente = { ...process.env, SUPABASE_ACCESS_TOKEN: env.SUPABASE_ACCESS_TOKEN };
 
-  esegui('pubblico la Edge Function', ['functions', 'deploy', 'notify-ritual-start', '--project-ref', ref], ambiente);
+  esegui('pubblico il motore delle notifiche', ['functions', 'deploy', 'notify-ritual-start', '--project-ref', ref], ambiente);
+  esegui('pubblico la sentinella sui guasti',   ['functions', 'deploy', 'alert-cron', '--project-ref', ref], ambiente);
 
   esegui('carico i segreti VAPID', [
     'secrets', 'set',
@@ -94,7 +95,7 @@ function main() {
   ], ambiente);
 
   console.log('\n✅ Funzione pubblicata e segreti caricati.');
-  console.log('   Prossimo passo: i due segreti nel Vault, poi 23_cron_push.sql.');
+  console.log('   Prossimo passo: node scripts/apply-sql.js supabase/sql/23_cron_push.sql');
 }
 
 main();
