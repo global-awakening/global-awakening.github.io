@@ -205,6 +205,11 @@
             gdprDeleteError: "Deletion failed. Please try again.",
             tabs: { rituals: "Rituals", telepathy: "Telepathy", consciousness: "Consciousness" },
             showTelepathyScore: "Show telepathy score",
+            pushChiedi: "Want me to notify you when it starts?",
+            pushSi: "Yes, notify me",
+            pushNo: "Not now",
+            pushImpostazioni: "Notify me when a ritual starts",
+            pushIosInstalla: "To receive notifications, add the app to your Home Screen first.",
             editProfile: "Edit Profile",
             profile: {
               title: "Your Profile",
@@ -535,6 +540,11 @@
             gdprDeleteError: "Eliminazione non riuscita. Riprova.",
             tabs: { rituals: "Rituali", telepathy: "Telepatia", consciousness: "Coscienza" },
             showTelepathyScore: "Mostra punteggio telepatia",
+            pushChiedi: "Vuoi che ti avvisi quando inizia?",
+            pushSi: "Sì, avvisami",
+            pushNo: "Non ora",
+            pushImpostazioni: "Avvisami quando inizia un rituale",
+            pushIosInstalla: "Per ricevere le notifiche, aggiungi prima l'app alla schermata Home.",
             editProfile: "Modifica Profilo",
             profile: {
               title: "Il Tuo Profilo",
@@ -1046,6 +1056,18 @@
           const [showTelepathyScore, setShowTelepathyScore] = useState(() => {
             const stored = localStorage.getItem('ga_show_telepathy');
             return stored !== null ? stored === 'true' : true;
+          });
+
+          // Notifiche push: la nostra domanda prima del popup del browser, il messaggio per
+          // iPhone non installato, e lo stato dell'interruttore nel profilo.
+          const [chiediPush, setChiediPush] = useState(false);
+          const [mostraInstallaPerPush, setMostraInstallaPerPush] = useState(false);
+          const [pushAttive, setPushAttive] = useState(() => {
+            try {
+              return typeof Notification !== 'undefined'
+                && Notification.permission === 'granted'
+                && localStorage.getItem('ga_push_spento') !== '1';
+            } catch (_) { return false; }
           });
 
           // a11y (H6): l'attributo lang dell'<html> segue la lingua scelta (screen reader + pronuncia corretta).
@@ -3054,6 +3076,112 @@
             });
           };
 
+          // --- Notifiche push di avvio rituale --------------------------------------
+          // Il permesso del browser si chiede UNA VOLTA SOLA nella vita: se la persona dice no,
+          // il popup non ricompare mai più e per tornare indietro deve andare a mano nelle
+          // impostazioni di sistema. Per questo prima chiediamo NOI, dentro l'app, e apriamo il
+          // popup vero solo su un sì. Un rifiuto così resta nostro e ri-proponibile.
+
+          const pushDisponibile = () =>
+            typeof Notification !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window;
+
+          const b64UrlToUint8 = (b64) => {
+            const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+            const s = (b64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+            const raw = atob(s);
+            return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+          };
+
+          // Il service worker, quando il browser gli cambia l'indirizzo sotto i piedi, non vede
+          // localStorage. Gli lasciamo in una cache dedicata il minimo per ri-registrarsi da solo.
+          const salvaConfigPush = async () => {
+            try {
+              const c = await caches.open('ga-push-config');
+              await c.put('config', new Response(JSON.stringify({
+                url: SUPABASE_URL,
+                key: SUPABASE_KEY,
+                sessionId,
+                locale: lang === 'it' ? 'it' : 'en',
+                vapid: VAPID_PUBLIC_KEY
+              }), { headers: { 'Content-Type': 'application/json' } }));
+            } catch (_) { /* cache non disponibile: si riprova al prossimo avvio */ }
+          };
+
+          const iscriviPush = async () => {
+            const reg = await navigator.serviceWorker.ready;
+            const esistente = await reg.pushManager.getSubscription();
+            const sub = esistente || await reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: b64UrlToUint8(VAPID_PUBLIC_KEY)
+            });
+            const j = sub.toJSON();
+            await supabase.rpc('register_push_subscription', {
+              p_session_id: sessionId,
+              p_endpoint: sub.endpoint,
+              p_p256dh: j.keys.p256dh,
+              p_auth: j.keys.auth,
+              p_locale: lang === 'it' ? 'it' : 'en'
+            });
+            await salvaConfigPush();
+            localStorage.removeItem('ga_push_spento');
+            localStorage.removeItem('ga_push_rifiutato_il');
+            setPushAttive(true);
+          };
+
+          const spegniPush = async () => {
+            // Il segno in localStorage viene prima di tutto: è quello che distingue uno
+            // spegnimento voluto da un abbonamento che il browser ha buttato via da solo.
+            localStorage.setItem('ga_push_spento', '1');
+            setPushAttive(false);
+            try {
+              const reg = await navigator.serviceWorker.ready;
+              const sub = await reg.pushManager.getSubscription();
+              if (sub) {
+                await supabase.rpc('delete_push_subscription', { p_endpoint: sub.endpoint });
+                await sub.unsubscribe();
+              }
+            } catch (_) { /* se il browser l'ha già buttata via, il segno basta */ }
+          };
+
+          // Decide se e cosa chiedere al momento del «Partecipa». Non apre MAI il popup del
+          // browser da sola: quello parte solo dalla risposta affermativa alla nostra domanda.
+          const valutaPush = async () => {
+            if (!pushDisponibile()) {
+              // Su iPhone in Safari non installato l'oggetto Notification non esiste: non
+              // possiamo nemmeno CHIEDERE. Invece di tacere si spiega che l'app va prima
+              // aggiunta alla schermata Home — senza quel passo, su iOS le notifiche non
+              // esistono proprio.
+              const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+              const installata = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+              if (iOS && !installata) setMostraInstallaPerPush(true);
+              return;
+            }
+            if (localStorage.getItem('ga_push_spento') === '1') return;   // scelta esplicita, si rispetta
+            if (Notification.permission === 'denied') return;             // già bruciato: non si insiste
+
+            if (Notification.permission === 'granted') {
+              try { await iscriviPush(); } catch (_) { /* si riproverà */ }
+              return;
+            }
+
+            const rifiutatoIl = localStorage.getItem('ga_push_rifiutato_il');
+            if (rifiutatoIl && Date.now() - Date.parse(rifiutatoIl) < 7 * 24 * 60 * 60 * 1000) return;
+
+            setChiediPush(true);
+          };
+
+          const rispondiPush = async (si) => {
+            setChiediPush(false);
+            if (!si) {
+              // Un no nostro, non del browser: fra sette giorni si può ri-proporre.
+              localStorage.setItem('ga_push_rifiutato_il', new Date().toISOString());
+              return;
+            }
+            const esito = await Notification.requestPermission();
+            if (esito !== 'granted') return;
+            try { await iscriviPush(); } catch (_) { /* si riproverà al prossimo Partecipa */ }
+          };
+
           const joinRitual = async (ritualId) => {
             const ritual = rituals.find(r => r.id === ritualId);
             if (!ritual || ritual.participants.includes(sessionId)) return;
@@ -3065,6 +3193,7 @@
                 message: `${nickname} si è unito/a al tuo rituale "${ritual.name}"`
               });
             }
+            await valutaPush();
           };
 
           const sendEnergy = async (ritualId) => {
@@ -3795,6 +3924,27 @@
                       </div>
                     )}
 
+                    {/* La nostra domanda, prima del popup del browser. Compare solo dopo un
+                        «Partecipa»: è l'unico momento in cui la richiesta ha un senso evidente. */}
+                    {chiediPush && (
+                      <div data-test="push-chiedi" className="bg-glass rounded-2xl border-glass" style={{padding: '1rem 1.25rem', marginBottom: '1rem'}}>
+                        <p className="text-white text-sm" style={{marginTop: 0, marginBottom: '0.75rem'}}>{t.pushChiedi}</p>
+                        <div className="flex gap-2">
+                          <button data-test="push-si" onClick={() => rispondiPush(true)} className="btn-primary">{t.pushSi}</button>
+                          <button data-test="push-no" onClick={() => rispondiPush(false)} className="btn-secondary">{t.pushNo}</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* iPhone in Safari non installato: lì le notifiche non esistono proprio,
+                        e chiedere il permesso non è nemmeno possibile. */}
+                    {mostraInstallaPerPush && (
+                      <div data-test="push-installa-ios" className="bg-glass rounded-2xl border-glass" style={{padding: '1rem 1.25rem', marginBottom: '1rem'}}>
+                        <p className="text-white text-sm" style={{margin: 0}}>{t.pushIosInstalla}</p>
+                        <button onClick={() => setMostraInstallaPerPush(false)} className="btn-secondary" style={{marginTop: '0.75rem'}}>OK</button>
+                      </div>
+                    )}
+
                     <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem'}}>
                       {rituals.map(ritual => {
                         const status = getRitualStatus(ritual);
@@ -3844,6 +3994,7 @@ ${ritual.description || ''}` })}
 
                             <div className="flex gap-2 mb-3">
                               <button
+                                data-test="join-ritual"
                                 onClick={() => joinRitual(ritual.id)}
                                 className={isJoined ? 'btn-secondary flex-1' : 'btn-primary flex-1'}
                                 disabled={isJoined || status === 'ended'}
@@ -4546,6 +4697,40 @@ ${ritual.description || ''}` })}
                             top: '50%',
                             transform: 'translateY(-50%)',
                             left: showTelepathyScore ? 'calc(100% - 1.3rem)' : '0.15rem',
+                            transition: 'all 0.3s'
+                          }} />
+                        </button>
+                      </div>
+
+                      {/* Notifiche push di avvio rituale. Spegnerlo scrive un segno in
+                          localStorage: serve a distinguere uno spegnimento voluto — che non si
+                          annulla da solo al prossimo «Partecipa» — da un abbonamento che il
+                          browser ha buttato via per conto suo. */}
+                      <div className="flex items-center justify-between" style={{padding: '0.5rem 0'}}>
+                        <span className="text-white text-sm">{t.pushImpostazioni}</span>
+                        <button
+                          data-test="push-interruttore"
+                          onClick={() => (pushAttive ? spegniPush() : rispondiPush(true))}
+                          style={{
+                            width: '3rem',
+                            height: '1.5rem',
+                            borderRadius: '9999px',
+                            background: pushAttive ? 'rgba(34,197,94,0.5)' : 'rgba(255,255,255,0.2)',
+                            border: pushAttive ? '1px solid rgba(34,197,94,0.7)' : '1px solid rgba(255,255,255,0.3)',
+                            cursor: 'pointer',
+                            position: 'relative',
+                            transition: 'all 0.3s'
+                          }}
+                        >
+                          <div style={{
+                            width: '1.1rem',
+                            height: '1.1rem',
+                            borderRadius: '50%',
+                            background: '#fff',
+                            position: 'absolute',
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            left: pushAttive ? 'calc(100% - 1.3rem)' : '0.15rem',
                             transition: 'all 0.3s'
                           }} />
                         </button>
