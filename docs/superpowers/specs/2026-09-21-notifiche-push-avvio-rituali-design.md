@@ -31,6 +31,53 @@ descrive un progetto diverso da quello costruito è peggio di nessun documento.
 
 ---
 
+## 0-bis. Esito della review indipendente
+
+Un agente che non aveva scritto il codice ha esaminato l'intero ramo. Ogni rilievo è chiuso
+con una correzione o con un motivo scritto — nessuno con un'opinione.
+
+**Corretti**
+
+| Rilievo | Cosa sarebbe successo | Dove |
+|---|---|---|
+| Soglia «10 fallimenti → cancella» | Dieci minuti di 500 da FCM cancellavano **tutti** gli abbonamenti vivi in finestra, per sempre. Un 403 da chiave VAPID ruotata faceva lo stesso. | `esito.mjs`, `index.ts` |
+| «Doppio invio impossibile» era falso | La prenotazione veniva liberata anche su timeout: una consegna riuscita ma senza risposta veniva ripetuta fino a 15 volte. | `esito.mjs` |
+| Endpoint = qualunque URL https | Il server chiamava in POST host scelti da estranei, una volta al minuto. | `24_push_hardening.sql` |
+| Errore RPC ignorato dal client | Interruttore verde, nessun abbonamento sul server. | `src/app.jsx` |
+| Config del service worker stantia | Al rinnovo dell'indirizzo si riscriveva il `sessionId` da ospite sopra quello giusto: notifiche mute, in silenzio. | `src/app.jsx` |
+| Logout senza pulizia | Su un telefono condiviso, chi entra dopo riceve i rituali di chi è uscito, col nome in chiaro sulla schermata di blocco. | `src/app.jsx` |
+| Interruttore senza guardia | `TypeError` su iPhone non installato: il bottone non faceva e non diceva nulla. | `src/app.jsx` |
+| `PushHelpers` non protetto | Nessuna notifica mostrata ⇒ il browser mostra la sua generica ⇒ revoca del permesso. | `sw.js` |
+| Sentinella cieca | `net.http_post` non aspetta la risposta: 401/404/500 della Edge Function risultavano `succeeded`. La sentinella non avrebbe visto il guasto più probabile. | `23_cron_push.sql` |
+| Silenzi nel motore | Errore di lettura ⇒ «nessun abbonamento»; `.in()` con centinaia di partecipanti ⇒ 414 muto. | `index.ts` |
+| Export GDPR incompleto | Gli abbonamenti non erano esportabili, solo cancellabili. | `24_push_hardening.sql` |
+| Falso verde nel test UI | Restava verde con la RPC completamente rotta. | `test-push-ui.js` |
+
+**Non corretti, con motivo**
+
+- **Un `session_id` non è un segreto.** `rituals` ha una policy di SELECT pubblica e
+  `participants` contiene i `session_id`: chiunque può registrare il proprio telefono sotto
+  l'identità di un altro. Ci si guadagna poco — si ricevono i nomi di rituali a cui quella
+  persona partecipa, informazione già pubblica nella stessa colonna — e la vittima continua a
+  ricevere le sue notifiche, perché il conflitto è sull'endpoint. Una prova di identità vera
+  non è possibile senza cambiare il modello: **gli ospiti partecipano ai rituali e non hanno
+  credenziali**. Mitigato l'abuso su scala con un tetto di 10 abbonamenti per `session_id`.
+- **La funzione è invocabile con la chiave anonima** (`verify_jwt` accetta il JWT `anon`, che è
+  pubblico). Impatto: carico, non corruzione — la deduplicazione impedisce invii doppi e la
+  funzione manda solo ciò che è già dovuto.
+- **Chi partecipa da ospite e poi crea l'account** resta in `participants` col `sessionId`
+  vecchio, mentre l'abbonamento passa al nuovo: per quel rituale non riceve notifiche. È un
+  limite del modello di identità, non di questo lavoro.
+- **`\r` nei file SQL**: falso allarme. I blob git hanno zero `\r` (verificato con
+  `git show HEAD:<file> | grep -c $'\r'`); il CRLF è solo nella copia di lavoro su Windows.
+  Aggiunto comunque un `.gitattributes` perché la regola non dipenda dalla configurazione della
+  singola macchina.
+- **Nessun test automatico del motore.** Girerebbe solo su Supabase e richiederebbe un servizio
+  push vero. Estratta e testata la parte che decide se cancellare un abbonamento (`esito.mjs`,
+  10 controlli): è la logica che può fare danni irreversibili. Il resto si verifica dal vivo.
+
+---
+
 ## 1. Il problema
 
 Global Awakening è costruita su rituali **sincroni**: il valore sta nell'essere presenti nello
