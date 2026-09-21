@@ -1,8 +1,33 @@
 # Notifiche push di avvio rituale — design
 
 **Data:** 2026-09-21
-**Stato:** spec da rivedere, poi piano di implementazione
-**Ramo:** `feat/notifiche-push-rituali`
+**Stato:** implementata sul ramo `feat/notifiche-push-rituali`, in attesa di deploy e prova dal vivo
+**Piano:** `docs/superpowers/plans/2026-09-21-notifiche-push-avvio-rituali.md`
+
+---
+
+## 0. Correzioni emerse durante l'implementazione
+
+Quello che la scrittura del codice ha smentito rispetto a questa spec. Un documento che
+descrive un progetto diverso da quello costruito è peggio di nessun documento.
+
+- **Gli hash CSP avevano già uno strumento.** §Task 1 del piano nasceva dalla convinzione che
+  non esistesse: `buildCsp()` dentro `build.js` fa esattamente quel lavoro, normalizzazione
+  CRLF→LF compresa. Lo strumento duplicato è stato rimosso.
+- **`delete_my_account` va copiata da `18_moderazione_review.sql`, non da `17_`.** La 18 aveva
+  ridefinito la funzione per non cancellare i blocchi *subiti* e chiudere un'evasione del
+  blocco. Ripartire dalla 17 riapriva quel buco in silenzio; l'ha intercettato
+  `test-moderazione.js`. Regola generale: per un `CREATE OR REPLACE`, cercare l'**ultima**
+  migration che tocca quella funzione, non il file col nome che sembra giusto.
+- **Postgres non accetta ripetizioni oltre 255 in una regex.** `{1,900}` dà *invalid repetition
+  count(s)*: lunghezza e forma dell'endpoint sono due controlli separati.
+- **Dopo una migration che crea RPC serve `NOTIFY pgrst, 'reload schema'`**, altrimenti
+  PostgREST continua a rispondere 404 dalla cache.
+- **Il modulo delle finestre è `.mjs`**, non `.js`: un file non può essere insieme CommonJS ed
+  ESM, e Deno vuole ESM. I test node lo caricano con `import()` dinamico.
+- **Il pre-commit hook è stato affinato**, non aggirato: il controllo sulla parola che nomina
+  il ruolo di servizio ora ignora il solo nome della variabile d'ambiente. Prima rendeva non
+  modificabili anche `send-magic-link` e `send-reset-email`.
 
 ---
 
@@ -252,8 +277,9 @@ Minimo indispensabile: un secondo cron, una volta al giorno, che conta i fallime
 `cron.job_run_details` nelle 24 ore e, se ce n'è anche solo uno, manda una email a
 `global.awakening.app@gmail.com` con EmailJS (già configurato, `service_rk97p6m`).
 
-**Da confermare con Irene.** Se si considera fuori scope, va comunque messo a backlog *scritto*,
-non lasciato all'intenzione.
+**Fatto**, in `23_cron_push.sql`, job `allarme-cron-falliti`. Manda l'email solo se nelle ultime
+24 ore c'è stato almeno un fallimento: un avviso che arriva tutti i giorni, dopo una settimana
+non lo legge più nessuno. Richiede `emailjs_private_key` nel Vault.
 
 ## 9. Debito da chiudere in questo lavoro
 
