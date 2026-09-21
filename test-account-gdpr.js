@@ -83,6 +83,13 @@ async function cleanup() {
   if (expBad && /Auth failed/.test(JSON.stringify(expBad))) pass('export con hash errato -> Auth failed');
   else fail(`export hash errato non rifiutato: ${JSON.stringify(expBad)}`);
 
+  // L'export deve contenere anche gli abbonamenti push: session_id ed endpoint sono dati
+  // personali, e la cancellazione senza l'accesso copre meta' del diritto.
+  const expPush = await rpc('export_my_account', { p_nickname: NICK, p_password_hash: HASH });
+  if (expPush && Array.isArray(expPush.push_subscriptions) && expPush.push_subscriptions.length === 1)
+    pass('export include gli abbonamenti push');
+  else fail(`export senza abbonamenti push: ${JSON.stringify(expPush && expPush.push_subscriptions)}`);
+
   console.log('— Delete —');
   const delBad = await rpc('delete_my_account', { p_nickname: NICK, p_password_hash: 'sbagliato' });
   if (delBad && /Auth failed/.test(JSON.stringify(delBad))) pass('delete con hash errato -> Auth failed');

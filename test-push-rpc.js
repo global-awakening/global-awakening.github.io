@@ -59,12 +59,16 @@ async function righeDi(sessionId) {
   return await res.json();
 }
 
-async function pulisci() {
+async function pulisciSessione(sid) {
   const key = getServiceKey();
   if (!key) return;
-  await fetch(`${SUPABASE_URL}/rest/v1/push_subscriptions?session_id=eq.${SID}`, {
+  await fetch(`${SUPABASE_URL}/rest/v1/push_subscriptions?session_id=eq.${sid}`, {
     method: 'DELETE', headers: { 'apikey': key, 'Authorization': 'Bearer ' + key }
   });
+}
+
+async function pulisci() {
+  await pulisciSessione(SID);
 }
 
 (async () => {
@@ -116,6 +120,38 @@ async function pulisci() {
       p_session_id: SID, p_endpoint: ENDPOINT + '_de', p_p256dh: 'a', p_auth: 'b', p_locale: 'de'
     });
     rifiutatoDavvero('locale non previsto rifiutato', r);
+
+    // 6b. Host sconosciuto rifiutato. Senza questo controllo la tabella diventa una lista di
+    //     URL arbitrari che il server chiama da solo ogni minuto: un trampolino verso host
+    //     scelti da un estraneo.
+    r = await rpc('register_push_subscription', {
+      p_session_id: SID, p_endpoint: 'https://cattivo.example/push/1', p_p256dh: 'a', p_auth: 'b', p_locale: 'it'
+    });
+    rifiutatoDavvero('endpoint su host sconosciuto rifiutato', r);
+
+    // 6c. Un host che FINGE di essere un servizio push non passa.
+    r = await rpc('register_push_subscription', {
+      p_session_id: SID, p_endpoint: 'https://fcm.googleapis.com.cattivo.example/x', p_p256dh: 'a', p_auth: 'b', p_locale: 'it'
+    });
+    rifiutatoDavvero('host che imita un servizio push rifiutato', r);
+
+    // 6d. Tetto agli abbonamenti per session_id: toglie l'abuso su scala, visto che chiunque
+    //     puo' leggere i session_id altrui da rituals.participants.
+    const SID_TETTO = `push_tetto_${TS}`;
+    let ultimoStato = 0;
+    for (let i = 0; i < 12; i++) {
+      const rr = await rpc('register_push_subscription', {
+        p_session_id: SID_TETTO,
+        p_endpoint: `https://fcm.googleapis.com/fcm/send/tetto_${TS}_${i}`,
+        p_p256dh: 'a', p_auth: 'b', p_locale: 'it'
+      });
+      ultimoStato = rr.status;
+      if (rr.status >= 400) break;
+    }
+    ultimoStato >= 400
+      ? ok('il tetto di abbonamenti per dispositivo viene applicato')
+      : ko('il tetto di abbonamenti per dispositivo viene applicato', 'dodici accettati');
+    await pulisciSessione(SID_TETTO);
 
     // 7. Cancellazione
     r = await rpc('delete_push_subscription', { p_endpoint: ENDPOINT });
