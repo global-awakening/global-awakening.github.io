@@ -5,19 +5,28 @@
 -- cancella l'account continua a ricevere notifiche di rituali su un telefono che non ha piu'
 -- un account: l'abbonamento sopravvive al suo proprietario.
 --
--- Verificato prima di scrivere questo file: test-account-gdpr.js falliva con
--- «abbonamenti push ancora presenti», non e' un timore teorico.
+-- Verificato prima di scrivere questo file: test-account-gdpr.js falliva con «abbonamenti push
+-- ancora presenti». Non e' un timore teorico.
 --
--- `ritual_notifications_sent` segue in cascata (FK ON DELETE CASCADE), quindi non serve
--- toccarla.
+-- `ritual_notifications_sent` segue in cascata (FK ON DELETE CASCADE), quindi non serve toccarla.
 --
--- Il corpo che segue e' quello di 17_fix_delete_account.sql COPIATO, piu' la sola riga nuova
--- in (b). Non e' stato riscritto a memoria: e' una funzione SECURITY DEFINER che tocca una
--- dozzina di tabelle, e una svista qui non cancella dati che andavano cancellati — senza che
--- nessun errore lo segnali. E' la stessa classe di bug che a settembre aveva lasciato
--- «Elimina account» rotta da giugno.
+-- ⚠️ BASE: 18_moderazione_review.sql, NON 17_fix_delete_account.sql.
 --
--- Test: node test-account-gdpr.js  → atteso 10/10
+-- La prima stesura di questo file copiava da 17_ perche' era l'ultima migration col nome
+-- "delete_account". Sbagliato: la 18_ aveva ridefinito la stessa funzione per chiudere
+-- un'evasione del blocco — 17_ cancellava user_blocks con "blocker = me OR blocked = me", e il
+-- secondo ramo permetteva a chi molesta di cancellare l'account, ri-registrare lo stesso
+-- nickname e ricomparire alla vittima, che nel frattempo aveva perso il blocco senza saperlo.
+-- Ripartire da 17_ riapriva quel buco in silenzio. L'ha intercettato test-moderazione.js
+-- («evasione del blocco possibile: atteso 1 blocco superstite, trovato []»), non una rilettura.
+--
+-- Morale per la prossima volta: per un CREATE OR REPLACE non basta cercare il file col nome
+-- giusto, bisogna cercare l'ULTIMA migration che tocca quella funzione:
+--   grep -l "FUNCTION public.<nome>" supabase/sql/*.sql | sort | tail -1
+--
+-- Rispetto alla 18_ questo file aggiunge esattamente una riga di codice.
+--
+-- Test: node test-account-gdpr.js → 10/10  e  node test-moderazione.js → 17/17
 -- Idempotente.
 -- ============================================================================
 
@@ -46,7 +55,7 @@ BEGIN
   UPDATE consciousness_comments SET author_nickname = 'Utente eliminato' WHERE author_nickname = p_nickname;
   UPDATE ritual_comments        SET author_nickname = 'Utente eliminato' WHERE author_nickname = p_nickname;
   UPDATE rituals                SET creator         = 'Utente eliminato' WHERE creator = p_nickname;
-  -- RIMOSSA: UPDATE chat_messages ... — tabella droppata da 08_drop_dead_tables.sql
+  -- chat_messages NON esiste piu' (droppata da 08_drop_dead_tables.sql): vedi 17_.
 
   -- (b) Cancella i dati personali/privati
   DELETE FROM private_messages WHERE sender_name = p_nickname OR receiver_name = p_nickname;
@@ -58,24 +67,21 @@ BEGIN
     DELETE FROM password_resets  WHERE email   = v_email;
   END IF;
 
-  -- Effimeri telepatia/presenza con colonne note (TTL breve, session_id opachi).
-  -- telepathy_matches/telepathy_chat NON toccati: si auto-puliscono a TTL <5min
-  -- e contengono solo id effimeri + simboli, non PII persistente identificabile.
   IF v_sid IS NOT NULL AND v_sid <> '' THEN
     DELETE FROM online_users      WHERE id = v_sid;
     DELETE FROM telepathy_queue   WHERE id = v_sid;
     DELETE FROM telepathy_invites WHERE from_id = v_sid OR to_id = v_sid;
 
-    -- NUOVO (22): abbonamenti alle notifiche push. Un endpoint push e' un canale aperto
-    -- verso un telefono: lasciarlo vivo dopo la cancellazione significa continuare a
-    -- scrivere a qualcuno che ha chiesto di sparire.
+    -- NUOVO (22): abbonamenti alle notifiche push. Un endpoint push e' un canale aperto verso
+    -- un telefono: lasciarlo vivo dopo la cancellazione significa continuare a scrivere a
+    -- qualcuno che ha chiesto di sparire.
     DELETE FROM push_subscriptions WHERE session_id = v_sid;
   END IF;
 
-  -- (c) SP1: i blocchi impostati dall'utente e quelli subiti non hanno piu'
-  -- soggetto una volta cancellata l'identita'. Le segnalazioni INVIATE restano
-  -- (servono alla moderazione) ma perdono il legame col reporter.
-  DELETE FROM user_blocks WHERE blocker_nickname = p_nickname OR blocked_nickname = p_nickname;
+  -- (c) SP1: se ne vanno solo i blocchi che ho impostato io. Quelli subiti
+  -- restano, altrimenti cancellare l'account diventa un modo per farsi
+  -- sbloccare da chi ci ha bloccati.
+  DELETE FROM user_blocks WHERE blocker_nickname = p_nickname;
   UPDATE content_reports SET reporter_nickname = 'Utente eliminato' WHERE reporter_nickname = p_nickname;
 
   -- (d) Cancella l'identita'
@@ -87,4 +93,5 @@ GRANT EXECUTE ON FUNCTION public.delete_my_account(text, text) TO anon;
 -- ============================================================================
 -- VERIFICA POST-APPLY
 --   node test-account-gdpr.js  → 10/10, incluso «delete rimuove gli abbonamenti push»
+--   node test-moderazione.js   → 17/17, incluso «evasione del blocco impossibile»
 -- ============================================================================
