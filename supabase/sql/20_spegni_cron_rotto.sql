@@ -1,0 +1,28 @@
+-- 20_spegni_cron_rotto.sql
+--
+-- Spegne il cron `notify-ritual-participants` (jobid 1), creato a mano ad aprile
+-- e mai funzionante.
+--
+-- Storia: gira ogni 5 minuti dal 17/04/2026. Esecuzioni totali 33.615, riuscite 0.
+-- Il comando contiene un ritorno a capo di Windows (0x0d) dentro la stringa JSON
+-- degli header, quindi Postgres si ferma sulla sintassi prima ancora di provare la
+-- chiamata:
+--     ERROR: invalid input syntax for type json
+--     DETAIL: Character with value 0x0d must be escaped
+-- Dietro quell'errore ce ne sono altri due che non si erano mai visti: `pg_net` non
+-- e' installato (quindi net.http_post non esisterebbe comunque) e la Edge Function
+-- interroga `ritual_participants`, tabella cancellata da 08_drop_dead_tables.sql.
+--
+-- Nessuno se n'e' accorto per cinque mesi perche' i fallimenti di cron non arrivano
+-- da nessuna parte. Quando riscriveremo il motore, l'allarme sui fallimenti fa parte
+-- del lavoro.
+--
+-- Scelta: DISATTIVARE, non cancellare. Il comando resta leggibile in cron.job come
+-- documentazione di cosa si voleva fare, e si spegne senza perdere niente.
+-- Per riattivarlo:  SELECT cron.alter_job(job_id := 1, active := true);
+
+-- NOTA: un UPDATE diretto su cron.job fallisce con "permission denied for table job"
+-- anche collegandosi come `postgres`: su Supabase quella tabella appartiene a
+-- supabase_admin e postgres ha solo SELECT. La via che funziona e' la funzione
+-- ufficiale di pg_cron, che e' SECURITY DEFINER.
+SELECT cron.alter_job(job_id := 1, active := false);
