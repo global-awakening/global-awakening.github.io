@@ -3163,9 +3163,13 @@
           // l'abbonamento con il sessionId di PRIMA — tipicamente quello da ospite, dopo che la
           // persona si è registrata — sovrascrivendo quello giusto: la persona smette di
           // ricevere notifiche e niente lo segnala. Stessa cosa per la lingua.
+          // Si ri-registra anche sul server, non solo nella cache: `locale` sta nella riga di
+          // `push_subscriptions` e senza questo passaggio chi cambia lingua continuerebbe a
+          // ricevere le notifiche nella lingua vecchia finché non rifà «Partecipa».
+          // `iscriviPush` riusa l'abbonamento esistente, quindi non chiede nessun permesso.
           React.useEffect(() => {
             if (!pushAttive || !sessionId) return;
-            salvaConfigPush();
+            iscriviPush().catch(() => salvaConfigPush());
           }, [sessionId, lang, pushAttive]);
 
           const spegniPush = async () => {

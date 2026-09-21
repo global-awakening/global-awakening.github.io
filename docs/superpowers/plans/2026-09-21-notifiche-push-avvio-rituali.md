@@ -10,6 +10,19 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-21-notifiche-push-avvio-rituali-design.md`
 
+## Nota di chiusura (aggiunta a lavoro fatto)
+
+Il **Task 1 è in parte superato**: lo strumento `scripts/csp-hashes.js` che prescrive è stato
+scritto e poi **rimosso**, perché `buildCsp()` dentro `build.js` faceva già esattamente quel
+lavoro, normalizzazione CRLF→LF compresa. Del Task 1 resta valido solo `gen-vapid.js` e
+l'inserimento della chiave pubblica in `app.html`; gli hash CSP li riallinea `node build.js`,
+che va comunque eseguito a ogni modifica di `src/app.jsx`. Ogni riferimento a
+`test-csp-hashes.js` più sotto è da ignorare.
+
+Altre differenze fra il piano e ciò che è stato costruito sono elencate in §0 della spec.
+
+---
+
 ## Global Constraints
 
 - **Ramo:** `feat/notifiche-push-rituali`. Mai commit su `main`, mai push senza dirlo a Irene.
@@ -1604,7 +1617,7 @@ git commit -m "feat(push): cron al minuto e sentinella sui fallimenti"
 
 ```bash
 node test-push-helpers.js && node test-push-finestre.js && node test-push-rpc.js \
-  && node test-push-ui.js && node test-push-cron.js && node test-csp-hashes.js \
+  && node test-push-ui.js && node test-push-cron.js && node test-push-esito.js \
   && node test-rituali.js && node test-orari-rituali.js && node test-musica.js \
   && node test-pwa.js && node test-auth.js && node test-account-gdpr.js \
   && node test-moderazione.js && node test-moderazione-ui.js

@@ -3302,7 +3302,7 @@ function GlobalAwakeningPlatform() {
   };
   React.useEffect(() => {
     if (!pushAttive || !sessionId) return;
-    salvaConfigPush();
+    iscriviPush().catch(() => salvaConfigPush());
   }, [sessionId, lang, pushAttive]);
   const spegniPush = async () => {
     localStorage.setItem('ga_push_spento', '1');

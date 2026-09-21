@@ -1,0 +1,26 @@
+# Fine riga espliciti.
+#
+# Perche' esiste questo file: un ritorno a capo di Windows finito dentro una stringa JSON ha
+# tenuto rotto un cron per cinque mesi (vedi 20_spegni_cron_rotto.sql). Con core.autocrlf i
+# blob git erano gia' corretti, ma dipendeva dalla configurazione della singola macchina:
+# qui la regola diventa del repo e vale per chiunque ci lavori.
+* text=auto eol=lf
+
+*.sql  text eol=lf
+*.js   text eol=lf
+*.jsx  text eol=lf
+*.mjs  text eol=lf
+*.ts   text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.html text eol=lf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.mp3  binary
+*.woff binary
+*.woff2 binary
