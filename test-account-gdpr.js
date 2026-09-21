@@ -20,6 +20,7 @@ const EMAIL = `gdpr_${TS}@test.com`;
 const SID   = `gdpr-sid-${TS}`;
 const HASH  = `hash-${TS}`;
 const OTHER = `GdprOther_${TS}`;
+const ENDPOINT_PUSH = `https://fcm.googleapis.com/fcm/send/gdpr_${TS}`;
 
 let passed = 0, failed = 0;
 function pass(m) { console.log(`  ✅ ${m}`); passed++; }
@@ -47,6 +48,11 @@ async function seed() {
   await sb('consciousness_posts', { method: 'POST', body: JSON.stringify({ author_nickname: NICK, content: 'post di test' }) });
   // private_messages: scrittura diretta bloccata da RLS (Step B) -> si usa la RPC autenticata.
   await rpc('send_private_message', { p_sender_id: SID, p_sender_name: NICK, p_receiver_name: OTHER, p_content: 'ciao', p_sender_password_hash: HASH });
+  // Abbonamento push: deve sparire insieme all'account. Senza, chi cancella l'account
+  // continua a ricevere notifiche di rituali su un telefono che non ha piu' un account.
+  await rpc('register_push_subscription', {
+    p_session_id: SID, p_endpoint: ENDPOINT_PUSH,
+    p_p256dh: 'p256dh_finta', p_auth: 'auth_finta', p_locale: 'it' });
 }
 
 async function cleanup() {
@@ -102,6 +108,18 @@ async function cleanup() {
     const msgs = await res.json().catch(() => null);
     if (Array.isArray(msgs) && msgs.length === 0) pass('delete rimuove i messaggi privati');
     else fail(`messaggi ancora presenti: ${JSON.stringify(msgs)}`);
+  }
+
+  // Abbonamenti push: la lettura richiede la chiave privilegiata, la tabella e' chiusa.
+  if (!svcKey) {
+    console.warn('  ⚠️  SUPABASE_SERVICE_KEY assente: cancellazione degli abbonamenti push NON verificata.');
+  } else {
+    const resPush = await fetch(
+      `${SUPABASE_URL}/rest/v1/push_subscriptions?session_id=eq.${encodeURIComponent(SID)}&select=id`,
+      { headers: { apikey: svcKey, Authorization: `Bearer ${svcKey}` } });
+    const subs = await resPush.json().catch(() => null);
+    if (Array.isArray(subs) && subs.length === 0) pass('delete rimuove gli abbonamenti push');
+    else fail(`abbonamenti push ancora presenti: ${JSON.stringify(subs)}`);
   }
 
   const posts = await sb(`consciousness_posts?content=eq.${encodeURIComponent('post di test')}&select=author_nickname`);
