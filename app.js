@@ -1850,6 +1850,7 @@ function GlobalAwakeningPlatform() {
     const name = tempNickname.trim() || 'Anonymous';
     localStorage.setItem('ga_nickname', name);
     localStorage.setItem('ga_is_guest', 'true');
+    localStorage.setItem('ga_session_id', sessionId);
     localStorage.removeItem('ga_email');
     setNickname(name);
     setIsGuest(true);

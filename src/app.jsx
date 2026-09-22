@@ -1644,6 +1644,14 @@
             const name = tempNickname.trim() || 'Anonymous';
             localStorage.setItem('ga_nickname', name);
             localStorage.setItem('ga_is_guest', 'true');
+            // Senza questa riga l'ospite riceveva un identificativo NUOVO a ogni riapertura
+            // dell'app (src/app.jsx:996 lo rigenera quando non lo trova), e per l'app
+            // diventava un'altra persona: fuori dai rituali a cui aveva aderito, non più
+            // creatore dei propri, con la candela accesa da uno sconosciuto e i punteggi di
+            // telepatia azzerati. Si scrive qui e non all'avvio perché fino a questo momento
+            // la persona non è ancora entrata, e non le mettiamo un identificativo in tasca
+            // mentre sta ancora decidendo.
+            localStorage.setItem('ga_session_id', sessionId);
             localStorage.removeItem('ga_email');
             setNickname(name);
             setIsGuest(true);
