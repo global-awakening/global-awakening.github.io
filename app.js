@@ -452,6 +452,13 @@ const translations = {
     rituals: {
       title: "Global Rituals",
       subtitle: "Synchronized awakening ceremonies",
+      deleteRitual: "Delete",
+      deleteTitle: "Delete this ritual?",
+      deleteBody: "It disappears for everyone who joined. Only possible before it starts.",
+      deleteYes: "Delete",
+      deleteNo: "Keep it",
+      deleteStarted: "Too late: the ritual has already started.",
+      deleteFailed: "The ritual could not be deleted.",
       createRitual: "Propose Ritual",
       noRituals: "No rituals yet. Be the first to propose one!",
       participants: "participants",
@@ -805,6 +812,13 @@ const translations = {
     rituals: {
       title: "Rituali Globali",
       subtitle: "Cerimonie di risveglio sincronizzate",
+      deleteRitual: "Cancella",
+      deleteTitle: "Cancellare questo rituale?",
+      deleteBody: "Sparisce per chiunque abbia aderito. Si può fare solo prima che inizi.",
+      deleteYes: "Cancella",
+      deleteNo: "Lascialo",
+      deleteStarted: "Troppo tardi: il rituale è già iniziato.",
+      deleteFailed: "Non è stato possibile cancellare il rituale.",
       createRitual: "Proponi Rituale",
       noRituals: "Nessun rituale ancora. Sii il primo a proporne uno!",
       participants: "partecipanti",
@@ -3396,6 +3410,22 @@ function GlobalAwakeningPlatform() {
     }
     setRituals(prev => prev.map(r => r.id === ritualId ? data[0] : r));
   };
+  const [ritualToDelete, setRitualToDelete] = useState(null);
+  const doDeleteRitual = async ritualId => {
+    const {
+      error
+    } = await supabase.rpc('delete_ritual', {
+      p_ritual_id: ritualId,
+      p_session_id: sessionId,
+      p_password_hash: passwordHash || ''
+    });
+    if (error) {
+      const msg = error.message || '';
+      setErrorToast(msg.includes('already_started') ? t.rituals.deleteStarted : t.rituals.deleteFailed);
+      return;
+    }
+    setRituals(prev => prev.filter(r => r.id !== ritualId));
+  };
   const getRitualStatus = ritual => {
     const now = new Date();
     const ritualTime = new Date(`${ritual.date}T${ritual.time}Z`);
@@ -4527,7 +4557,20 @@ ${ritual.description || ''}`
       style: {
         filter: isCandleLit ? 'none' : 'grayscale(1) opacity(0.6)'
       }
-    }, "\uD83D\uDD6F\uFE0F"), " ", candleCount)), React.createElement("div", {
+    }, "\uD83D\uDD6F\uFE0F"), " ", candleCount), ritual.creator_id === sessionId && status !== 'live' && status !== 'ended' && React.createElement("button", {
+      "data-test": "delete-ritual",
+      onClick: () => setRitualToDelete(ritual),
+      className: "px-4",
+      "aria-label": t.rituals.deleteRitual,
+      title: t.rituals.deleteRitual,
+      style: {
+        borderRadius: '0.75rem',
+        border: '1px solid rgba(248,113,113,0.5)',
+        background: 'rgba(248,113,113,0.12)',
+        color: '#fca5a5',
+        cursor: 'pointer'
+      }
+    }, "\uD83D\uDDD1\uFE0F")), React.createElement("div", {
       className: "flex gap-2"
     }, React.createElement("button", {
       onClick: () => toggleRitualComments(ritual.id),
@@ -6370,7 +6413,61 @@ ${ritual.description || ''}`
       flex: 1
     },
     onClick: () => setBlockTarget(null)
-  }, t.moderation.cancel)))), reportTarget && React.createElement("div", {
+  }, t.moderation.cancel)))), ritualToDelete && React.createElement("div", {
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 9998,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '1rem',
+      background: 'rgba(0,0,0,0.7)'
+    },
+    onClick: () => setRitualToDelete(null)
+  }, React.createElement("div", {
+    className: "bg-glass rounded-2xl border-glass p-4",
+    style: {
+      maxWidth: '22rem',
+      width: '100%'
+    },
+    onClick: e => e.stopPropagation()
+  }, React.createElement("h3", {
+    className: "text-white font-bold mb-2"
+  }, t.rituals.deleteTitle), React.createElement("p", {
+    className: "text-primary font-medium mb-1"
+  }, ritualToDelete.name), React.createElement("p", {
+    className: "text-secondary text-sm"
+  }, t.rituals.deleteBody), React.createElement("div", {
+    className: "flex gap-2",
+    style: {
+      marginTop: '1rem'
+    }
+  }, React.createElement("button", {
+    "data-test": "delete-ritual-confirm",
+    style: {
+      padding: '0.6rem 1rem',
+      borderRadius: '0.75rem',
+      flex: 1,
+      border: '1px solid rgba(248,113,113,0.5)',
+      background: 'rgba(248,113,113,0.12)',
+      color: '#fca5a5',
+      cursor: 'pointer',
+      fontWeight: 600
+    },
+    onClick: () => {
+      const r = ritualToDelete;
+      setRitualToDelete(null);
+      doDeleteRitual(r.id);
+    }
+  }, t.rituals.deleteYes), React.createElement("button", {
+    className: "btn-secondary",
+    style: {
+      flex: 1
+    },
+    "data-test": "delete-ritual-cancel",
+    onClick: () => setRitualToDelete(null)
+  }, t.rituals.deleteNo)))), reportTarget && React.createElement("div", {
     style: {
       position: 'fixed',
       inset: 0,
