@@ -802,6 +802,16 @@
           }
         };
 
+        // Durata proposta quando si crea un rituale. Tre minuti, non trenta: un rituale è
+        // un'esperienza sincrona: quello che conta è esserci tutti nello stesso momento, non
+        // restare mezz'ora. Mezz'ora, per chi prova l'app la prima volta, è soprattutto
+        // un'attesa. Resta modificabile a mano nel modulo.
+        //
+        // Chi la cambia guardi anche `supabase/functions/notify-ritual-start/finestre.mjs`:
+        // la notifica «sta iniziando ora» ha una rete di sicurezza che non deve durare più
+        // del rituale, o arriva quando è già finito.
+        const DURATA_RITUALE_PREDEFINITA = 3;
+
         function GlobalAwakeningPlatform() {
           const [lang, setLang] = useState('en');
           const [activeTab, setActiveTab] = useState('rituals');
@@ -963,7 +973,7 @@
             sacredNumber: 11,
             date: '',
             time: '',
-            duration: 30
+            duration: DURATA_RITUALE_PREDEFINITA
           });
           
           React.useEffect(() => { expandedPostIdRef.current = expandedPostId; }, [expandedPostId]);
@@ -3062,7 +3072,7 @@
               sacredNumber: 11,
               date: '',
               time: '',
-              duration: 30
+              duration: DURATA_RITUALE_PREDEFINITA
             });
           };
 
@@ -5500,7 +5510,9 @@ ${ritual.description || ''}` })}
                           type="number"
                           value={newRitual.duration}
                           onChange={(e) => setNewRitual({...newRitual, duration: parseInt(e.target.value)})}
-                          min="5"
+                          // min era 5: con il predefinito a 3 il campo avrebbe rifiutato il
+                          // proprio valore iniziale. Il server accetta da 1 minuto in su.
+                          min="1"
                           max="180"
                         />
                       </div>

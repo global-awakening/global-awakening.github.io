@@ -65,7 +65,7 @@ Deno.serve(async () => {
 
   const { data: rituali, error: erroreRituali } = await supabase
     .from('rituals')
-    .select('id, name, date, time, participants')
+    .select('id, name, date, time, duration, participants')
     .gte('date', soloData(adesso - giorno))
     .lte('date', soloData(adesso + giorno));
 
@@ -86,7 +86,10 @@ Deno.serve(async () => {
 
   for (const rituale of rituali) {
     const inizio = istanteInizio(rituale.date, rituale.time);
-    const tipo = classifica(adesso, inizio) as Tipo | null;
+    // La durata serve a non recuperare una notifica di avvio quando il rituale e' gia'
+    // finito: con i rituali brevi la rete di sicurezza da cinque minuti li supera.
+    const durata = Number.isFinite(rituale.duration) ? rituale.duration * 60000 : undefined;
+    const tipo = classifica(adesso, inizio, durata) as Tipo | null;
     if (!tipo) continue;
 
     // Chi partecipa si legge ADESSO, non al momento dell'iscrizione: chi ha lasciato il
