@@ -9,9 +9,12 @@ importScripts('push-helpers.js');
 // v7: il bump non e' cosmetico. Senza, i browser che hanno gia' installato l'app tengono il
 // service worker vecchio, che non ha nessun handler push — e le notifiche non arrivano
 // a nessuno di quelli che l'app ce l'hanno gia'.
-const CACHE = 'ga-pwa-v7';
+// v8: aggiunge music-helpers.js. Senza il bump, chi ha gia' l'app installata tiene il service
+// worker vecchio, che quel file non lo conosce: offline la pagina si caricherebbe senza
+// MusicHelpers e la musica non partirebbe piu' per niente.
+const CACHE = 'ga-pwa-v8';
 const PRECACHE = [
-  'app.html', 'app.js', 'push-helpers.js', 'index.html', 'manifest.webmanifest',
+  'app.html', 'app.js', 'push-helpers.js', 'music-helpers.js', 'index.html', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
   'https://unpkg.com/react@18.3.1/umd/react.production.min.js',
   'https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js',
@@ -49,9 +52,11 @@ self.addEventListener('fetch', (e) => {
   // del browser a fare da cuscino sui riascolti.
   if (/\.(mp3|ogg|m4a|wav)$/i.test(url.pathname)) return;
 
-  // Navigazione, app.html e app.js (codice dell'app): network-first, fallback cache.
+  // Navigazione, app.html e il codice dell'app: network-first, fallback cache.
   // app.js DEVE essere preso fresco, altrimenti le PWA installate restano sulla versione vecchia.
-  const isFresh = req.mode === 'navigate' || url.pathname.endsWith('/app.html') || url.pathname.endsWith('/app.js') || url.pathname.endsWith('/');
+  // music-helpers.js e' codice dell'app quanto app.js: se stesse fra i file cache-first, una
+  // correzione all'avvio della musica non arriverebbe mai a chi ha gia' l'app installata.
+  const isFresh = req.mode === 'navigate' || url.pathname.endsWith('/app.html') || url.pathname.endsWith('/app.js') || url.pathname.endsWith('/music-helpers.js') || url.pathname.endsWith('/');
   if (isFresh) {
     e.respondWith((async () => {
       try {

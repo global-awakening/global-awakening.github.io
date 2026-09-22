@@ -52,6 +52,15 @@ const fail = (m) => { console.log('  ❌ ' + m); failed++; process.exitCode = 1;
   if (loop !== null) pass('il brano è in loop');
   else fail('il brano non è in loop');
 
+  // 3-bis. MusicHelpers deve essere caricato dalla pagina. Se lo <script> sparisse, l'app
+  // tornerebbe muta sui telefoni senza che nessun test se ne accorga: il codice che riprova
+  // dopo il rifiuto del browser gira solo dentro un rituale live, dove i test non arrivano.
+  const helpersCaricati = await page.evaluate(() => !!(window.MusicHelpers
+    && typeof window.MusicHelpers.avviaMusica === 'function'
+    && typeof window.MusicHelpers.fermaMusica === 'function'));
+  if (helpersCaricati) pass('MusicHelpers è caricato nella pagina');
+  else fail('MusicHelpers non è caricato: la musica non ripartirebbe dopo un rifiuto del browser');
+
   // 4. nessuna sessione in corso ⇒ silenzio
   const inPausa = await audio.evaluate((el) => el.paused).catch(() => null);
   if (inPausa === true) pass('senza rituali né sessioni in corso la musica sta zitta');

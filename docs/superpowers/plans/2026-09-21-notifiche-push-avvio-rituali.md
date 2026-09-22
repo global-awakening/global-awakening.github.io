@@ -1619,6 +1619,7 @@ git commit -m "feat(push): cron al minuto e sentinella sui fallimenti"
 node test-push-helpers.js && node test-push-finestre.js && node test-push-rpc.js \
   && node test-push-ui.js && node test-push-cron.js && node test-push-esito.js \
   && node test-rituali.js && node test-orari-rituali.js && node test-musica.js \
+  && node test-musica-sblocco.js \
   && node test-pwa.js && node test-auth.js && node test-account-gdpr.js \
   && node test-moderazione.js && node test-moderazione-ui.js
 ```

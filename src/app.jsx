@@ -154,6 +154,7 @@
             musicFrom: "from",
             musicMute: "Mute music",
             musicUnmute: "Unmute music",
+            musicTap: "Tap anywhere to start the music",
             pwaIosBrowserTitle: "Open in Safari",
             pwaIosBrowserBody: "You can't install the app from here. Tap \"•••\" at the top right, choose \"Open in Safari\" and try again.",
             pwaBannerText: "Keep Global Awakening on your phone",
@@ -489,6 +490,7 @@
             musicFrom: "da",
             musicMute: "Silenzia la musica",
             musicUnmute: "Riattiva la musica",
+            musicTap: "Tocca lo schermo per far partire la musica",
             pwaIosBrowserTitle: "Apri in Safari",
             pwaIosBrowserBody: "Da qui l'app non si può installare. Tocca «•••» in alto a destra, scegli «Apri in Safari» e riprova.",
             pwaBannerText: "Tieni Risveglio Globale sul telefono",
@@ -3316,32 +3318,36 @@
             Array.isArray(r.participants) && r.participants.includes(sessionId) && getRitualStatus(r) === 'live');
           const inTelepathySession = !!partner && !sessionEnded;
           const musicOn = (inLiveRitual || inTelepathySession) && !musicMuted;
+          // Vero quando il browser si è rifiutato di far partire la musica e stiamo aspettando
+          // un gesto qualsiasi della persona. Non è un dettaglio da nascondere: è l'unico
+          // momento in cui possiamo dirle che le basta toccare lo schermo.
+          const [musicaInAttesaDiGesto, setMusicaInAttesaDiGesto] = useState(false);
+          // Istante dell'ultimo gesto che ha sbloccato la musica. Serve al pulsante 🔊: da quel
+          // tocco nasce un `click`, e senza questa memoria il pulsante silenzierebbe proprio la
+          // musica che la persona ha appena fatto partire toccandolo.
+          const sbloccoMusicaRef = React.useRef(0);
           React.useEffect(() => {
             const el = musicRef.current;
             if (!el) return;
-            // Dissolvenza: un audio che parte a volume pieno o si tronca di netto rompe proprio
-            // l'atmosfera per cui la musica c'è.
-            let annullato = false;
-            const dissolvi = (verso, poi) => {
-              const passo = () => {
-                if (annullato || !musicRef.current) return;
-                const delta = verso - el.volume;
-                if (Math.abs(delta) < 0.03) { el.volume = verso; if (poi) poi(); return; }
-                el.volume = Math.max(0, Math.min(1, el.volume + (delta > 0 ? 0.03 : -0.03)));
-                setTimeout(passo, 60);
-              };
-              passo();
-            };
+            // Se music-helpers.js non è arrivato — finestra di aggiornamento del service
+            // worker, rete ballerina, un'estensione che lo blocca — l'app deve restare muta,
+            // non andare in bianco: un'eccezione qui dentro smonta tutto l'albero React.
+            if (typeof MusicHelpers === 'undefined') return;
             if (musicOn) {
-              el.volume = 0;
-              const p = el.play();
-              // senza un gesto dell'utente il browser può rifiutare: non è un errore da mostrare
-              if (p && p.catch) p.catch(() => {});
-              dissolvi(MUSIC_VOLUME);
-            } else if (!el.paused) {
-              dissolvi(0, () => el.pause());
+              // Sul telefono la musica NON parte da sola. Chi arriva da una notifica apre una
+              // pagina che non ha ancora toccato, e i browser dei telefoni non fanno uscire
+              // audio da lì. Prima del 22/09/2026 l'app chiedeva `play()`, si sentiva dire di
+              // no e buttava via il rifiuto: nessun suono e nessuna traccia. Ora resta in
+              // ascolto e riparte al primo gesto — dentro un rituale la gente chiude gli occhi,
+              // quindi non possiamo aspettarci che vada a cercare un pulsante.
+              return MusicHelpers.avviaMusica(el, {
+                volume: MUSIC_VOLUME,
+                onGesto: () => { sbloccoMusicaRef.current = Date.now(); },
+                onStato: (stato) => setMusicaInAttesaDiGesto(stato === 'in-attesa-di-gesto')
+              });
             }
-            return () => { annullato = true; };
+            setMusicaInAttesaDiGesto(false);
+            if (!el.paused) return MusicHelpers.fermaMusica(el);
           }, [musicOn]);
 
           const toggleRitualComments = async (ritualId) => {
@@ -3783,12 +3789,21 @@
                       <div style={{position: 'relative'}}>
                         {(inLiveRitual || inTelepathySession) && (
                           <button
-                            onClick={toggleMusic}
+                            // Il `click` che nasce dal tocco con cui la musica si è appena
+                            // sbloccata non deve silenziarla. Si guarda l'istante del gesto e
+                            // non `musicaInAttesaDiGesto`: quello è uno stato React, e fra il
+                            // dito che scende e il click il ri-disegno ha già fatto in tempo a
+                            // rimetterlo a falso — la guardia non scatterebbe mai.
+                            onClick={() => {
+                              if (Date.now() - sbloccoMusicaRef.current < 1000) return;
+                              toggleMusic();
+                            }}
                             className="btn-secondary px-3 py-2"
                             style={{fontSize: '0.8rem'}}
-                            aria-label={musicMuted ? t.musicUnmute : t.musicMute}
+                            title={musicaInAttesaDiGesto ? t.musicTap : undefined}
+                            aria-label={musicaInAttesaDiGesto ? t.musicTap : (musicMuted ? t.musicUnmute : t.musicMute)}
                           >
-                            {musicMuted ? '🔇' : '🔊'}
+                            {musicMuted ? '🔇' : (musicaInAttesaDiGesto ? '🔈' : '🔊')}
                           </button>
                         )}
                         <button
