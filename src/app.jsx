@@ -253,6 +253,13 @@
             rituals: {
               title: "Global Rituals",
               subtitle: "Synchronized awakening ceremonies",
+              deleteRitual: "Delete",
+              deleteTitle: "Delete this ritual?",
+              deleteBody: "It disappears for everyone who joined. Only possible before it starts.",
+              deleteYes: "Delete",
+              deleteNo: "Keep it",
+              deleteStarted: "Too late: the ritual has already started.",
+              deleteFailed: "The ritual could not be deleted.",
               createRitual: "Propose Ritual",
               noRituals: "No rituals yet. Be the first to propose one!",
               participants: "participants",
@@ -589,6 +596,13 @@
             rituals: {
               title: "Rituali Globali",
               subtitle: "Cerimonie di risveglio sincronizzate",
+              deleteRitual: "Cancella",
+              deleteTitle: "Cancellare questo rituale?",
+              deleteBody: "Sparisce per chiunque abbia aderito. Si può fare solo prima che inizi.",
+              deleteYes: "Cancella",
+              deleteNo: "Lascialo",
+              deleteStarted: "Troppo tardi: il rituale è già iniziato.",
+              deleteFailed: "Non è stato possibile cancellare il rituale.",
               createRitual: "Proponi Rituale",
               noRituals: "Nessun rituale ancora. Sii il primo a proporne uno!",
               participants: "partecipanti",
@@ -3277,6 +3291,26 @@
             setRituals(prev => prev.map(r => r.id === ritualId ? data[0] : r));
           };
 
+          // Cancellazione del proprio rituale. Il vero controllo sta nel database
+          // (25_cancella_rituale.sql): qui si nasconde solo il pulsante quando non ha senso,
+          // ma un pulsante nascosto non protegge niente — chiunque puo' chiamare la funzione.
+          const [ritualToDelete, setRitualToDelete] = useState(null);
+          const doDeleteRitual = async (ritualId) => {
+            const { error } = await supabase.rpc('delete_ritual', {
+              p_ritual_id: ritualId,
+              p_session_id: sessionId,
+              p_password_hash: passwordHash || ''
+            });
+            if (error) {
+              // Il caso «e' iniziato mentre guardavi il modale» merita una frase sua: l'app
+              // dice perche' non si puo' piu', invece di un generico «non ha funzionato».
+              const msg = (error.message || '');
+              setErrorToast(msg.includes('already_started') ? t.rituals.deleteStarted : t.rituals.deleteFailed);
+              return;
+            }
+            setRituals(prev => prev.filter(r => r.id !== ritualId));
+          };
+
           const getRitualStatus = (ritual) => {
             const now = new Date();
             const ritualTime = new Date(`${ritual.date}T${ritual.time}Z`);
@@ -4101,6 +4135,25 @@ ${ritual.description || ''}` })}
                               >
                                 <span style={{filter: isCandleLit ? 'none' : 'grayscale(1) opacity(0.6)'}}>🕯️</span> {candleCount}
                               </button>
+                              {/* Solo a chi l'ha creato, e solo finche' non e' iniziato: dentro
+                                  un rituale in corso c'e' gente che sta meditando, e non deve
+                                  vederselo sparire sotto gli occhi. */}
+                              {ritual.creator_id === sessionId && status !== 'live' && status !== 'ended' && (
+                                <button
+                                  data-test="delete-ritual"
+                                  onClick={() => setRitualToDelete(ritual)}
+                                  className="px-4"
+                                  aria-label={t.rituals.deleteRitual}
+                                  title={t.rituals.deleteRitual}
+                                  style={{
+                                    borderRadius: '0.75rem',
+                                    border: '1px solid rgba(248,113,113,0.5)',
+                                    background: 'rgba(248,113,113,0.12)',
+                                    color: '#fca5a5',
+                                    cursor: 'pointer'
+                                  }}
+                                >🗑️</button>
+                              )}
                             </div>
 
                             <div className="flex gap-2">
@@ -5219,6 +5272,33 @@ ${ritual.description || ''}` })}
                       >{t.moderation.block}</button>
                       <button className="btn-secondary" style={{flex: 1}}
                         onClick={() => setBlockTarget(null)}>{t.moderation.cancel}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {ritualToDelete && (
+                <div style={{position: 'fixed', inset: 0, zIndex: 9998, display: 'flex',
+                             alignItems: 'center', justifyContent: 'center', padding: '1rem',
+                             background: 'rgba(0,0,0,0.7)'}}
+                     onClick={() => setRitualToDelete(null)}>
+                  <div className="bg-glass rounded-2xl border-glass p-4"
+                       style={{maxWidth: '22rem', width: '100%'}}
+                       onClick={e => e.stopPropagation()}>
+                    <h3 className="text-white font-bold mb-2">{t.rituals.deleteTitle}</h3>
+                    <p className="text-primary font-medium mb-1">{ritualToDelete.name}</p>
+                    <p className="text-secondary text-sm">{t.rituals.deleteBody}</p>
+                    <div className="flex gap-2" style={{marginTop: '1rem'}}>
+                      <button
+                        data-test="delete-ritual-confirm"
+                        style={{padding: '0.6rem 1rem', borderRadius: '0.75rem', flex: 1,
+                                border: '1px solid rgba(248,113,113,0.5)', background: 'rgba(248,113,113,0.12)',
+                                color: '#fca5a5', cursor: 'pointer', fontWeight: 600}}
+                        onClick={() => { const r = ritualToDelete; setRitualToDelete(null); doDeleteRitual(r.id); }}
+                      >{t.rituals.deleteYes}</button>
+                      <button className="btn-secondary" style={{flex: 1}}
+                        data-test="delete-ritual-cancel"
+                        onClick={() => setRitualToDelete(null)}>{t.rituals.deleteNo}</button>
                     </div>
                   </div>
                 </div>
