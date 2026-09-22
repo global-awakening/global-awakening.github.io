@@ -35,6 +35,23 @@ const atteso = (n, a, b) => (a === b ? ok(n) : ko(n, `atteso ${JSON.stringify(b)
   // persona riceverebbe il promemoria mentre il rituale è già iniziato.
   atteso('a T esatto vince l\'avvio, non il promemoria', classifica(INIZIO, INIZIO), 'start');
 
+  // --- La rete di sicurezza non dura più del rituale --------------------------
+  // I cinque minuti servono a recuperare un giro di cron saltato. Da quando la durata proposta
+  // è tre minuti, recuperare al quarto minuto vorrebbe dire annunciare l'inizio di un rituale
+  // già finito.
+  const TRE_MIN = 3 * 60000;
+  atteso('rituale da 3 min, T+2 → avvio',   classifica(min(2), INIZIO, TRE_MIN), 'start');
+  atteso('rituale da 3 min, T+3 → niente',  classifica(min(3), INIZIO, TRE_MIN), null);
+  atteso('rituale da 3 min, T+4 → niente',  classifica(min(4), INIZIO, TRE_MIN), null);
+  atteso('rituale da 3 min, promemoria invariato', classifica(min(-10), INIZIO, TRE_MIN), 'reminder');
+  // Un rituale lungo non accorcia niente: resta la rete piena di cinque minuti.
+  atteso('rituale da 30 min, T+4 → avvio',  classifica(min(4), INIZIO, 30 * 60000), 'start');
+  atteso('rituale da 30 min, T+6 → niente', classifica(min(6), INIZIO, 30 * 60000), null);
+  // Durata mancante o assurda: si torna alla rete piena, non al silenzio.
+  atteso('durata assente → rete piena',     classifica(min(4), INIZIO, undefined), 'start');
+  atteso('durata zero → rete piena',        classifica(min(4), INIZIO, 0), 'start');
+  atteso('durata NaN → rete piena',         classifica(min(4), INIZIO, NaN), 'start');
+
   // Una data illeggibile non deve far suonare niente a nessuno.
   atteso('istante illeggibile → niente', classifica(NaN, INIZIO), null);
   atteso('inizio illeggibile → niente',  classifica(INIZIO, NaN), null);

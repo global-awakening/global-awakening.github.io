@@ -1030,6 +1030,7 @@ const translations = {
     }
   }
 };
+const DURATA_RITUALE_PREDEFINITA = 3;
 function GlobalAwakeningPlatform() {
   const [lang, setLang] = useState('en');
   const [activeTab, setActiveTab] = useState('rituals');
@@ -1168,7 +1169,7 @@ function GlobalAwakeningPlatform() {
     sacredNumber: 11,
     date: '',
     time: '',
-    duration: 30
+    duration: DURATA_RITUALE_PREDEFINITA
   });
   React.useEffect(() => {
     expandedPostIdRef.current = expandedPostId;
@@ -3218,7 +3219,7 @@ function GlobalAwakeningPlatform() {
       sacredNumber: 11,
       date: '',
       time: '',
-      duration: 30
+      duration: DURATA_RITUALE_PREDEFINITA
     });
   };
   const createTestRitual = async () => {
@@ -6816,7 +6817,7 @@ ${ritual.description || ''}`
       ...newRitual,
       duration: parseInt(e.target.value)
     }),
-    min: "5",
+    min: "1",
     max: "180"
   })), React.createElement("div", {
     className: "grid grid-cols-2 gap-4 mt-4"
