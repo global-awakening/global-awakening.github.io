@@ -1,4 +1,7 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// Versione FISSATA, e npm: invece di esm.sh. Senza versione si prendeva l'ultima, e il
+// 22/09/2026 l'ultima aveva una dipendenza che il bundler di Supabase non riusciva a
+// risolvere: nessuna funzione era piu' pubblicabile, senza che nessuno avesse toccato niente.
+import { createClient } from 'npm:@supabase/supabase-js@2.116.0';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
