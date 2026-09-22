@@ -78,7 +78,9 @@
    *   passo       incremento di volume per passo (default 0.03)
    *   intervallo  millisecondi fra un passo e l'altro (default 60)
    *   documento   dove ascoltare il primo gesto (default `document`)
-   *   onStato     riceve 'in-riproduzione' oppure 'in-attesa-di-gesto'
+   *   onStato     riceve 'in-riproduzione', 'in-attesa-di-gesto' o 'non-disponibile'
+   *               ('non-disponibile' = il brano non si carica: un gesto non ci salverebbe)
+   *   onGesto     chiamata, in modo sincrono, nel gesto che sblocca la musica
    * @returns {function} da chiamare per smontare tutto
    */
   function avviaMusica(el, opz) {
@@ -87,13 +89,21 @@
     var documento = opz.documento || (typeof document !== 'undefined' ? document : null);
     var onStato = opz.onStato || function () {};
 
+    var onGesto = opz.onGesto || function () {};
+
     var annullato = false;
     var armato = false;
     var fermaDissolvenza = null;
+    var dissolvenzaInCorso = false;
 
     function alGesto() {
       disarma();
       if (annullato) return;
+      // Avvisa PRIMA di riprovare, in modo sincrono: da questo stesso tocco nascera' un
+      // `click`, e chi disegna l'interfaccia deve poterlo riconoscere per non scambiarlo
+      // per un comando (il pulsante dell'audio, toccato qui, silenzierebbe la musica che
+      // la persona ha appena sbloccato).
+      onGesto();
       prova();
     }
 
@@ -119,10 +129,21 @@
     // sul telefono era invisibile.
     function suPausa() {
       if (annullato) return;
+      // Solo la pausa che arriva MENTRE stiamo alzando il volume è il browser che ci blocca.
+      // Dopo, una pausa è una scelta: i comandi multimediali sulla schermata di blocco, una
+      // telefonata in arrivo. Ripartire al primo tocco, lì, sarebbe andare contro la persona.
+      if (!dissolvenzaInCorso) return;
       if (fermaDissolvenza) fermaDissolvenza();
+      dissolvenzaInCorso = false;
       arma();
     }
     el.addEventListener('pause', suPausa);
+
+    function partita() {
+      onStato('in-riproduzione');
+      dissolvenzaInCorso = true;
+      fermaDissolvenza = dissolvenza(el, volume, opz, function () { dissolvenzaInCorso = false; });
+    }
 
     function prova() {
       if (annullato) return;
@@ -135,16 +156,23 @@
         return;
       }
       if (!p || !p.then) { // browser vecchi: play() senza promise. Non sapremo mai se è andata.
-        onStato('in-riproduzione');
-        fermaDissolvenza = dissolvenza(el, volume, opz);
+        partita();
         return;
       }
       p.then(function () {
+        // Annullato mentre il play era in volo: senza questa pausa l'audio parte un istante
+        // dopo, in loop, senza piu' nessuno che lo sorvegli — a rituale finito.
+        if (annullato) { el.pause(); return; }
+        partita();
+      })['catch'](function (errore) {
         if (annullato) return;
-        onStato('in-riproduzione');
-        fermaDissolvenza = dissolvenza(el, volume, opz);
-      })['catch'](function () {
-        if (annullato) return;
+        // Un rifiuto per mancanza di gesto lo risolve un gesto. Un file che non arriva o non
+        // si riesce a decodificare, no: riprovare a ogni tocco vuol dire chiedere 18 MB a
+        // ogni tocco e lasciare la persona con un pulsante che non risponde mai piu'.
+        if (errore && errore.name && errore.name !== 'NotAllowedError') {
+          onStato('non-disponibile');
+          return;
+        }
         arma();
       });
     }

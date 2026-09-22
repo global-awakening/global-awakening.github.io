@@ -29,19 +29,24 @@ const attendi = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Un elemento audio finto. `esitoPlay` decide cosa risponde il browser, così possiamo
 // riprodurre a comando il rifiuto che sul PC non si verifica mai.
-function audioFinto({ esitoPlay = 'ok', volumeBloccato = false } = {}) {
+function audioFinto({ esitoPlay = 'ok', volumeBloccato = false, nomeErrore = 'NotAllowedError' } = {}) {
   const el = {
     paused: true,
     _volume: 1,
     chiamatePlay: 0,
     chiamatePause: 0,
     ascolti: {},
+    risolviPlay: null,          // valorizzato con esitoPlay: 'pendente'
     get volume() { return this._volume; },
     set volume(v) { if (!volumeBloccato) this._volume = v; },
     play() {
       this.chiamatePlay++;
-      if (esitoPlay === 'rifiuta') return Promise.reject(new DOMExceptionFinta());
-      if (esitoPlay === 'solleva') throw new DOMExceptionFinta();
+      if (esitoPlay === 'rifiuta') return Promise.reject(new DOMExceptionFinta(nomeErrore));
+      if (esitoPlay === 'solleva') throw new DOMExceptionFinta(nomeErrore);
+      if (esitoPlay === 'pendente') {
+        // Il brano da 18 MB ci mette: la promise resta in volo finché non la sciogliamo noi.
+        return new Promise((r) => { this.risolviPlay = () => { this.paused = false; r(); }; });
+      }
       this.paused = false;
       return Promise.resolve();
     },
@@ -56,7 +61,10 @@ function audioFinto({ esitoPlay = 'ok', volumeBloccato = false } = {}) {
   return el;
 }
 class DOMExceptionFinta extends Error {
-  constructor() { super('play() failed because the user didn\'t interact with the document first'); this.name = 'NotAllowedError'; }
+  constructor(nome) {
+    super('play() failed because the user didn\'t interact with the document first');
+    this.name = nome || 'NotAllowedError';
+  }
 }
 
 // Un documento finto: registra gli ascolti e sa simulare un tocco.
@@ -69,9 +77,10 @@ function documentoFinto() {
   };
 }
 
-const opzioni = (doc, stati) => ({
+const opzioni = (doc, stati, gesti) => ({
   volume: 0.35, passo: 0.05, intervallo: 1, documento: doc,
-  onStato: (s) => stati.push(s)
+  onStato: (s) => stati.push(s),
+  onGesto: () => { if (gesti) gesti.push('gesto'); }
 });
 
 (async () => {
@@ -93,16 +102,19 @@ const opzioni = (doc, stati) => ({
     await attendi(20);
     atteso('play() rifiutato → lo stato lo dichiara', stati[stati.length - 1], 'in-attesa-di-gesto');
     atteso('play() rifiutato → resta in ascolto del primo gesto', doc.ascolti.length > 0, true);
-    atteso('play() rifiutato → non finge di suonare', el.paused, true);
+    atteso('play() rifiutato → non dichiara mai di star suonando', stati.indexOf('in-riproduzione'), -1);
   }
 
   // 3. E al primo gesto riparte da sola: è tutto il punto della correzione.
   {
-    const el = audioFinto({ esitoPlay: 'rifiuta' }), doc = documentoFinto(), stati = [];
-    avviaMusica(el, opzioni(doc, stati));
+    const el = audioFinto({ esitoPlay: 'rifiuta' }), doc = documentoFinto(), stati = [], gesti = [];
+    avviaMusica(el, opzioni(doc, stati, gesti));
     await attendi(20);
     el.play = audioFinto().play.bind(el);   // col gesto il browser ora accetta
     doc.tocca();
+    // Dentro il gesto, prima di qualsiasi attesa: dallo stesso tocco nascerà un `click`, e il
+    // pulsante 🔊 deve poterlo riconoscere per non silenziare quello che si è appena sbloccato.
+    atteso('al primo tocco → l\'avviso arriva subito, dentro il gesto', gesti.length, 1);
     await attendi(400);
     atteso('al primo tocco → riparte', el.paused, false);
     atteso('al primo tocco → il volume sale', +el.volume.toFixed(2), 0.35);
@@ -118,19 +130,61 @@ const opzioni = (doc, stati) => ({
     atteso('play() che solleva → trattato come rifiuto', stati[stati.length - 1], 'in-attesa-di-gesto');
   }
 
-  // 5. Il secondo modo in cui il telefono ci blocca: play() passa perché il volume è a zero
-  //    (per il browser è "muto"), e la pausa arriva quando la dissolvenza lo rialza.
+  // 5. Il secondo modo in cui il telefono ci blocca, ed è quello invisibile: play() passa —
+  //    partiamo a volume zero, e per il browser "volume zero" è "muto" — e la pausa arriva
+  //    dopo, nel momento in cui la dissolvenza rialza il volume. Qui la dissolvenza è lenta
+  //    apposta: la pausa deve cadere mentre è IN CORSO, non a caso.
+  {
+    const el = audioFinto(), doc = documentoFinto(), stati = [];
+    avviaMusica(el, { volume: 0.35, passo: 0.05, intervallo: 30, documento: doc, onStato: (s) => stati.push(s) });
+    await attendi(70);
+    atteso('la dissolvenza è davvero ancora in corso', el.volume < 0.35, true);
+    el.pausaDalBrowser();
+    await attendi(30);
+    atteso('pausa durante la dissolvenza → torna in attesa di un gesto', stati[stati.length - 1], 'in-attesa-di-gesto');
+    atteso('pausa durante la dissolvenza → resta in ascolto', doc.ascolti.length > 0, true);
+  }
+
+  // 5-bis. A dissolvenza finita una pausa non è più il browser: è la persona, dai comandi
+  //    multimediali della schermata di blocco, o una telefonata in arrivo. Farla ripartire al
+  //    primo tocco sarebbe andarle contro.
   {
     const el = audioFinto(), doc = documentoFinto(), stati = [];
     avviaMusica(el, opzioni(doc, stati));
-    await attendi(10);
+    await attendi(400);
     el.pausaDalBrowser();
-    await attendi(20);
-    atteso('pausa dal browser → torna in attesa di un gesto', stati[stati.length - 1], 'in-attesa-di-gesto');
-    atteso('pausa dal browser → resta in ascolto', doc.ascolti.length > 0, true);
+    await attendi(30);
+    atteso('pausa a dissolvenza finita → non rimette nessun ascolto', doc.ascolti.length, 0);
+    atteso('pausa a dissolvenza finita → non si dichiara in attesa', stati.indexOf('in-attesa-di-gesto'), -1);
   }
 
-  // 6. Smontando tutto non devono restare ascolti che risvegliano la musica a sorpresa
+  // 6. Un brano che non arriva — offline il service worker tiene gli mp3 fuori dalla cache —
+  //    non è un problema che un gesto possa risolvere. Riprovare a ogni tocco vorrebbe dire
+  //    chiedere 18 MB a ogni tocco, e lasciare un pulsante che non risponde mai più.
+  {
+    const el = audioFinto({ esitoPlay: 'rifiuta', nomeErrore: 'NotSupportedError' });
+    const doc = documentoFinto(), stati = [];
+    avviaMusica(el, opzioni(doc, stati));
+    await attendi(20);
+    atteso('brano non disponibile → lo dichiara', stati[stati.length - 1], 'non-disponibile');
+    atteso('brano non disponibile → non resta in ascolto di gesti', doc.ascolti.length, 0);
+  }
+
+  // 7. Annullamento mentre play() è ancora in volo — il brano pesa 18 MB, succede davvero.
+  //    Senza la pausa esplicita l'audio parte un istante DOPO, in loop, senza più nessuno
+  //    che lo sorvegli: musica che suona a rituale finito e non si spegne.
+  {
+    const el = audioFinto({ esitoPlay: 'pendente' }), doc = documentoFinto(), stati = [];
+    const annulla = avviaMusica(el, opzioni(doc, stati));
+    await attendi(20);
+    annulla();
+    el.risolviPlay();            // il browser dice di sì, ma ormai è tardi
+    await attendi(30);
+    atteso('annullato con play in volo → mette in pausa', el.chiamatePause > 0, true);
+    atteso('annullato con play in volo → non resta in riproduzione', el.paused, true);
+  }
+
+  // 8. Smontando tutto non devono restare ascolti che risvegliano la musica a sorpresa
   //    dentro un rituale finito.
   {
     const el = audioFinto({ esitoPlay: 'rifiuta' }), doc = documentoFinto(), stati = [];
@@ -144,7 +198,7 @@ const opzioni = (doc, stati) => ({
     atteso('annullando → un tocco non fa ripartire niente', el.chiamatePlay, primaDelTocco);
   }
 
-  // 7. Lo spegnimento: dissolvenza e pausa vera.
+  // 9. Lo spegnimento: dissolvenza e pausa vera.
   {
     const el = audioFinto();
     el.paused = false; el.volume = 0.35;
@@ -154,7 +208,7 @@ const opzioni = (doc, stati) => ({
     atteso('spegnimento → a volume zero', +el.volume.toFixed(2), 0);
   }
 
-  // 8. Ci sono telefoni dove il volume via codice non si può cambiare. Lì la dissolvenza non
+  // 10. Ci sono telefoni dove il volume via codice non si può cambiare. Lì la dissolvenza non
   //    scenderà mai, e senza questa guardia `pause()` non verrebbe chiamato MAI: la musica
   //    continuerebbe a suonare a rituale finito, senza modo di spegnerla.
   {

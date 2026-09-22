@@ -3322,9 +3322,17 @@
           // un gesto qualsiasi della persona. Non è un dettaglio da nascondere: è l'unico
           // momento in cui possiamo dirle che le basta toccare lo schermo.
           const [musicaInAttesaDiGesto, setMusicaInAttesaDiGesto] = useState(false);
+          // Istante dell'ultimo gesto che ha sbloccato la musica. Serve al pulsante 🔊: da quel
+          // tocco nasce un `click`, e senza questa memoria il pulsante silenzierebbe proprio la
+          // musica che la persona ha appena fatto partire toccandolo.
+          const sbloccoMusicaRef = React.useRef(0);
           React.useEffect(() => {
             const el = musicRef.current;
             if (!el) return;
+            // Se music-helpers.js non è arrivato — finestra di aggiornamento del service
+            // worker, rete ballerina, un'estensione che lo blocca — l'app deve restare muta,
+            // non andare in bianco: un'eccezione qui dentro smonta tutto l'albero React.
+            if (typeof MusicHelpers === 'undefined') return;
             if (musicOn) {
               // Sul telefono la musica NON parte da sola. Chi arriva da una notifica apre una
               // pagina che non ha ancora toccato, e i browser dei telefoni non fanno uscire
@@ -3334,6 +3342,7 @@
               // quindi non possiamo aspettarci che vada a cercare un pulsante.
               return MusicHelpers.avviaMusica(el, {
                 volume: MUSIC_VOLUME,
+                onGesto: () => { sbloccoMusicaRef.current = Date.now(); },
                 onStato: (stato) => setMusicaInAttesaDiGesto(stato === 'in-attesa-di-gesto')
               });
             }
@@ -3780,10 +3789,15 @@
                       <div style={{position: 'relative'}}>
                         {(inLiveRitual || inTelepathySession) && (
                           <button
-                            // In attesa di un gesto il tocco NON deve silenziare: è il tocco
-                            // stesso che sblocca la musica, e silenziarla proprio allora è
-                            // l'opposto di quello che la persona sta chiedendo.
-                            onClick={() => { if (!musicaInAttesaDiGesto) toggleMusic(); }}
+                            // Il `click` che nasce dal tocco con cui la musica si è appena
+                            // sbloccata non deve silenziarla. Si guarda l'istante del gesto e
+                            // non `musicaInAttesaDiGesto`: quello è uno stato React, e fra il
+                            // dito che scende e il click il ri-disegno ha già fatto in tempo a
+                            // rimetterlo a falso — la guardia non scatterebbe mai.
+                            onClick={() => {
+                              if (Date.now() - sbloccoMusicaRef.current < 1000) return;
+                              toggleMusic();
+                            }}
                             className="btn-secondary px-3 py-2"
                             style={{fontSize: '0.8rem'}}
                             title={musicaInAttesaDiGesto ? t.musicTap : undefined}

@@ -3443,12 +3443,17 @@ function GlobalAwakeningPlatform() {
   const inTelepathySession = !!partner && !sessionEnded;
   const musicOn = (inLiveRitual || inTelepathySession) && !musicMuted;
   const [musicaInAttesaDiGesto, setMusicaInAttesaDiGesto] = useState(false);
+  const sbloccoMusicaRef = React.useRef(0);
   React.useEffect(() => {
     const el = musicRef.current;
     if (!el) return;
+    if (typeof MusicHelpers === 'undefined') return;
     if (musicOn) {
       return MusicHelpers.avviaMusica(el, {
         volume: MUSIC_VOLUME,
+        onGesto: () => {
+          sbloccoMusicaRef.current = Date.now();
+        },
         onStato: stato => setMusicaInAttesaDiGesto(stato === 'in-attesa-di-gesto')
       });
     }
@@ -4107,7 +4112,8 @@ function GlobalAwakeningPlatform() {
     }
   }, (inLiveRitual || inTelepathySession) && React.createElement("button", {
     onClick: () => {
-      if (!musicaInAttesaDiGesto) toggleMusic();
+      if (Date.now() - sbloccoMusicaRef.current < 1000) return;
+      toggleMusic();
     },
     className: "btn-secondary px-3 py-2",
     style: {
