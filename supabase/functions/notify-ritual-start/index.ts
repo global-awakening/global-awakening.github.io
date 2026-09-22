@@ -15,7 +15,12 @@
  * Il rischio è asimmetrico e detta tutto il resto: perdere una notifica è spiacevole,
  * bombardare qualcuno gli fa spegnere le push per sempre, e il permesso non torna.
  */
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// npm: e non esm.sh, e con la versione FISSATA. Il 22/09/2026 questa riga, che diceva
+// `https://esm.sh/@supabase/supabase-js@2`, ha impedito ogni pubblicazione: senza versione
+// prendeva l'ultima, e esm.sh non aveva pubblicato bene una dipendenza di quella
+// (`auth-js@2.117.0` -> Module not found). La funzione si e' rotta da sola, senza che nessuno
+// la toccasse, e se ne e' accorto solo il primo che ha provato a ripubblicarla.
+import { createClient } from 'npm:@supabase/supabase-js@2.116.0';
 import webpush from 'npm:web-push@3.6.7';
 import { classifica, istanteInizio } from './finestre.mjs';
 import { decidiDopoErrore } from './esito.mjs';
