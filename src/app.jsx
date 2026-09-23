@@ -259,6 +259,8 @@
               deleteYes: "Delete",
               deleteNo: "Keep it",
               deleteStarted: "Too late: the ritual has already started.",
+              thresholdTap: "Tap to enter the ritual",
+              thresholdHint: "The music will start with your touch",
               deleteFailed: "The ritual could not be deleted.",
               createRitual: "Propose Ritual",
               noRituals: "No rituals yet. Be the first to propose one!",
@@ -602,6 +604,8 @@
               deleteYes: "Cancella",
               deleteNo: "Lascialo",
               deleteStarted: "Troppo tardi: il rituale è già iniziato.",
+              thresholdTap: "Tocca per entrare nel rituale",
+              thresholdHint: "La musica partirà con il tuo tocco",
               deleteFailed: "Non è stato possibile cancellare il rituale.",
               createRitual: "Proponi Rituale",
               noRituals: "Nessun rituale ancora. Sii il primo a proporne uno!",
@@ -3376,8 +3380,9 @@
               return next;
             });
           };
-          const inLiveRitual = rituals.some(r =>
+          const ritualeLive = rituals.find(r =>
             Array.isArray(r.participants) && r.participants.includes(sessionId) && getRitualStatus(r) === 'live');
+          const inLiveRitual = !!ritualeLive;
           const inTelepathySession = !!partner && !sessionEnded;
           const musicOn = (inLiveRitual || inTelepathySession) && !musicMuted;
           // Vero quando il browser si è rifiutato di far partire la musica e stiamo aspettando
@@ -3388,6 +3393,20 @@
           // tocco nasce un `click`, e senza questa memoria il pulsante silenzierebbe proprio la
           // musica che la persona ha appena fatto partire toccandolo.
           const sbloccoMusicaRef = React.useRef(0);
+          // La soglia del rituale (23/09/2026). Chi arriva da una notifica trovava il megafono
+          // acceso e nessun suono, finche' per caso non toccava lo schermo. Il tocco non si puo'
+          // evitare, ma si puo' chiedere: un invito a tutto schermo che fa da ingresso.
+          // Compare solo se il browser ha davvero bloccato l'audio: dove la musica parte da sola
+          // non si vede. Sparisce con un attimo di ritardo dopo lo sblocco, perche' il `click`
+          // nato dal tocco arriva dopo e deve cadere sulla soglia, non sul pulsante sotto.
+          const [sogliaAperta, setSogliaAperta] = useState(false);
+          const tocchiSogliaRef = React.useRef(0);
+          React.useEffect(() => {
+            if (!inLiveRitual) { setSogliaAperta(false); return; }
+            if (musicaInAttesaDiGesto) { tocchiSogliaRef.current = 0; setSogliaAperta(true); return; }
+            const timer = setTimeout(() => setSogliaAperta(false), 800);
+            return () => clearTimeout(timer);
+          }, [musicaInAttesaDiGesto, inLiveRitual]);
           React.useEffect(() => {
             const el = musicRef.current;
             if (!el) return;
@@ -5630,6 +5649,32 @@ ${ritual.description || ''}` })}
 
               {/* preload="none": il brano pesa, non lo scarica chi non entra mai in una sessione */}
               <audio ref={musicRef} src={MUSIC_SRC} loop preload="none" />
+              {sogliaAperta && ritualeLive && (
+                <div
+                  data-test="soglia-rituale"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={t.rituals.thresholdTap}
+                  // Chiudere al primo click prometterebbe una musica che forse non e' ancora
+                  // partita: la soglia se ne va da sola quando l'audio si sblocca. Un secondo
+                  // tocco la chiude comunque — non deve mai poter imprigionare l'app.
+                  onClick={() => {
+                    if (!musicaInAttesaDiGesto || tocchiSogliaRef.current++ >= 1) setSogliaAperta(false);
+                  }}
+                  style={{
+                    position: 'fixed', inset: 0, zIndex: 10000,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    gap: '1rem', padding: '2rem', textAlign: 'center', cursor: 'pointer',
+                    background: 'rgba(10, 6, 30, 0.88)', backdropFilter: 'blur(6px)',
+                    animation: 'rso-fade 0.4s ease-out'
+                  }}
+                >
+                  <div style={{fontSize: '3.5rem', animation: 'pulse-glow 2.5s ease-in-out infinite', borderRadius: '50%'}}>✨</div>
+                  <div className="text-white" style={{fontSize: '1.5rem', fontWeight: 600}}>{ritualeLive.name}</div>
+                  <div style={{color: '#c4b5fd', fontSize: '1.15rem'}}>{t.rituals.thresholdTap}</div>
+                  <div style={{color: '#a78bfa', fontSize: '0.85rem', opacity: 0.8}}>{t.rituals.thresholdHint}</div>
+                </div>
+              )}
               {renderFooter()}
               {renderPrivacyModal()}
             </div>
