@@ -72,6 +72,26 @@ const fail = (m) => { console.log('  ❌ ' + m); failed++; process.exitCode = 1;
   if (reg) pass('service worker registrato e attivo'); else fail('service worker NON registrato');
   if (errors.length === 0) pass('nessun pageerror'); else fail('pageerror: ' + errors.join(' | '));
 
+  // 2-bis. Il manifest deve arrivare fresco anche a chi ha già un service worker. Il 23/09/2026
+  // era in cache-first: la correzione dell'icona d'avvio non arrivava al telefono nemmeno
+  // disinstallando l'app (la cache è di Chrome, sopravvive). Si mette in cache un manifest
+  // finto e vecchio e si controlla che la pagina riceva comunque quello vero.
+  if (reg) {
+    await page.reload({ waitUntil: 'domcontentloaded' });   // ora la pagina è controllata dal SW
+    const esito = await page.evaluate(async () => {
+      if (!navigator.serviceWorker.controller) return 'nessun controller';
+      for (const k of await caches.keys()) {
+        const c = await caches.open(k);
+        await c.put(new URL('manifest.webmanifest', location.href).href,
+          new Response('{"vecchio":true}', { headers: { 'Content-Type': 'application/manifest+json' } }));
+      }
+      const m = await (await fetch('manifest.webmanifest')).json();
+      return m.vecchio ? 'vecchio' : (m.name ? 'fresco' : 'strano');
+    }).catch((e) => 'errore: ' + e.message);
+    if (esito === 'fresco') pass('il manifest arriva fresco anche con una copia vecchia in cache');
+    else fail(`il manifest arriva dalla cache (${esito}): icone e nomi nuovi non raggiungono le app installate`);
+  }
+
   // 3. iOS — il popup "Aggiungi a Home" deve aprirsi ANCHE dalla schermata di ingresso.
   //    È l'unica schermata che un visitatore nuovo vede, e su iPhone non esiste un prompt
   //    automatico: se lì il bottone non fa nulla, l'app in pratica non è installabile.
