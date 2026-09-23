@@ -29,7 +29,11 @@
 
   // Gli eventi che il browser considera un gesto vero. `click` non basta da solo: su un
   // telefono arriva tardi, e comunque non arriva mai se la persona scorre soltanto.
-  var EVENTI_GESTO = ['pointerdown', 'touchstart', 'keydown'];
+  // Per la specifica HTML un dito "attiva" la pagina quando SI ALZA (pointerup/touchend), non
+  // quando scende: un play() tentato su pointerdown/touchstart da un tocco viene respinto, e
+  // senza la risalita in elenco la musica aspettava un secondo tocco (rilievo del 23/09/2026).
+  // La discesa resta per mouse e tastiera, che attivano la pagina già lì.
+  var EVENTI_GESTO = ['pointerdown', 'touchstart', 'keydown', 'pointerup', 'touchend'];
 
   var VOLUME_PREDEFINITO = 0.35;
   var PASSO_PREDEFINITO = 0.03;
