@@ -12,10 +12,14 @@ importScripts('push-helpers.js');
 // v8: aggiunge music-helpers.js. Senza il bump, chi ha gia' l'app installata tiene il service
 // worker vecchio, che quel file non lo conosce: offline la pagina si caricherebbe senza
 // MusicHelpers e la musica non partirebbe piu' per niente.
-const CACHE = 'ga-pwa-v8';
+// v9: il manifest passa a network-first. Era in cache-first: la nuova icona d'avvio (23/09/2026)
+// non arrivava al telefono nemmeno reinstallando l'app, perche' la cache e' di Chrome e
+// sopravvive. Il bump serve a far ripartire i service worker gia' installati con la regola nuova.
+const CACHE = 'ga-pwa-v9';
 const PRECACHE = [
   'app.html', 'app.js', 'push-helpers.js', 'music-helpers.js', 'index.html', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
+  'icons/icon-any-192.png', 'icons/icon-any-512.png',
   'https://unpkg.com/react@18.3.1/umd/react.production.min.js',
   'https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js',
   'https://cdn.jsdelivr.net/npm/@emailjs/browser@4.4.1/dist/email.min.js'
@@ -56,7 +60,8 @@ self.addEventListener('fetch', (e) => {
   // app.js DEVE essere preso fresco, altrimenti le PWA installate restano sulla versione vecchia.
   // music-helpers.js e' codice dell'app quanto app.js: se stesse fra i file cache-first, una
   // correzione all'avvio della musica non arriverebbe mai a chi ha gia' l'app installata.
-  const isFresh = req.mode === 'navigate' || url.pathname.endsWith('/app.html') || url.pathname.endsWith('/app.js') || url.pathname.endsWith('/music-helpers.js') || url.pathname.endsWith('/');
+  // Lo stesso vale per il manifest: e' da li' che Android legge icone, nome e colori dell'app.
+  const isFresh = req.mode === 'navigate' || url.pathname.endsWith('/app.html') || url.pathname.endsWith('/app.js') || url.pathname.endsWith('/music-helpers.js') || url.pathname.endsWith('/manifest.webmanifest') || url.pathname.endsWith('/');
   if (isFresh) {
     e.respondWith((async () => {
       try {
