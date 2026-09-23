@@ -3373,13 +3373,27 @@ function GlobalAwakeningPlatform() {
       await iscriviPush();
     } catch (_) {}
   };
+  const joiningRef = useRef(new Set());
   const joinRitual = async ritualId => {
     const ritual = rituals.find(r => r.id === ritualId);
     if (!ritual || ritual.participants.includes(sessionId)) return;
-    await supabase.rpc('join_ritual', {
+    if (joiningRef.current.has(ritualId)) return;
+    joiningRef.current.add(ritualId);
+    const {
+      error
+    } = await supabase.rpc('join_ritual', {
       p_ritual_id: ritualId,
       p_session_id: sessionId
     });
+    joiningRef.current.delete(ritualId);
+    if (error) {
+      showErrorToast();
+      return;
+    }
+    setRituals(prev => prev.map(r => r.id === ritualId && !r.participants.includes(sessionId) ? {
+      ...r,
+      participants: [...r.participants, sessionId]
+    } : r));
     if (ritual.creator && ritual.creator !== nickname) {
       await supabase.from('notifications').insert({
         user_nickname: ritual.creator,
