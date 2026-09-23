@@ -19,6 +19,15 @@ const fail = (m) => { console.log('  ❌ ' + m); failed++; process.exitCode = 1;
     const r = await fetch(`${BASE}/${ic.src}`);
     if (r.ok) pass(`icona ${ic.src} 200`); else fail(`icona ${ic.src} HTTP ${r.status}`);
   }
+  // Un'icona «any maskable» fa rimpicciolire a Android l'icona quadrata su un disco bianco
+  // nella schermata d'avvio (segnalato da Irene il 23/09/2026). Le due parti restano separate:
+  // «any» = stella su fondo trasparente, «maskable» = quadrato viola a tutto campo.
+  const purposes = (manifest.icons || []).map((ic) => (ic.purpose || 'any').split(/\s+/));
+  if (purposes.every((p) => !(p.includes('any') && p.includes('maskable')))) pass('nessuna icona «any maskable» insieme');
+  else fail('c\'è un\'icona «any maskable»: sulla schermata d\'avvio Android la mette su un disco bianco');
+  if (purposes.some((p) => p.includes('any')) && purposes.some((p) => p.includes('maskable'))) pass('ci sono sia un\'icona «any» sia una «maskable»');
+  else fail('manca un\'icona «any» o una «maskable»');
+
   const swr = await fetch(`${BASE}/sw.js`);
   if (swr.ok) pass('sw.js raggiungibile'); else fail(`sw.js HTTP ${swr.status}`);
 
