@@ -3270,10 +3270,20 @@
             try { await iscriviPush(); } catch (_) { /* si riproverà al prossimo Partecipa */ }
           };
 
+          // Adesioni in corso: due tocchi rapidi su «Partecipa» mandavano due notifiche al creatore.
+          const joiningRef = useRef(new Set());
           const joinRitual = async (ritualId) => {
             const ritual = rituals.find(r => r.id === ritualId);
             if (!ritual || ritual.participants.includes(sessionId)) return;
-            await supabase.rpc('join_ritual', { p_ritual_id: ritualId, p_session_id: sessionId });
+            if (joiningRef.current.has(ritualId)) return;
+            joiningRef.current.add(ritualId);
+            const { error } = await supabase.rpc('join_ritual', { p_ritual_id: ritualId, p_session_id: sessionId });
+            joiningRef.current.delete(ritualId);
+            if (error) { showErrorToast(); return; }
+            // join_ritual non restituisce la riga: senza questo il pulsante cambiava solo al
+            // ricaricamento successivo (fino a 10 secondi in cui sembrava non fosse successo niente).
+            setRituals(prev => prev.map(r => r.id === ritualId && !r.participants.includes(sessionId)
+              ? { ...r, participants: [...r.participants, sessionId] } : r));
             if (ritual.creator && ritual.creator !== nickname) {
               await supabase.from('notifications').insert({
                 user_nickname: ritual.creator,
