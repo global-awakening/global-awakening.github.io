@@ -9,6 +9,9 @@
  * Esecuzione: node test-rituali-impersonation.js
  * Prerequisito: aver applicato il BLOCCO 1 di supabase/sql/07_rituali_step_b.sql.
  */
+const { requireServiceKey, createTestAccount, deleteTestAccount } = require('./test-helpers');
+requireServiceKey();
+
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
 
@@ -45,16 +48,16 @@ const ritParams = (creator, hash, name) => ({
 });
 
 async function cleanup() {
-  await sb(`profiles?email=eq.${encodeURIComponent(EMAIL)}`, { method: 'DELETE' });
+  await deleteTestAccount(EMAIL);
   await rpc('cleanup_expired_rituals', {});
 }
 
 (async () => {
   console.log('— Setup —');
   await cleanup();
-  await sb('profiles', { method: 'POST', body: JSON.stringify({
+  await createTestAccount({
     session_id: SID, nickname: REG, email: EMAIL, password_hash: HASH,
-    bio: '', country: '', interests: [], telepathy_score: 0, telepathy_best: 0, show_telepathy_score: true }) });
+    bio: '', country: '', interests: [], telepathy_score: 0, telepathy_best: 0, show_telepathy_score: true });
 
   console.log('— create_ritual —');
   const okReg = await rpc('create_ritual', ritParams(REG, HASH, `R-ok-${TS}`));

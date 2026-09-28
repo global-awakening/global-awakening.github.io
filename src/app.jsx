@@ -3,9 +3,10 @@
 
         // Supabase is initialized in the script tag above
 
-        // Hash legacy (SHA-256 semplice). Mantenuto SOLO per verificare account vecchi
-        // e migrarli a PBKDF2 al primo login (vedi verifyPassword / handleLogin). Non usarlo
-        // più per memorizzare nuove password: usare deriveStrongHash.
+        // Hash legacy (SHA-256 semplice). Mantenuto SOLO per il login (26_): il browser lo manda
+        // come p_legacy_hash a login_with_password, che lo usa esclusivamente per riconoscere e
+        // migrare gli account non ancora passati a PBKDF2. Non usarlo più per memorizzare nuove
+        // password: usare deriveStrongHash.
         async function hashPassword(password) {
           const encoder = new TextEncoder();
           const data = encoder.encode(password);
@@ -16,8 +17,9 @@
 
         // C1: hash robusto PBKDF2-SHA256 con salt (16 byte) e 100k iterazioni.
         // Formato autodescrittivo: "pbkdf2$<iter>$<saltB64>$<hashB64>".
-        // Per un nuovo hash: salt random. Per verifica: passare salt+iter dell'hash memorizzato
-        // (ricostruisce la stessa stringa se la password combacia).
+        // Per un nuovo hash: salt random. Per il login (26_): passare salt+iter ricevuti da
+        // get_login_params (ricostruisce la stessa stringa se la password combacia; la verifica
+        // avviene lato server in login_with_password).
         async function deriveStrongHash(password, saltBytes, iterations) {
           const enc = new TextEncoder();
           const salt = saltBytes || crypto.getRandomValues(new Uint8Array(16));
@@ -28,27 +30,14 @@
           return `pbkdf2$${iter}$${b64(salt)}$${b64(bits)}`;
         }
 
-        // Verifica password contro l'hash memorizzato. Dual-path:
-        //  - "pbkdf2$..." → ricalcola con lo stesso salt/iter e confronta.
-        //  - altrimenti (SHA-256 hex legacy) → confronta con hashPassword, ok ma legacy=true
-        //    (il chiamante deve ri-hashare a PBKDF2 = migrazione).
-        async function verifyPassword(password, stored) {
-          if (!stored) return { ok: false };
-          if (stored.indexOf('pbkdf2$') === 0) {
-            const parts = stored.split('$'); // ['pbkdf2', iter, saltB64, hashB64]
-            const iter = parseInt(parts[1], 10);
-            const salt = Uint8Array.from(atob(parts[2]), c => c.charCodeAt(0));
-            const candidate = await deriveStrongHash(password, salt, iter);
-            return { ok: candidate === stored };
-          }
-          const legacy = await hashPassword(password);
-          return { ok: legacy === stored, legacy: true };
-        }
-
         // Validazione formato email lato client (A8): blocca submit con email malformate.
         function isValidEmail(email) {
           return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
         }
+
+        // Le colonne pubbliche di profiles. Email e hash non si leggono da qui: arrivano solo
+        // dalle RPC di login, a chi ha la password.
+        const PUBLIC_PROFILE_COLUMNS = 'session_id,nickname,bio,starseed_type,avatar,country,interests,experience_level,telepathy_score,telepathy_best,show_telepathy_score';
 
         const Star = (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>;
         const Brain = (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"></path></svg>;
@@ -138,8 +127,8 @@
             passwordOptional: "Password (optional)",
             emailPlaceholder: "Email address",
             usernamePlaceholder: "Choose username...",
-            wrongPassword: "Wrong password",
-            emailNotFound: "No account found with this email",
+            invalidCredentials: "Email or password not correct",
+            tooManyAttempts: "Too many attempts, try again in a few minutes",
             emailAlreadyUsed: "This email is already registered",
             usernameAlreadyUsed: "This username is already taken",
             fillAllFields: "Please fill in all fields",
@@ -162,6 +151,9 @@
             setPassword: "Set Password",
             changePassword: "Change Password",
             passwordSet: "Password set!",
+            profileSaveFailed: "Could not save your profile. Please log in again.",
+            passwordChangeFailed: "Could not change the password. Please log in again.",
+            registrationError: "Registration failed. Please try again.",
             newAccountCreated: "Account created! Welcome!",
             tabGuest: "Guest",
             tabLogin: "Login",
@@ -174,11 +166,11 @@
             newPasswordPlaceholder: "New password",
             confirmPasswordPlaceholder: "Confirm new password",
             passwordsNoMatch: "Passwords do not match",
-            resetEmailSent: "Email sent! Check your inbox and click the link.",
+            resetEmailSent: "If the address is registered, we've sent you an email. Click the link inside.",
             resetTokenInvalid: "Link invalid or expired. Please request a new one.",
             resetSuccess: "Password updated! You can now log in.",
             setNewPassword: "Set new password",
-            magicLinkSent: "Email sent! Click the link to log in.",
+            magicLinkSent: "If the address is registered, we've sent you a login link.",
             magicLinkInvalid: "Link invalid or expired. Please request a new one.",
             sendMagicLink: "Send login link",
             magicLinkHint: "Login with magick link →",
@@ -483,8 +475,8 @@
             passwordOptional: "Password (opzionale)",
             emailPlaceholder: "Indirizzo email",
             usernamePlaceholder: "Scegli un username...",
-            wrongPassword: "Password errata",
-            emailNotFound: "Nessun account trovato con questa email",
+            invalidCredentials: "Email o password non corretti",
+            tooManyAttempts: "Troppi tentativi, riprova tra qualche minuto",
             emailAlreadyUsed: "Questa email e' gia' registrata",
             usernameAlreadyUsed: "Questo username e' gia' in uso",
             fillAllFields: "Compila tutti i campi",
@@ -507,6 +499,9 @@
             setPassword: "Imposta Password",
             changePassword: "Cambia Password",
             passwordSet: "Password impostata!",
+            profileSaveFailed: "Non è stato possibile salvare il profilo. Rientra e riprova.",
+            passwordChangeFailed: "Non è stato possibile cambiare la password. Rientra e riprova.",
+            registrationError: "Registrazione non riuscita. Riprova.",
             newAccountCreated: "Account creato! Benvenuto!",
             tabGuest: "Ospite",
             tabLogin: "Accedi",
@@ -519,11 +514,11 @@
             newPasswordPlaceholder: "Nuova password",
             confirmPasswordPlaceholder: "Conferma nuova password",
             passwordsNoMatch: "Le password non coincidono",
-            resetEmailSent: "Email inviata! Controlla la tua casella e clicca il link.",
+            resetEmailSent: "Se l'indirizzo è registrato, ti abbiamo scritto. Clicca il link nell'email.",
             resetTokenInvalid: "Link non valido o scaduto. Richiedine uno nuovo.",
             resetSuccess: "Password aggiornata! Puoi ora accedere.",
             setNewPassword: "Imposta nuova password",
-            magicLinkSent: "Email inviata! Clicca il link per accedere.",
+            magicLinkSent: "Se l'indirizzo è registrato, ti abbiamo mandato un link per entrare.",
             magicLinkInvalid: "Link non valido o scaduto. Richiedine uno nuovo.",
             sendMagicLink: "Invia link di accesso",
             magicLinkHint: "Login con magick link →",
@@ -956,9 +951,10 @@
             return m ? telepathySymbols.slice(0, parseInt(m[1], 10)) : telepathySymbols;
           };
 
-          // Classifica telepatia: top 10 per match telepatici totali (lettura sola da telepathy_scores).
+          // Classifica telepatia: top 10 per match telepatici totali, via RPC pubblica
+          // (SECURITY DEFINER) — non legge più telepathy_scores direttamente.
           const loadLeaderboard = async () => {
-            const { data } = await supabase.from('telepathy_scores').select('*').order('matches_count', { ascending: false }).limit(10);
+            const { data } = await supabase.rpc('get_telepathy_leaderboard', { p_limit: 10 });
             setLeaderboard(Array.isArray(data) ? data : []);
           };
           // La classifica è in fondo alla lobby (sempre visibile): caricala all'ingresso in lobby telepatia.
@@ -1330,7 +1326,7 @@
             let cancelled = false;
             (async () => {
               try {
-                const { data } = await supabase.from('telepathy_scores').select('rounds_count,matches_count').eq('user_id', sessionId);
+                const { data } = await supabase.rpc('get_my_telepathy_totals', { p_user_id: sessionId, p_password_hash: null });
                 if (cancelled || !data || data.length === 0) return;
                 const r = data[0].rounds_count || 0;
                 const m = data[0].matches_count || 0;
@@ -1669,13 +1665,15 @@
           // loggato/registrato (user_id = email). Tutta la transazione (sum + upsert + delete
           // riga guest) avviene server-side nella RPC merge_telepathy_scores con SECURITY
           // DEFINER — bypassa la policy DELETE auth.uid che altrimenti lascerebbe la riga
-          // guest orfana.
-          const mergeGuestTelepathyData = async (oldSid, newUserId, currentNickname) => {
-            if (!oldSid || !newUserId || oldSid === newUserId) return null;
+          // guest orfana. La RPC (26_, 4 parametri) verifica anche la credenziale dell'account
+          // di destinazione: senza un hash valido rifiuta la fusione (RAISE 'Auth failed').
+          const mergeGuestTelepathyData = async (oldSid, newUserId, currentNickname, credenziale) => {
+            if (!oldSid || !newUserId || oldSid === newUserId || !credenziale) return null;
             const { data, error } = await supabase.rpc('merge_telepathy_scores', {
               p_old_user_id: oldSid,
               p_new_user_id: newUserId,
-              p_nickname: currentNickname || 'Anonymous'
+              p_nickname: currentNickname || 'Anonymous',
+              p_password_hash: credenziale
             });
             if (error) {
               console.warn('merge_telepathy_scores rpc failed', error);
@@ -1709,52 +1707,39 @@
             const prevGuestSid = sessionId;
             const wasGuest = !userEmail;
 
-            // Search profile by email
+            // Login lato server (26_): il browser non vede più l'hash salvato. Riceve solo sale e
+            // iterazioni, calcola l'hash e lo manda; manda anche l'SHA-256 vecchio, che il server
+            // usa solo per gli account non ancora migrati.
             setAuthLoading(true);
-            const { data, error } = await supabase.from('profiles').select('*').eq('email', email);
-            if (error) {
-              setLoginError(t.connectionError);
-              setAuthLoading(false);
-              return;
-            }
-            if (!data || data.length === 0) {
-              setLoginError(t.emailNotFound);
-              setAuthLoading(false);
-              return;
-            }
-
-            const existing = data[0];
-            // C1: verifica dual-path (PBKDF2 nuovo schema, fallback SHA-256 legacy).
-            let verify;
+            let esito;
+            let effectiveHash;
             try {
-              verify = await verifyPassword(pw, existing.password_hash);
+              const { data: par, error: parErr } = await supabase.rpc('get_login_params', { p_email: email });
+              if (parErr || !par || !par.salt) throw new Error('params');
+              const salt = Uint8Array.from(atob(par.salt), c => c.charCodeAt(0));
+              effectiveHash = await deriveStrongHash(pw, salt, par.iter);
+              const legacyHash = await hashPassword(pw);
+              const { data, error } = await supabase.rpc('login_with_password', {
+                p_email: email, p_hash: effectiveHash, p_legacy_hash: legacyHash
+              });
+              if (error || !data) throw new Error('login');
+              esito = data;
             } catch (e) {
               setLoginError(t.connectionError);
               setAuthLoading(false);
               return;
             }
-            if (existing.password_hash && !verify.ok) {
-              setLoginError(t.wrongPassword);
+            if (!esito.ok) {
+              setLoginError(esito.motivo === 'troppi_tentativi' ? t.tooManyAttempts : t.invalidCredentials);
               setAuthLoading(false);
               return;
             }
-            // Hash da tenere lato client (deve combaciare con lo stored: serve a Step B).
-            // Se l'account era legacy (SHA-256) e la password combacia → ri-hash PBKDF2 = migrazione.
-            let effectiveHash = existing.password_hash;
-            if (verify.ok && verify.legacy) {
-              try {
-                effectiveHash = await deriveStrongHash(pw);
-                await supabase.from('profiles').update({ password_hash: effectiveHash }).eq('session_id', existing.session_id);
-              } catch (e) {
-                effectiveHash = existing.password_hash; // upgrade fallito: non bloccare il login
-              }
-            }
+            const existing = esito.profilo;
 
-            // Match — load session_id and profile
             setSessionId(existing.session_id);
             localStorage.setItem('ga_session_id', existing.session_id);
             setPasswordHash(effectiveHash);
-            if (effectiveHash) localStorage.setItem('ga_pwhash', effectiveHash);
+            localStorage.setItem('ga_pwhash', effectiveHash);
             setUserEmail(email);
             setIsGuest(false);
             const loaded = {
@@ -1778,16 +1763,16 @@
             // Fusione dati guest: se l'utente ha giocato come guest in questo browser
             // PRIMA del login, sposta i suoi round/matches sull'account.
             if (wasGuest) {
-              const merged = await mergeGuestTelepathyData(prevGuestSid, email, existing.nickname || 'Anonymous');
+              const merged = await mergeGuestTelepathyData(prevGuestSid, email, existing.nickname || 'Anonymous', effectiveHash);
               if (merged) {
                 setTotalRounds(merged.rounds_count);
                 setTotalMatches(merged.matches_count);
                 localStorage.setItem('telepathy_score', String(merged.rounds_count));
                 localStorage.setItem('telepathy_best', String(merged.matches_count));
-                await supabase.from('profiles').update({
-                  telepathy_score: merged.rounds_count,
-                  telepathy_best: merged.matches_count
-                }).eq('email', email);
+                await supabase.rpc('update_my_profile', {
+                  p_nickname: existing.nickname, p_password_hash: effectiveHash,
+                  p_fields: { telepathy_score: merged.rounds_count, telepathy_best: merged.matches_count }
+                });
               }
             }
             setAuthLoading(false);
@@ -1814,24 +1799,6 @@
             const prevGuestSid = sessionId;
             const wasGuest = !userEmail;
 
-            // Check if email already exists
-            const { data: emailCheck, error: emailErr } = await supabase.from('profiles').select('*').eq('email', email);
-            if (emailErr) { setLoginError(t.connectionError); setAuthLoading(false); return; }
-            if (emailCheck && emailCheck.length > 0) {
-              setLoginError(t.emailAlreadyUsed);
-              setAuthLoading(false);
-              return;
-            }
-
-            // Check if nickname already exists
-            const { data: nickCheck, error: nickErr } = await supabase.from('profiles').select('*').eq('nickname', name);
-            if (nickErr) { setLoginError(t.connectionError); setAuthLoading(false); return; }
-            if (nickCheck && nickCheck.length > 0) {
-              setLoginError(t.usernameAlreadyUsed);
-              setAuthLoading(false);
-              return;
-            }
-
             let hash;
             try {
               hash = await deriveStrongHash(pw);
@@ -1840,33 +1807,23 @@
               setAuthLoading(false);
               return;
             }
-            setPasswordHash(hash);
-            localStorage.setItem('ga_pwhash', hash);
             const newSid = Date.now() + '-' + Math.random();
-            setSessionId(newSid);
-            localStorage.setItem('ga_session_id', newSid);
-
-            const { error: insertError } = await supabase.from('profiles').insert({
-              session_id: newSid,
-              nickname: name,
-              email: email,
-              password_hash: hash,
-              bio: '',
-              starseed_type: '',
-              avatar: '',
-              country: '',
-              interests: [],
-              experience_level: '',
-              telepathy_score: 0,
-              telepathy_best: 0,
-              show_telepathy_score: true
+            // Unicità di email e nickname decisa dal server (26_), non da due controlli nel browser.
+            const { data: reg, error: regErr } = await supabase.rpc('register_account', {
+              p_session_id: newSid, p_nickname: name, p_email: email, p_hash: hash
             });
-
-            if (insertError) {
-              setLoginError(t.registrationError || 'Registration failed. Please try again.');
+            if (regErr || !reg) { setLoginError(t.connectionError); setAuthLoading(false); return; }
+            if (!reg.ok) {
+              const msg = { email_in_uso: t.emailAlreadyUsed, nickname_in_uso: t.usernameAlreadyUsed,
+                            troppi_tentativi: t.tooManyAttempts }[reg.motivo];
+              setLoginError(msg || t.registrationError || 'Registration failed. Please try again.');
               setAuthLoading(false);
               return;
             }
+            setPasswordHash(hash);
+            localStorage.setItem('ga_pwhash', hash);
+            setSessionId(newSid);
+            localStorage.setItem('ga_session_id', newSid);
 
             setLoginSuccess(t.newAccountCreated);
             localStorage.setItem('ga_nickname', name);
@@ -1879,19 +1836,32 @@
 
             // Fusione dati guest sull'account appena creato
             if (wasGuest) {
-              const merged = await mergeGuestTelepathyData(prevGuestSid, email, name);
+              const merged = await mergeGuestTelepathyData(prevGuestSid, email, name, hash);
               if (merged) {
                 setTotalRounds(merged.rounds_count);
                 setTotalMatches(merged.matches_count);
                 localStorage.setItem('telepathy_score', String(merged.rounds_count));
                 localStorage.setItem('telepathy_best', String(merged.matches_count));
-                await supabase.from('profiles').update({
-                  telepathy_score: merged.rounds_count,
-                  telepathy_best: merged.matches_count
-                }).eq('email', email);
+                await supabase.rpc('update_my_profile', {
+                  p_nickname: name, p_password_hash: hash,
+                  p_fields: { telepathy_score: merged.rounds_count, telepathy_best: merged.matches_count }
+                });
               }
             }
             setAuthLoading(false);
+          };
+
+          // Token ed email li fa il server (send-account-email). SUPABASE_URL e SB_HEADERS sono
+          // i globali definiti in app.html accanto al client REST.
+          const inviaEmailAccount = async (tipo, email) => {
+            try {
+              const res = await fetch(`${SUPABASE_URL}/functions/v1/send-account-email`, {
+                method: 'POST', headers: SB_HEADERS, body: JSON.stringify({ tipo, email })
+              });
+              return res.ok;
+            } catch (e) {
+              return false;
+            }
           };
 
           const handleSendResetEmail = async () => {
@@ -1901,22 +1871,10 @@
             setLoginError('');
             setLoginSuccess('');
             setAuthLoading(true);
-            try {
-              const token = crypto.randomUUID();
-              const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-              await supabase.from('password_resets').delete().eq('email', email);
-              const { error: insErr } = await supabase.from('password_resets').insert({ email, token, expires_at: expiresAt });
-              if (insErr) { setLoginError(t.connectionError); setAuthLoading(false); return; }
-              const appUrl = window.location.origin + window.location.pathname;
-              const resetUrl = `${appUrl}?reset=${token}`;
-              await emailjs.send('service_rk97p6m', 'template_i5i06pl', { to_email: email, reset_url: resetUrl });
-              setLoginSuccess(t.resetEmailSent);
-              setResetEmail('');
-            } catch (err) {
-              setLoginError(t.connectionError);
-            } finally {
-              setAuthLoading(false);
-            }
+            const ok = await inviaEmailAccount('reset', email);
+            if (ok) { setLoginSuccess(t.resetEmailSent); setResetEmail(''); }
+            else setLoginError(t.connectionError);
+            setAuthLoading(false);
           };
 
           const handleSetNewPassword = async () => {
@@ -1928,34 +1886,15 @@
             setLoginSuccess('');
             try {
               setAuthLoading(true);
-              const { data: rows, error: selErr } = await supabase
-                .from('password_resets')
-                .select('email, expires_at')
-                .eq('token', resetToken);
-              if (selErr) { setLoginError(t.connectionError); setAuthLoading(false); return; }
-              const row = rows && rows[0];
-              if (!row || new Date(row.expires_at) < new Date()) {
+              const hash = await deriveStrongHash(pw);
+              const { data: esito, error } = await supabase.rpc('reset_password', { p_token: resetToken, p_new_hash: hash });
+              if (error || !esito) { setLoginError(t.connectionError); setAuthLoading(false); return; }
+              if (!esito.ok) {
                 setLoginError(t.resetTokenInvalid);
                 setResetToken('');
                 setAuthLoading(false);
                 return;
               }
-              const hash = await deriveStrongHash(pw);
-              const { data: updData, error: updErr } = await supabase
-                .from('profiles')
-                .update({ password_hash: hash })
-                .eq('email', row.email);
-              if (updErr) {
-                setLoginError(t.connectionError);
-                setAuthLoading(false);
-                return;
-              }
-              if (!updData || updData.length === 0) {
-                setLoginError('Nessun account trovato per questa email.');
-                setAuthLoading(false);
-                return;
-              }
-              await supabase.from('password_resets').delete().eq('token', resetToken);
               setLoginSuccess(t.resetSuccess);
               setResetNewPassword('');
               setResetConfirmPassword('');
@@ -1975,34 +1914,10 @@
             setLoginError('');
             setLoginSuccess('');
             setAuthLoading(true);
-            const { data, error: lookErr } = await supabase.from('profiles').select('email').eq('email', email);
-            if (lookErr) { setLoginError(t.connectionError); setAuthLoading(false); return; }
-            if (!data || data.length === 0) { setLoginError(t.emailNotFound); setAuthLoading(false); return; }
-            try {
-              const token = crypto.randomUUID();
-              const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-              await supabase.from('magic_links').delete().eq('email', email);
-              const { error: insErr } = await supabase.from('magic_links').insert({ email, token, expires_at: expiresAt });
-              if (insErr) { setLoginError(t.connectionError); setAuthLoading(false); return; }
-              const appUrl = window.location.origin + window.location.pathname;
-              const magicUrl = `${appUrl}?magic=${token}`;
-              await emailjs.send('service_rk97p6m', 'template_gy8gdkg', {
-                to_email: email,
-                subject: 'Your login link to Global Awakening',
-                message: 'Click here to log in without a password.',
-                magic_url: magicUrl,
-                cta_text: 'Login to Global Awakening',
-                footer: 'This link expires in 15 minutes.'
-              });
-              setLoginSuccess(t.magicLinkSent);
-              setMagicLinkEmail('');
-              setShowMagicLink(false);
-            } catch(err) {
-              console.error('EmailJS error:', JSON.stringify(err));
-              setLoginError(t.connectionError);
-            } finally {
-              setAuthLoading(false);
-            }
+            const ok = await inviaEmailAccount('magic', email);
+            if (ok) { setLoginSuccess(t.magicLinkSent); setMagicLinkEmail(''); setShowMagicLink(false); }
+            else setLoginError(t.connectionError);
+            setAuthLoading(false);
           };
 
           useEffect(() => {
@@ -2011,24 +1926,20 @@
               // Cattura sid guest prima della sovrascrittura per la fusione dati
               const prevGuestSid = sessionId;
               const wasGuest = !userEmail;
-              const { data: rows } = await supabase.from('magic_links').select('email, expires_at').eq('token', magicToken);
-              if (!rows || rows.length === 0 || new Date(rows[0].expires_at) < new Date()) {
-                setLoginError(t.magicLinkInvalid);
-                return;
-              }
-              const email = rows[0].email;
-              await supabase.from('magic_links').delete().eq('token', magicToken);
-              const { data } = await supabase.from('profiles').select('*').eq('email', email);
-              if (!data || data.length === 0) { setLoginError(t.emailNotFound); return; }
-              const existing = data[0];
+              const { data: esito, error } = await supabase.rpc('consume_magic_link', { p_token: magicToken });
+              if (error || !esito) { setLoginError(t.connectionError); return; }
+              if (!esito.ok) { setLoginError(t.magicLinkInvalid); return; }
+              const existing = esito.profilo;
+              const email = existing.email;
+              const credenziale = esito.password_hash;
               setSessionId(existing.session_id);
               localStorage.setItem('ga_session_id', existing.session_id);
               setUserEmail(email);
               setIsGuest(false);
-              // Magic-link: nessuna password digitata → prendi l'hash memorizzato dal profilo,
-              // così Step B (get_my_messages) può autenticare la lettura dei messaggi.
-              setPasswordHash(existing.password_hash || null);
-              if (existing.password_hash) localStorage.setItem('ga_pwhash', existing.password_hash);
+              // La credenziale arriva dal server anche per gli account che non l'avevano (26_):
+              // senza, messaggi e profilo resterebbero chiusi a chi è entrato col link.
+              setPasswordHash(credenziale);
+              localStorage.setItem('ga_pwhash', credenziale);
               const loaded = {
                 bio: existing.bio || '',
                 starseedType: existing.starseed_type || '',
@@ -2047,16 +1958,17 @@
               setNickname(existing.nickname || 'Anonymous');
               setShowNicknamePrompt(false);
               if (wasGuest) {
-                const merged = await mergeGuestTelepathyData(prevGuestSid, email, existing.nickname || 'Anonymous');
+                const merged = await mergeGuestTelepathyData(prevGuestSid, email, existing.nickname || 'Anonymous', credenziale);
                 if (merged) {
                   setTotalRounds(merged.rounds_count);
                   setTotalMatches(merged.matches_count);
                   localStorage.setItem('telepathy_score', String(merged.rounds_count));
                   localStorage.setItem('telepathy_best', String(merged.matches_count));
-                  await supabase.from('profiles').update({
-                    telepathy_score: merged.rounds_count,
-                    telepathy_best: merged.matches_count
-                  }).eq('email', email);
+                  await supabase.rpc('update_my_profile', {
+                    p_nickname: existing.nickname,
+                    p_password_hash: credenziale,
+                    p_fields: { telepathy_score: merged.rounds_count, telepathy_best: merged.matches_count }
+                  });
                 }
               }
             };
@@ -2677,7 +2589,7 @@
           useEffect(() => {
             const loadProfile = async () => {
               try {
-                const { data } = await supabase.from('profiles').select('*').eq('session_id', sessionId);
+                const { data } = await supabase.from('profiles').select(PUBLIC_PROFILE_COLUMNS).eq('session_id', sessionId);
                 if (data && data.length > 0) {
                   const p = data[0];
                   const loaded = {
@@ -2705,29 +2617,31 @@
           }, [sessionId]);
 
           const saveProfile = async () => {
-            const row = {
-              session_id: sessionId,
-              nickname: nickname || 'Anonymous',
-              bio: profile.bio,
-              starseed_type: profile.starseedType,
-              avatar: profile.avatar,
-              country: profile.country,
-              interests: profile.interests,
-              experience_level: profile.experienceLevel,
-              telepathy_score: totalRounds,
-              telepathy_best: totalMatches,
-              show_telepathy_score: showTelepathyScore
-            };
-            if (passwordHash) row.password_hash = passwordHash;
-            if (userEmail) row.email = userEmail;
-            try {
-              if (!isGuest) {
-                await supabase.from('profiles').upsert(row);
-              }
-            } catch (err) {
-              console.warn('Failed to save profile to Supabase:', err);
-            }
             localStorage.setItem('ga_profile', JSON.stringify(profile));
+            if (isGuest) {
+              setProfileSaved(true);
+              setTimeout(() => setProfileSaved(false), 3000);
+              return;
+            }
+            // I totali possono arrivare da localStorage (stringhe) o da un giro precedente:
+            // update_my_profile rifiuta con dati_non_validi se non sono interi JSON.
+            const roundsInt = Math.max(0, Math.floor(Number(totalRounds) || 0));
+            const matchesInt = Math.max(0, Math.floor(Number(totalMatches) || 0));
+            const { data: esito, error } = await supabase.rpc('update_my_profile', {
+              p_nickname: nickname, p_password_hash: passwordHash,
+              p_fields: {
+                bio: profile.bio || '', starseed_type: profile.starseedType || '', avatar: profile.avatar || '',
+                country: profile.country || '', interests: profile.interests || [],
+                experience_level: profile.experienceLevel || '',
+                telepathy_score: roundsInt, telepathy_best: matchesInt,
+                show_telepathy_score: showTelepathyScore !== false
+              }
+            });
+            if (error || !esito || !esito.ok) {
+              // Prima l'upsert falliva in silenzio e lo schermo diceva «salvato» lo stesso.
+              alert(t.profileSaveFailed);
+              return;
+            }
             setProfileSaved(true);
             setTimeout(() => setProfileSaved(false), 3000);
           };
@@ -2785,18 +2699,20 @@
               });
               if (rpcErr) console.warn('increment_telepathy_score failed', rpcErr);
               // Rilegge i totali autorevoli per aggiornare UI/localStorage/profile.
-              const { data: updated } = await supabase.from('telepathy_scores').select('rounds_count,matches_count').eq('user_id', userId);
+              const { data: updated } = await supabase.rpc('get_my_telepathy_totals', { p_user_id: userId, p_password_hash: passwordHash });
               const newRounds = (updated && updated[0]) ? (updated[0].rounds_count || 0) : (totalRounds + roundCount);
               const newMatches = (updated && updated[0]) ? (updated[0].matches_count || 0) : (totalMatches + sessionMatches);
               setTotalRounds(newRounds);
               setTotalMatches(newMatches);
               localStorage.setItem('telepathy_score', String(newRounds));
               localStorage.setItem('telepathy_best', String(newMatches));
-              if (sessionId) {
-                await supabase.from('profiles').update({
-                  telepathy_score: newRounds,
-                  telepathy_best: newMatches
-                }).eq('session_id', sessionId);
+              // Oggi l'update girava anche per gli ospiti, che non hanno riga: non scriveva
+              // niente. Ora non parte proprio, evitando una RPC destinata a fallire.
+              if (!isGuest && nickname && passwordHash) {
+                await supabase.rpc('update_my_profile', {
+                  p_nickname: nickname, p_password_hash: passwordHash,
+                  p_fields: { telepathy_score: newRounds, telepathy_best: newMatches }
+                });
               }
               if (matchId) {
                 // Marca il flag di fine sessione PRIMA di cancellare, cosi' l'altro lato
@@ -2842,7 +2758,7 @@
           const openProfile = async (userName) => {
             try {
               markAsRead(userName);
-              const { data } = await supabase.from('profiles').select('*').eq('nickname', userName);
+              const { data } = await supabase.from('profiles').select(PUBLIC_PROFILE_COLUMNS).eq('nickname', userName);
               if (data && data.length > 0) {
                 const p = data[0];
                 // B1: le stats vengono dalla fonte unica telepathy_scores via RPC pubblica
@@ -4494,7 +4410,7 @@ ${ritual.description || ''}` })}
                                   <span style={{width: '4.5rem', textAlign: 'right'}}>{t.telepathy.leaderboardAccuracy}</span>
                                 </div>
                                 {leaderboard.map((row, i) => (
-                                  <div key={row.user_id || i} style={{display: 'flex', alignItems: 'center', padding: '0.5rem', borderRadius: '0.6rem', background: i < 3 ? 'rgba(167,139,250,0.15)' : 'rgba(255,255,255,0.04)'}}>
+                                  <div key={row.nickname || i} style={{display: 'flex', alignItems: 'center', padding: '0.5rem', borderRadius: '0.6rem', background: i < 3 ? 'rgba(167,139,250,0.15)' : 'rgba(255,255,255,0.04)'}}>
                                     <span style={{width: '2rem', fontWeight: 700, color: i === 0 ? '#fbbf24' : i === 1 ? '#d1d5db' : i === 2 ? '#d97706' : '#9ca3af'}}>{i + 1}</span>
                                     <span className="text-white" style={{flex: 1, fontWeight: 600}}>{row.nickname}</span>
                                     <span className="text-white" style={{width: '3.5rem', textAlign: 'right'}}>{row.matches_count}</span>
@@ -4835,14 +4751,21 @@ ${ritual.description || ''}` })}
                         <span className="text-white text-sm">{t.showTelepathyScore}</span>
                         <button
                           onClick={async () => {
-                            const newVal = !showTelepathyScore;
+                            const oldVal = showTelepathyScore;
+                            const newVal = !oldVal;
                             setShowTelepathyScore(newVal);
                             localStorage.setItem('ga_show_telepathy', String(newVal));
-                            if (!isGuest && sessionId) {
-                              try {
-                                await supabase.from('profiles').update({ show_telepathy_score: newVal }).eq('session_id', sessionId);
-                              } catch (err) {
-                                console.warn('Failed to persist show_telepathy_score toggle');
+                            if (!isGuest && nickname && passwordHash) {
+                              // supabase.rpc non lancia: l'esito va letto, altrimenti un rifiuto
+                              // lascerebbe l'interruttore acceso sullo schermo e spento nel DB.
+                              const { data: esito, error } = await supabase.rpc('update_my_profile', {
+                                p_nickname: nickname, p_password_hash: passwordHash,
+                                p_fields: { show_telepathy_score: newVal }
+                              });
+                              if (error || !esito || !esito.ok) {
+                                setShowTelepathyScore(oldVal);
+                                localStorage.setItem('ga_show_telepathy', String(oldVal));
+                                alert(t.profileSaveFailed);
                               }
                             }
                           }}
@@ -4951,6 +4874,7 @@ ${ritual.description || ''}` })}
                           value={profile.country}
                           onChange={(e) => setProfile({...profile, country: e.target.value})}
                           placeholder={t.profile.countryPlaceholder}
+                          maxLength={100}
                         />
                       </div>
 
@@ -4996,14 +4920,17 @@ ${ritual.description || ''}` })}
                               disabled={!profilePassword.trim()}
                               onClick={async () => {
                                 const hash = await deriveStrongHash(profilePassword.trim());
+                                const { data: esito, error } = await supabase.rpc('change_password', {
+                                  p_nickname: nickname, p_old_hash: passwordHash, p_new_hash: hash
+                                });
+                                if (error || !esito || !esito.ok) {
+                                  setProfilePasswordMsg(t.passwordChangeFailed);
+                                  return;
+                                }
+                                // La credenziale locale cambia SOLO se il server ha accettato: prima
+                                // cambiava comunque, e da lì browser e database divergevano.
                                 setPasswordHash(hash);
                                 localStorage.setItem('ga_pwhash', hash);
-                                await supabase.from('profiles').upsert({
-                                  session_id: sessionId,
-                                  nickname: nickname || 'Anonymous',
-                                  email: userEmail,
-                                  password_hash: hash
-                                });
                                 setProfilePassword('');
                                 setProfilePasswordMsg(t.passwordSet);
                                 setTimeout(() => setProfilePasswordMsg(''), 3000);
@@ -5013,8 +4940,8 @@ ${ritual.description || ''}` })}
                             </button>
                           </div>
                           {profilePasswordMsg && (
-                            <div className="result-success rounded-xl p-2 text-center mt-2">
-                              <p style={{color: '#4ade80'}} className="font-bold text-sm">{profilePasswordMsg}</p>
+                            <div className={`${profilePasswordMsg === t.passwordChangeFailed ? 'result-try-again' : 'result-success'} rounded-xl p-2 text-center mt-2`}>
+                              <p style={{color: profilePasswordMsg === t.passwordChangeFailed ? '#fb923c' : '#4ade80'}} className="font-bold text-sm">{profilePasswordMsg}</p>
                             </div>
                           )}
                         </div>

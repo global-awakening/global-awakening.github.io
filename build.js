@@ -54,7 +54,7 @@ function buildCsp() {
     `script-src 'self' https://unpkg.com https://cdn.jsdelivr.net ${hashes.join(' ')}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
-    `connect-src 'self' ${SUPABASE} https://api.emailjs.com`,
+    `connect-src 'self' ${SUPABASE}`,
     "manifest-src 'self'",
     "worker-src 'self'",
     "base-uri 'self'",

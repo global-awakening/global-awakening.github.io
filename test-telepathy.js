@@ -11,7 +11,8 @@
  */
 
 const { chromium } = require('playwright');
-const { purge, loginAsGuest: guestLogin } = require('./test-helpers');
+const { purge, loginAsGuest: guestLogin, requireServiceKey, serviceFetch } = require('./test-helpers');
+requireServiceKey();
 
 const APP_URL = 'http://localhost:4321/app.html';
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
@@ -487,10 +488,7 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
 
     // Controlla Supabase via fetch
     await pageA.waitForTimeout(2000); // attendi che il DB sia scritto
-    const resp = await fetch(`${SUPABASE_URL}/rest/v1/telepathy_scores?select=*&order=updated_at.desc&limit=5`, {
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-    });
-    const scores = await resp.json();
+    const scores = (await serviceFetch(`telepathy_scores?select=*&order=updated_at.desc&limit=5`)).body;
     if (scores && scores.length > 0) {
       pass(`Score salvato in Supabase — ${scores.length} record trovati (ultimo: ${scores[0].nickname}, sessioni: ${scores[0].sessions_count})`);
     } else {

@@ -11,7 +11,8 @@
  * Prerequisiti: server su http://localhost:4321, 16_moderazione.sql applicato.
  */
 const { chromium } = require('playwright');
-const { purge } = require('./test-helpers');
+const { purge, requireServiceKey, deleteTestAccount } = require('./test-helpers');
+requireServiceKey();
 
 const APP_URL      = 'http://localhost:4321/app.html';
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
@@ -43,7 +44,7 @@ async function cleanup() {
     await sbFetch(`consciousness_posts?author_nickname=eq.${e(n)}`, { method: 'DELETE' });
   }
   for (const m of [EMAIL_A, EMAIL_B]) {
-    await sbFetch(`profiles?email=eq.${e(m)}`, { method: 'DELETE' });
+    await deleteTestAccount(m);
   }
   // Senza chiave privilegiata purge() salta in silenzio e lascia righe in
   // content_reports e user_blocks, col test comunque verde. Meglio un rosso onesto.
