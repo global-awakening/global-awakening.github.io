@@ -19,7 +19,8 @@
  * Esecuzione: node test-telepathy-stats.js
  */
 
-const { purge } = require('./test-helpers');
+const { purge, requireServiceKey, createTestAccount } = require('./test-helpers');
+requireServiceKey();
 
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
@@ -122,28 +123,20 @@ async function cleanup() {
     await cleanup();
 
     // Setup: profilo + telepathy_scores con valori noti (utente "normale").
-    const insProfile = await sbFetch('profiles', {
-      method: 'POST',
-      body: JSON.stringify({
-        session_id: SID, nickname: NICK, email: EMAIL,
-        bio: '', country: '', interests: [],
-        telepathy_score: 999, telepathy_best: 999, // volutamente DIVERSI dalla fonte unica:
-        // se la RPC (o il suo fallback) leggesse ancora da qui invece che da
-        // telepathy_scores, il test lo scoprirebbe subito.
-        show_telepathy_score: true
-      }),
+    await createTestAccount({
+      session_id: SID, nickname: NICK, email: EMAIL,
+      bio: '', country: '', interests: [],
+      telepathy_score: 999, telepathy_best: 999, // volutamente DIVERSI dalla fonte unica:
+      // se la RPC (o il suo fallback) leggesse ancora da qui invece che da
+      // telepathy_scores, il test lo scoprirebbe subito.
+      show_telepathy_score: true
     });
-    if (!insProfile.ok) { fail(`Setup profilo fallito: HTTP ${insProfile.status} — ${JSON.stringify(insProfile.body)}`); throw new Error('setup'); }
     pass('Profilo di test creato (telepathy_score/best legacy volutamente sbagliati: 999/999)');
 
-    const insProfile2 = await sbFetch('profiles', {
-      method: 'POST',
-      body: JSON.stringify({
-        session_id: SID_NO_SCORES, nickname: NICK_NO_SCORES, email: EMAIL_NO_SCORES,
-        bio: '', country: '', interests: [], show_telepathy_score: true
-      }),
+    await createTestAccount({
+      session_id: SID_NO_SCORES, nickname: NICK_NO_SCORES, email: EMAIL_NO_SCORES,
+      bio: '', country: '', interests: [], show_telepathy_score: true
     });
-    if (!insProfile2.ok) { fail(`Setup profilo (senza scores) fallito: HTTP ${insProfile2.status}`); throw new Error('setup2'); }
     pass('Profilo di test SENZA riga telepathy_scores creato');
 
     // Popola telepathy_scores con valori noti tramite la RPC gia' collaudata

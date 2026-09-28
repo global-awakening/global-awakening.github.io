@@ -13,6 +13,8 @@
  */
 
 const { chromium } = require('playwright');
+const { requireServiceKey, serviceFetch, deleteTestAccount } = require('./test-helpers');
+requireServiceKey();
 
 const APP_URL = 'http://localhost:4321/app.html';
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
@@ -56,7 +58,7 @@ async function sbRpc(fn, params) {
 }
 
 async function cleanupProfile(email) {
-  await sbFetch(`profiles?email=eq.${encodeURIComponent(email)}`, { method: 'DELETE' });
+  await deleteTestAccount(email);
 }
 
 (async () => {
@@ -94,7 +96,7 @@ async function cleanupProfile(email) {
     pass(`RPC increment_telepathy_score eseguita (${FAKE_ROUNDS} rounds, ${FAKE_MATCHES} matches)`);
 
     console.log('\n📋 Step 3: Verifica record guest in telepathy_scores');
-    const guestRows = await sbFetch(`telepathy_scores?user_id=eq.${encodeURIComponent(guestSid)}&select=*`);
+    const guestRows = (await serviceFetch(`telepathy_scores?user_id=eq.${encodeURIComponent(guestSid)}&select=*`)).body;
     if (!guestRows || guestRows.length === 0) { fail('Riga guest non trovata in telepathy_scores'); throw new Error('no guest row'); }
     const g = guestRows[0];
     if (g.rounds_count !== FAKE_ROUNDS || g.matches_count !== FAKE_MATCHES) {
@@ -117,7 +119,7 @@ async function cleanupProfile(email) {
     await page.waitForTimeout(2500);
 
     console.log('\n📋 Step 5: Verifica riga guest cancellata da telepathy_scores');
-    const guestRows2 = await sbFetch(`telepathy_scores?user_id=eq.${encodeURIComponent(guestSid)}&select=*`);
+    const guestRows2 = (await serviceFetch(`telepathy_scores?user_id=eq.${encodeURIComponent(guestSid)}&select=*`)).body;
     if (guestRows2 && guestRows2.length > 0) {
       fail(`Riga guest ancora presente dopo merge: ${JSON.stringify(guestRows2[0])}`);
     } else {
@@ -125,7 +127,7 @@ async function cleanupProfile(email) {
     }
 
     console.log('\n📋 Step 6: Verifica riga merged sotto user_id = email');
-    const userRows = await sbFetch(`telepathy_scores?user_id=eq.${encodeURIComponent(TEST_EMAIL)}&select=*`);
+    const userRows = (await serviceFetch(`telepathy_scores?user_id=eq.${encodeURIComponent(TEST_EMAIL)}&select=*`)).body;
     if (!userRows || userRows.length === 0) {
       fail('Riga merged non trovata in telepathy_scores con user_id = email');
     } else {
@@ -140,7 +142,7 @@ async function cleanupProfile(email) {
     }
 
     console.log('\n📋 Step 7: Verifica profiles.telepathy_score / telepathy_best aggiornati');
-    const profRows = await sbFetch(`profiles?email=eq.${encodeURIComponent(TEST_EMAIL)}&select=telepathy_score,telepathy_best`);
+    const profRows = (await serviceFetch(`profiles?email=eq.${encodeURIComponent(TEST_EMAIL)}&select=telepathy_score,telepathy_best`)).body;
     if (!profRows || profRows.length === 0) {
       fail('Profilo non trovato dopo registrazione');
     } else {

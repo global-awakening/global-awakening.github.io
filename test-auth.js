@@ -10,6 +10,8 @@
  */
 
 const { chromium } = require('playwright');
+const { requireServiceKey, serviceFetch, createTestAccount, deleteTestAccount } = require('./test-helpers');
+requireServiceKey();
 
 const APP_URL = 'http://localhost:4321/app.html';
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
@@ -53,7 +55,7 @@ async function sbFetch(path, opts = {}) {
 }
 
 async function cleanupProfile(email) {
-  await sbFetch(`profiles?email=eq.${encodeURIComponent(email)}`, { method: 'DELETE' });
+  await deleteTestAccount(email);
 }
 
 // Test: guasto di rete sul login → messaggio di connessione, NON "nessun account"
@@ -91,6 +93,53 @@ async function testNetworkErrorOnLogin() {
 const nodeCrypto = require('crypto');
 const sha256hex = (s) => nodeCrypto.createHash('sha256').update(s, 'utf8').digest('hex'); // = hashPassword legacy
 
+// Stesso formato di deriveStrongHash lato client: "pbkdf2$<iter>$<saltB64>$<hashB64>".
+function pbkdf2Hash(password, iterations = 100000) {
+  const salt = nodeCrypto.randomBytes(16);
+  const bits = nodeCrypto.pbkdf2Sync(password, salt, iterations, 32, 'sha256');
+  return `pbkdf2$${iterations}$${salt.toString('base64')}$${bits.toString('base64')}`;
+}
+
+// Prova che il login non legge più `profiles` dal browser (26_): l'unica fonte è la RPC
+// login_with_password. Se l'app leggesse ancora profiles direttamente, bloccando quella
+// richiesta il login fallirebbe.
+async function testLoginDoesNotReadProfiles() {
+  const ts = Date.now();
+  const nick = `NoProfilesRead_${ts}`;
+  const email = `noprofilesread_${ts}@test.com`;
+  const pass = 'NoProfilesRead123!';
+  let ok = true;
+  const passL = (m) => console.log('  ✓ ' + m);
+  const failL = (m) => { console.log('  ✗ ' + m); ok = false; };
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  try {
+    await createTestAccount({ session_id: `noprofilesread-${ts}`, nickname: nick, email, password_hash: pbkdf2Hash(pass) });
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector(':text("Login")', { timeout: TIMEOUT });
+    await page.locator(':text("Login")').first().click();
+    await page.waitForSelector('input[type="email"]', { timeout: TIMEOUT });
+    await page.route('**/rest/v1/profiles**', r => r.abort());
+    await page.locator('input[type="email"]').fill(email);
+    await page.locator('input[type="password"]').fill(pass);
+    await page.locator('button.btn-primary', { hasText: /^Login$|^Accedi$/ }).first().click();
+    try {
+      await page.waitForSelector(':text("Logout"), :text("Esci")', { timeout: TIMEOUT });
+      passL('Login riuscito con `profiles` bloccata — non la legge più direttamente');
+    } catch (e) {
+      const onscreen = await page.locator('.result-try-again, [class*="result"]').allInnerTexts().catch(() => []);
+      failL('Login fallito con `profiles` bloccata: ' + JSON.stringify(onscreen));
+    }
+    await page.unroute('**/rest/v1/profiles**');
+  } catch (e) {
+    failL('Eccezione: ' + e.message);
+  } finally {
+    await deleteTestAccount(email);
+    await browser.close();
+  }
+  return ok;
+}
+
 // C1: account legacy (hash SHA-256) → login deve riuscire (dual-path) e migrare a PBKDF2
 async function testLegacyMigration() {
   const ts = Date.now();
@@ -105,19 +154,12 @@ async function testLegacyMigration() {
   const page = await browser.newPage();
   try {
     // Semina un profilo legacy nel DB (hash SHA-256, formato vecchio)
-    const seedResp = await sbFetch('profiles', {
-      method: 'POST',
-      headers: { Prefer: 'return=representation' },
-      body: JSON.stringify({
-        session_id: `legacy-${ts}`, nickname: nick, email, password_hash: legacyHash,
-        bio: '', starseed_type: '', avatar: '', country: '', interests: [],
-        experience_level: '', telepathy_score: 0, telepathy_best: 0, show_telepathy_score: true
-      })
+    await createTestAccount({
+      session_id: `legacy-${ts}`, nickname: nick, email, password_hash: legacyHash,
     });
-    // Verifica che il seed sia andato (sbFetch non controlla res.ok → potrebbe aver fallito)
-    const seeded = await sbFetch(`profiles?email=eq.${encodeURIComponent(email)}&select=email,password_hash`);
+    const seeded = (await serviceFetch(`profiles?email=eq.${encodeURIComponent(email)}&select=email,password_hash`)).body;
     if (!Array.isArray(seeded) || seeded.length === 0) {
-      failL('Seed INSERT fallito → ' + JSON.stringify(seedResp));
+      failL('Seed INSERT fallito → ' + JSON.stringify(seeded));
       return ok;
     }
     // Login via UI con la password legacy
@@ -138,14 +180,25 @@ async function testLegacyMigration() {
     passL('Login con account legacy (SHA-256) riuscito');
     // Verifica migrazione: il password_hash memorizzato ora è PBKDF2
     await page.waitForTimeout(1500); // attendi l'UPDATE di migrazione
-    const rows = await sbFetch(`profiles?email=eq.${encodeURIComponent(email)}&select=password_hash`);
+    const rows = (await serviceFetch(`profiles?email=eq.${encodeURIComponent(email)}&select=password_hash`)).body;
     const stored = rows && rows[0] && rows[0].password_hash;
     if (stored && stored.indexOf('pbkdf2$') === 0) passL('Hash migrato a PBKDF2 dopo il login');
     else failL('Hash NON migrato (ancora: ' + (stored ? String(stored).substring(0, 12) : 'null') + ')');
+    // Il sale dell'hash migrato deve essere quello restituito da get_login_params (26_): prova
+    // che la migrazione lato server ha ri-derivato l'hash con lo stesso sale che il client ha usato.
+    if (stored && stored.indexOf('pbkdf2$') === 0) {
+      const params = await (await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_login_params`, {
+        method: 'POST',
+        headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ p_email: email }),
+      })).json();
+      if (params && stored.split('$')[2] === params.salt) passL('Sale dell\'hash migrato coincide con get_login_params');
+      else failL('Sale dell\'hash migrato NON coincide con get_login_params: ' + JSON.stringify(params));
+    }
   } catch (e) {
     failL('Eccezione: ' + e.message);
   } finally {
-    await sbFetch(`profiles?email=eq.${encodeURIComponent(email)}`, { method: 'DELETE' });
+    await deleteTestAccount(email);
     await browser.close();
   }
   return ok;
@@ -196,7 +249,7 @@ async function openAuthTab(page, tab) {
     // ── Test 2: Profilo salvato in Supabase ──────────────────────────────
     console.log('\n📋 Test 2: Profilo salvato in Supabase');
     await page.waitForTimeout(2000);
-    const profiles = await sbFetch(`profiles?email=eq.${encodeURIComponent(TEST_EMAIL)}&select=nickname,email`);
+    const profiles = (await serviceFetch(`profiles?email=eq.${encodeURIComponent(TEST_EMAIL)}&select=nickname,email`)).body;
     if (profiles && profiles.length > 0 && profiles[0].nickname === TEST_NICK) {
       pass(`Profilo trovato in DB — nickname: ${profiles[0].nickname}`);
     } else {
@@ -244,8 +297,11 @@ async function openAuthTab(page, tab) {
     await page.locator('button.btn-primary:not([disabled])').waitFor({ timeout: TIMEOUT });
     await page.locator('button.btn-primary').click({ timeout: TIMEOUT });
 
-    await page.waitForSelector(':text("Wrong password")', { timeout: TIMEOUT });
-    pass('Errore corretto — "Wrong password" mostrato');
+    // Messaggio unificato (26_): password errata NON deve più distinguersi da email
+    // inesistente, altrimenti un attaccante scopre quali email sono registrate.
+    await page.waitForSelector('text=/Email or password not correct|Email o password non corretti/', { timeout: TIMEOUT });
+    if (await page.locator(':text("Wrong password")').count() > 0) fail('Mostra ancora "Wrong password" (messaggio distinguibile)');
+    else pass('Errore corretto — messaggio unificato mostrato (password errata)');
 
     // ── Test 7: Login con email non esistente ────────────────────────────
     console.log('\n📋 Test 7: Login con email inesistente');
@@ -254,8 +310,9 @@ async function openAuthTab(page, tab) {
     await page.locator('button.btn-primary:not([disabled])').waitFor({ timeout: TIMEOUT });
     await page.locator('button.btn-primary').click({ timeout: TIMEOUT });
 
-    await page.waitForSelector(':text("No account found")', { timeout: TIMEOUT });
-    pass('Errore corretto — "No account found" mostrato');
+    await page.waitForSelector('text=/Email or password not correct|Email o password non corretti/', { timeout: TIMEOUT });
+    if (await page.locator(':text("No account found")').count() > 0) fail('Mostra ancora "No account found" (messaggio distinguibile)');
+    else pass('Errore corretto — messaggio unificato mostrato (email inesistente), indistinguibile dal caso password errata');
 
     // ── Test 8: Registrazione con email già usata ────────────────────────
     console.log('\n📋 Test 8: Registrazione con email già registrata');
@@ -306,6 +363,15 @@ async function openAuthTab(page, tab) {
       pass('Account legacy migrato a PBKDF2 al primo login');
     } else {
       fail('Migrazione legacy NON funzionante (rischio lock-out / mancata migrazione)');
+    }
+
+    // ── Test 12: Login non legge più `profiles` dal browser (26_) ─────────
+    console.log('\n📋 Test 12: Login riesce anche con `profiles` bloccata');
+    const noProfilesOk = await testLoginDoesNotReadProfiles();
+    if (noProfilesOk) {
+      pass('Login riuscito senza leggere `profiles` direttamente');
+    } else {
+      fail('Login richiede ancora una lettura diretta di `profiles`');
     }
 
     console.log('\n═══════════════════════════════════════');

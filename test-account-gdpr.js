@@ -9,7 +9,8 @@
  * Esecuzione: node test-account-gdpr.js
  * Prerequisito: applicati supabase/sql/06_account_gdpr.sql e 17_fix_delete_account.sql.
  */
-const { getServiceKey } = require('./test-helpers');
+const { getServiceKey, requireServiceKey, createTestAccount, deleteTestAccount } = require('./test-helpers');
+requireServiceKey();
 
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
@@ -41,10 +42,10 @@ async function rpc(fn, params) {
 }
 
 async function seed() {
-  await sb('profiles', { method: 'POST', body: JSON.stringify({
+  await createTestAccount({
     session_id: SID, nickname: NICK, email: EMAIL, password_hash: HASH,
     bio: 'test', country: '', interests: [], telepathy_score: 0, telepathy_best: 0,
-    show_telepathy_score: true }) });
+    show_telepathy_score: true });
   await sb('consciousness_posts', { method: 'POST', body: JSON.stringify({ author_nickname: NICK, content: 'post di test' }) });
   // private_messages: scrittura diretta bloccata da RLS (Step B) -> si usa la RPC autenticata.
   await rpc('send_private_message', { p_sender_id: SID, p_sender_name: NICK, p_receiver_name: OTHER, p_content: 'ciao', p_sender_password_hash: HASH });
@@ -56,7 +57,7 @@ async function seed() {
 }
 
 async function cleanup() {
-  await sb(`profiles?email=eq.${encodeURIComponent(EMAIL)}`, { method: 'DELETE' });
+  await deleteTestAccount(EMAIL);
   await sb(`consciousness_posts?author_nickname=eq.${encodeURIComponent(NICK)}`, { method: 'DELETE' });
   await sb(`consciousness_posts?author_nickname=eq.${encodeURIComponent('Utente eliminato')}&content=eq.${encodeURIComponent('post di test')}`, { method: 'DELETE' });
   await sb(`private_messages?sender_name=eq.${encodeURIComponent(NICK)}`, { method: 'DELETE' });

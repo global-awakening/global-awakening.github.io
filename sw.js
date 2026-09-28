@@ -15,14 +15,14 @@ importScripts('push-helpers.js');
 // v9: il manifest passa a network-first. Era in cache-first: la nuova icona d'avvio (23/09/2026)
 // non arrivava al telefono nemmeno reinstallando l'app, perche' la cache e' di Chrome e
 // sopravvive. Il bump serve a far ripartire i service worker gia' installati con la regola nuova.
-const CACHE = 'ga-pwa-v9';
+// v10: via EmailJS dal precache (28/09/2026): token ed email ora li fa il server.
+const CACHE = 'ga-pwa-v10';
 const PRECACHE = [
   'app.html', 'app.js', 'push-helpers.js', 'music-helpers.js', 'index.html', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
   'icons/icon-any-192.png', 'icons/icon-any-512.png',
   'https://unpkg.com/react@18.3.1/umd/react.production.min.js',
-  'https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js',
-  'https://cdn.jsdelivr.net/npm/@emailjs/browser@4.4.1/dist/email.min.js'
+  'https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js'
 ];
 
 self.addEventListener('install', (e) => {

@@ -9,7 +9,8 @@
  * Esecuzione: node test-moderazione.js
  * Prerequisito: aver applicato supabase/sql/16_moderazione.sql in Studio.
  */
-const { purge, getServiceKey } = require('./test-helpers');
+const { purge, getServiceKey, requireServiceKey, createTestAccount, deleteTestAccount } = require('./test-helpers');
+requireServiceKey();
 
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
@@ -51,17 +52,17 @@ function isError(res, needle) {
 
 async function seed() {
   for (const [sid, nick, email, hash] of [[SID_A, NICK_A, EMAIL_A, HASH_A], [SID_B, NICK_B, EMAIL_B, HASH_B]]) {
-    await sb('profiles', { method: 'POST', body: JSON.stringify({
+    await createTestAccount({
       session_id: sid, nickname: nick, email, password_hash: hash,
       bio: 'test moderazione', country: '', interests: [],
-      telepathy_score: 0, telepathy_best: 0, show_telepathy_score: true }) });
+      telepathy_score: 0, telepathy_best: 0, show_telepathy_score: true });
   }
 }
 
 async function cleanup() {
   const e = encodeURIComponent;
-  await sb(`profiles?email=eq.${e(EMAIL_A)}`, { method: 'DELETE' });
-  await sb(`profiles?email=eq.${e(EMAIL_B)}`, { method: 'DELETE' });
+  await deleteTestAccount(EMAIL_A);
+  await deleteTestAccount(EMAIL_B);
   await sb(`private_messages?sender_name=eq.${e(NICK_A)}`, { method: 'DELETE' });
   await sb(`private_messages?sender_name=eq.${e(NICK_B)}`, { method: 'DELETE' });
   await sb(`notifications?user_nickname=eq.${e(NICK_A)}`, { method: 'DELETE' });

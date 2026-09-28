@@ -1,31 +1,36 @@
 /**
- * Test Reset Password — Global Awakening
+ * Test Reset Password — Global Awakening (flow "password lato server", Task 7)
  *
- * Copre:
- *   1. Registrazione utente con email + password
- *   2. Logout
- *   3. Apertura form "Password dimenticata?"
- *   4. Reset con nickname errato → errore
- *   5. Reset con password non coincidenti → errore
- *   6. Reset corretto (email + nickname giusti) → successo
- *   7. Login con la nuova password → accesso riuscito
+ * Il token e l'invio email sono ora fatti dal server (Edge Function send-account-email +
+ * RPC reset_password/crea_token_account, Task 5/3). Questo test copre lo schermo "password
+ * dimenticata" lato client:
+ *
+ *   1. Con un'email NON registrata mostra lo stesso messaggio di successo di una registrata
+ *      (non deve rivelare chi è iscritto).
+ *   2. Intercettando `**\/functions/v1/send-account-email` (senza chiamare la funzione vera)
+ *      verifica che la richiesta parta con body {tipo:'reset', email} corretto.
+ *   3. Nessuna chiamata a api.emailjs.com deve partire (l'invio è tutto lato server).
+ *
+ * Il flow "clic sul link → nuova password" è coperto da test-reset-password-bug.js (token
+ * vero via crea_token_account). Qui l'Edge Function è intercettata: non viene mai chiamata
+ * davvero, quindi non consuma i tetti email (1/min, 5/ora, 30/ora globali).
  *
  * Esecuzione: node test-reset-password.js
  * Prerequisiti: app su http://localhost:4321/app.html, npx playwright install chromium
  */
 
 const { chromium } = require('playwright');
+const crypto = require('crypto');
+const { requireServiceKey, serviceFetch, createTestAccount, deleteTestAccount } = require('./test-helpers');
+requireServiceKey();
 
-const APP_URL      = 'http://localhost:4321/app.html';
-const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
-const TIMEOUT      = 20000;
+const APP_URL = 'http://localhost:4321/app.html';
+const TIMEOUT = 20000;
 
-const TS       = Date.now();
-const NICK     = `ResetUser_${TS}`;
-const EMAIL    = `reset_${TS}@test.ga`;
-const PW1      = 'Password123!';
-const PW2      = 'NuovaPassword456!';
+const TS                = Date.now();
+const NICK              = `ResetUser_${TS}`;
+const EMAIL_REGISTERED  = `reset_${TS}@test.ga`;
+const EMAIL_UNREGISTERED = `reset-unreg_${TS}@test.ga`;
 
 let passed = 0;
 let failed = 0;
@@ -37,63 +42,71 @@ function log(msg) {
   console.log(`[${ts}] ${msg}`);
 }
 
-async function sbFetch(path, opts = {}) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    headers: {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json',
-      Prefer: 'return=minimal',
-      ...opts.headers,
-    },
-    ...opts,
-  });
-  if (res.status === 204) return null;
-  try { return await res.json(); } catch { return null; }
+function pbkdf2Hash(password, saltB64 = crypto.randomBytes(16).toString('base64'), iter = 100000) {
+  const bits = crypto.pbkdf2Sync(password, Buffer.from(saltB64, 'base64'), iter, 32, 'sha256');
+  return `pbkdf2$${iter}$${saltB64}$${bits.toString('base64')}`;
 }
 
 async function cleanup() {
   try {
-    await sbFetch(`profiles?email=eq.${encodeURIComponent(EMAIL)}`, { method: 'DELETE' });
+    await deleteTestAccount(EMAIL_REGISTERED);
+    await deleteTestAccount(EMAIL_UNREGISTERED);
   } catch (e) {
     console.warn('  Cleanup parzialmente fallito:', e.message);
+  }
+}
+
+// Attende che l'array `arr` raggiunga almeno `n` elementi (poll), senza affidarsi ai tempi di
+// un messaggio UI che potrebbe restare visibile da una submit precedente.
+async function waitForLength(arr, n, timeout = TIMEOUT) {
+  const start = Date.now();
+  while (arr.length < n) {
+    if (Date.now() - start > timeout) {
+      throw new Error(`timeout: atteso ${n} elementi, arrivati ${arr.length}`);
+    }
+    await new Promise(r => setTimeout(r, 50));
   }
 }
 
 (async () => {
   console.log('\n══════════════════════════════════════════════════');
   console.log('  TEST RESET PASSWORD — Global Awakening');
-  console.log(`  Utente: ${NICK} / ${EMAIL}`);
+  console.log(`  Registrato: ${EMAIL_REGISTERED} — non registrato: ${EMAIL_UNREGISTERED}`);
   console.log('══════════════════════════════════════════════════\n');
 
-  const browser = await chromium.launch({ headless: false, slowMo: 200 });
+  await cleanup();
+  await createTestAccount({
+    session_id: `reset-${TS}`,
+    nickname: NICK,
+    email: EMAIL_REGISTERED,
+    password_hash: pbkdf2Hash('Password123!'),
+  });
+
+  const browser = await chromium.launch({ headless: true });
   const ctx  = await browser.newContext();
   const page = await ctx.newPage();
   page.on('console', msg => { if (msg.type() === 'error') log(`browser error: ${msg.text()}`); });
 
+  // Intercetta la vera chiamata alla Edge Function: non deve mai partire davvero.
+  const funzioneChiamate = [];
+  await page.route('**/functions/v1/send-account-email', async route => {
+    let body = null;
+    try { body = route.request().postDataJSON(); } catch { body = null; }
+    funzioneChiamate.push(body);
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+  });
+
+  // Nessuna richiesta deve mai partire verso EmailJS: l'invio è tutto lato server ora.
+  const emailjsRichieste = [];
+  page.on('request', req => {
+    if (/api\.emailjs\.com/.test(req.url())) emailjsRichieste.push(req.url());
+  });
+
   try {
-    // ── Step 1: Registra utente ───────────────────────────────────────────
-    console.log('📋 Step 1: Registrazione utente');
+    // ── Step 1: apre l'app e va al form "password dimenticata" ───────────────
+    console.log('📋 Step 1: apertura form "Password dimenticata?"');
     await page.goto(APP_URL);
-    await page.waitForSelector('button:has-text("Registrati"), button:has-text("Register")', { timeout: TIMEOUT });
-    await page.locator('button:has-text("Registrati"), button:has-text("Register")').first().click();
-
-    await page.locator('input[placeholder*="username"], input[placeholder*="Username"]').first().fill(NICK);
-    await page.locator('input[type="email"]').first().fill(EMAIL);
-    await page.locator('input[type="password"]').first().fill(PW1);
-    await page.locator('button:has-text("Registrati"), button:has-text("Register")').last().click();
-
-    await page.waitForSelector('button:has-text("Logout"), button:has-text("Esci")', { timeout: TIMEOUT });
-    pass('Registrazione completata — utente loggato');
-
-    // ── Step 2: Logout ────────────────────────────────────────────────────
-    console.log('\n📋 Step 2: Logout');
-    await page.locator('button:has-text("Logout"), button:has-text("Esci")').click();
-    await page.waitForSelector('button:has-text("Ospite"), button:has-text("Guest")', { timeout: TIMEOUT });
-    pass('Logout riuscito — schermata login visibile');
-
-    // ── Step 3: Apertura form reset ────────────────────────────────────────
-    console.log('\n📋 Step 3: Apertura form "Password dimenticata?"');
+    await page.waitForSelector('button:has-text("Accedi"), button:has-text("Login")', { timeout: TIMEOUT });
     await page.locator('button:has-text("Accedi"), button:has-text("Login")').first().click();
     const forgotLink = page.locator('p').filter({ hasText: /Password dimenticata|Forgot password/ });
     await forgotLink.waitFor({ timeout: TIMEOUT });
@@ -105,91 +118,63 @@ async function cleanup() {
       fail('Form reset non visibile');
     }
 
-    // ── Step 4: Errore con nickname sbagliato ─────────────────────────────
-    console.log('\n📋 Step 4: Reset con nickname errato → errore atteso');
-    await page.locator('input[type="email"]').first().fill(EMAIL);
-    await page.locator('input[type="text"]').first().fill('NicknameErrato');
-    const pwInputs = page.locator('input[type="password"]');
-    await pwInputs.nth(0).fill(PW2);
-    await pwInputs.nth(1).fill(PW2);
-    await page.locator('button').filter({ hasText: /Reimposta|Reset Password/ }).last().click();
+    // ── Step 2: email NON registrata → messaggio di successo generico ────────
+    console.log('\n📋 Step 2: email NON registrata → stesso messaggio di successo');
+    await page.locator('input[type="email"]').first().fill(EMAIL_UNREGISTERED);
+    await page.locator('button').filter({ hasText: /Reimposta|Reset Password/ }).click();
 
-    await page.waitForTimeout(2000);
-    const errorMsg = await page.locator('p').filter({ hasText: /non trovato|not found/i }).count();
-    if (errorMsg > 0) {
-      pass('Errore corretto mostrato con nickname sbagliato');
-    } else {
-      fail('Errore atteso non mostrato con nickname sbagliato');
-    }
-
-    // ── Step 5: Errore con password non coincidenti ────────────────────────
-    console.log('\n📋 Step 5: Reset con password non coincidenti → errore atteso');
-    await page.locator('input[type="text"]').first().fill(NICK);
-    await pwInputs.nth(0).fill(PW2);
-    await pwInputs.nth(1).fill('DiversaDaConfirm!');
-    await page.locator('button').filter({ hasText: /Reimposta|Reset Password/ }).last().click();
-
-    await page.waitForTimeout(1000);
-    const pwMismatch = await page.locator('p').filter({ hasText: /non coincidono|do not match/i }).count();
-    if (pwMismatch > 0) {
-      pass('Errore "password non coincidono" mostrato correttamente');
-    } else {
-      fail('Errore password mismatch non mostrato');
-    }
-
-    // ── Step 6: Reset corretto ─────────────────────────────────────────────
-    console.log('\n📋 Step 6: Reset corretto (email + nickname validi)');
-    await page.locator('input[type="email"]').first().fill(EMAIL);
-    await page.locator('input[type="text"]').first().fill(NICK);
-    await pwInputs.nth(0).fill(PW2);
-    await pwInputs.nth(1).fill(PW2);
-    await page.locator('button').filter({ hasText: /Reimposta|Reset Password/ }).last().click();
-
+    await waitForLength(funzioneChiamate, 1);
+    const successMsg = page.locator('text=/If the address is registered|Se l\'indirizzo è registrato/');
     try {
-      await page.locator('p').filter({ hasText: /aggiornata|updated/i }).waitFor({ timeout: 5000 });
-      pass('Messaggio di successo reset visibile');
+      await successMsg.waitFor({ timeout: TIMEOUT });
+      pass('Messaggio "se l\'indirizzo è registrato" mostrato per email NON registrata');
     } catch {
-      fail('Messaggio di successo reset NON visibile');
+      fail('Messaggio generico NON mostrato per email non registrata');
     }
-
-    // Attende redirect automatico al login (2.5s)
-    await page.waitForTimeout(3000);
-
-    // ── Step 7: Login con nuova password ──────────────────────────────────
-    console.log('\n📋 Step 7: Login con la nuova password');
-    // Deve essere tornato al form login
-    await page.locator('input[type="email"]').first().fill(EMAIL);
-    await page.locator('input[type="password"]').first().fill(PW2);
-    await page.locator('button:has-text("Accedi"), button:has-text("Login")').last().click();
-
-    try {
-      await page.waitForSelector('button:has-text("Logout"), button:has-text("Esci")', { timeout: TIMEOUT });
-      pass('Login con nuova password riuscito');
-    } catch {
-      fail('Login con nuova password FALLITO');
-    }
-
-    // Verifica che la vecchia password non funzioni più
-    console.log('\n📋 Step 8: Verifica vecchia password non funziona');
-    await page.locator('button:has-text("Logout"), button:has-text("Esci")').click();
-    await page.waitForSelector('button:has-text("Ospite"), button:has-text("Guest")', { timeout: TIMEOUT });
-    await page.locator('button:has-text("Accedi"), button:has-text("Login")').first().click();
-    await page.locator('input[type="email"]').first().fill(EMAIL);
-    await page.locator('input[type="password"]').first().fill(PW1); // vecchia password
-    await page.locator('button:has-text("Accedi"), button:has-text("Login")').last().click();
-    await page.waitForTimeout(2000);
-    const loginErr = await page.locator('p').filter({ hasText: /errata|wrong/i }).count();
-    if (loginErr > 0) {
-      pass('Vecchia password rifiutata correttamente');
+    const call1 = funzioneChiamate[0];
+    if (call1 && call1.tipo === 'reset' && call1.email === EMAIL_UNREGISTERED) {
+      pass(`Richiesta a send-account-email corretta per email non registrata: ${JSON.stringify(call1)}`);
     } else {
-      fail('Vecchia password accettata — reset non ha funzionato correttamente');
+      fail(`Body della richiesta inatteso: ${JSON.stringify(call1)}`);
+    }
+
+    // ── Step 3: email REGISTRATA → stesso messaggio di successo (nessuna differenza) ──
+    console.log('\n📋 Step 3: email registrata → stesso messaggio di successo');
+    await page.locator('input[type="email"]').first().fill(EMAIL_REGISTERED);
+    await page.locator('button').filter({ hasText: /Reimposta|Reset Password/ }).click();
+
+    await waitForLength(funzioneChiamate, 2);
+    try {
+      await page.locator('text=/If the address is registered|Se l\'indirizzo è registrato/').first().waitFor({ timeout: TIMEOUT });
+      pass('Messaggio "se l\'indirizzo è registrato" mostrato anche per email registrata (identico)');
+    } catch {
+      fail('Messaggio generico NON mostrato per email registrata');
+    }
+    const call2 = funzioneChiamate[1];
+    if (call2 && call2.tipo === 'reset' && call2.email === EMAIL_REGISTERED) {
+      pass(`Richiesta a send-account-email corretta per email registrata: ${JSON.stringify(call2)}`);
+    } else {
+      fail(`Body della richiesta inatteso: ${JSON.stringify(call2)}`);
+    }
+
+    // ── Step 4: la Edge Function vera non è mai stata chiamata (era intercettata) ──
+    console.log('\n📋 Step 4: verifica che non ci siano state chiamate extra o a EmailJS');
+    if (funzioneChiamate.length === 2) {
+      pass('Esattamente 2 richieste a send-account-email (una per submit)');
+    } else {
+      fail(`Numero di richieste inatteso: ${funzioneChiamate.length}`);
+    }
+    if (emailjsRichieste.length === 0) {
+      pass('Nessuna richiesta a api.emailjs.com (invio interamente lato server)');
+    } else {
+      fail(`Richieste inattese a EmailJS: ${JSON.stringify(emailjsRichieste)}`);
     }
 
   } catch (err) {
     fail(`Errore imprevisto: ${err.message}`);
     console.error(err);
   } finally {
-    console.log('\n  (Pulizia profilo test da Supabase...)');
+    console.log('\n  (Pulizia profili test da Supabase...)');
     await cleanup();
 
     console.log('\n══════════════════════════════════════════════════');
