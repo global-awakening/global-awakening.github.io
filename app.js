@@ -436,6 +436,36 @@ const translations = {
     },
     rituals: {
       title: "Global Rituals",
+      repeat: "Repeats",
+      repeatNever: "Just once",
+      repeatDaily: "Every day",
+      repeatDays: "Chosen days",
+      until: "Until",
+      weekdaysShort: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+      everyDay: "Every day",
+      atTime: "at",
+      dayOf: (n, m) => `day ${n} of ${m}`,
+      leave: "Leave",
+      leaveFailed: "Could not leave the ritual.",
+      stop: "Stop",
+      stopTitle: "Stop the cycle?",
+      stopBody: "The cycle stops: there will be no more sessions. The current one, if any, ends normally.",
+      stopYes: "Stop",
+      stopNo: "Let it continue",
+      stopFailed: "Could not stop the cycle.",
+      room: "Ritual room",
+      peopleHere: n => n === 1 ? "1 person here now" : `${n} people here now`,
+      closeRoom: "Close",
+      descCounter: n => `${n} characters left`,
+      recurrenceErrors: {
+        recurrence_incomplete: "Choose the days and an end date.",
+        recurrence_days_invalid: "Choose at least one day of the week.",
+        recurrence_end_invalid: "The end date must be after the start, at most one year away.",
+        recurrence_duration_too_long: "A repeating ritual lasts 12 hours at most.",
+        recurrence_empty: "None of the chosen days falls in this period.",
+        recurrence_limit: "You already have 10 repeating rituals: stop one before creating another.",
+        timezone_invalid: "Your phone's time zone is not recognised."
+      },
       subtitle: "Synchronized awakening ceremonies",
       deleteRitual: "Delete",
       deleteTitle: "Delete this ritual?",
@@ -801,6 +831,36 @@ const translations = {
     },
     rituals: {
       title: "Rituali Globali",
+      repeat: "Si ripete",
+      repeatNever: "Una volta sola",
+      repeatDaily: "Ogni giorno",
+      repeatDays: "Giorni scelti",
+      until: "Fino al",
+      weekdaysShort: ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"],
+      everyDay: "Ogni giorno",
+      atTime: "alle",
+      dayOf: (n, m) => `giorno ${n} di ${m}`,
+      leave: "Lascia",
+      leaveFailed: "Non è stato possibile lasciare il rituale.",
+      stop: "Ferma",
+      stopTitle: "Fermare il ciclo?",
+      stopBody: "Il ciclo si ferma: non ci saranno altri appuntamenti. Quello in corso, se c'è, finisce normalmente.",
+      stopYes: "Ferma",
+      stopNo: "Lascialo andare",
+      stopFailed: "Non è stato possibile fermare il ciclo.",
+      room: "Stanza del rituale",
+      peopleHere: n => n === 1 ? "1 persona qui adesso" : `${n} persone qui adesso`,
+      closeRoom: "Chiudi",
+      descCounter: n => `ancora ${n} caratteri`,
+      recurrenceErrors: {
+        recurrence_incomplete: "Scegli i giorni e la data di fine.",
+        recurrence_days_invalid: "Scegli almeno un giorno della settimana.",
+        recurrence_end_invalid: "La data di fine deve essere dopo l'inizio, al massimo fra un anno.",
+        recurrence_duration_too_long: "Un rituale che si ripete dura al massimo 12 ore.",
+        recurrence_empty: "In questo periodo non cade nessuno dei giorni scelti.",
+        recurrence_limit: "Hai già 10 rituali che si ripetono: fermane uno prima di crearne un altro.",
+        timezone_invalid: "Il fuso orario del telefono non è riconosciuto."
+      },
       subtitle: "Cerimonie di risveglio sincronizzate",
       deleteRitual: "Cancella",
       deleteTitle: "Cancellare questo rituale?",
@@ -1175,7 +1235,10 @@ function GlobalAwakeningPlatform() {
     sacredNumber: 11,
     date: '',
     time: '',
-    duration: DURATA_RITUALE_PREDEFINITA
+    duration: DURATA_RITUALE_PREDEFINITA,
+    ripeti: 'mai',
+    giorni: [],
+    fino: ''
   });
   React.useEffect(() => {
     expandedPostIdRef.current = expandedPostId;
@@ -1649,7 +1712,7 @@ function GlobalAwakeningPlatform() {
     const loadData = async () => {
       const {
         data: ritualsData
-      } = await supabase.from('rituals').select('*').order('created_at', {
+      } = await supabase.from('rituali_correnti').select('*').order('created_at', {
         ascending: false
       });
       if (ritualsData) {
@@ -3106,6 +3169,12 @@ function GlobalAwakeningPlatform() {
     }
     const dataUtc = istanteLocale.toISOString().slice(0, 10);
     const oraUtc = istanteLocale.toISOString().slice(11, 16);
+    const ricorre = newRitual.ripeti !== 'mai';
+    const giorni = newRitual.ripeti === 'ogni' ? [1, 2, 3, 4, 5, 6, 7] : newRitual.giorni;
+    if (ricorre && (!newRitual.fino || giorni.length === 0)) {
+      setErrorToast(t.rituals.recurrenceErrors.recurrence_incomplete);
+      return;
+    }
     const ritualData = {
       creator: nickname || 'Anonymous',
       creator_id: sessionId,
@@ -3134,17 +3203,21 @@ function GlobalAwakeningPlatform() {
         p_date: ritualData.date,
         p_time: ritualData.time,
         p_duration: ritualData.duration,
-        p_password_hash: passwordHash
+        p_password_hash: passwordHash,
+        ...(ricorre ? {
+          p_ripeti_giorni: giorni,
+          p_ripeti_fino: newRitual.fino,
+          p_fuso: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+        } : {})
       });
       if (error) {
         console.warn('Supabase RPC create_ritual error:', error);
         setSavingContent(false);
-        showErrorToast();
+        const codice = Object.keys(t.rituals.recurrenceErrors).find(k => (error.message || '').includes(k));
+        if (codice) setErrorToast(t.rituals.recurrenceErrors[codice]);else showErrorToast();
         return;
       }
-      if (Array.isArray(data) && data[0]) {
-        setRituals(prev => [data[0], ...prev]);
-      }
+      if (Array.isArray(data) && data[0]) await rileggiRituale(data[0].id);
     } catch (err) {
       console.warn('Create ritual failed:', err);
       setSavingContent(false);
@@ -3160,7 +3233,10 @@ function GlobalAwakeningPlatform() {
       sacredNumber: 11,
       date: '',
       time: '',
-      duration: DURATA_RITUALE_PREDEFINITA
+      duration: DURATA_RITUALE_PREDEFINITA,
+      ripeti: 'mai',
+      giorni: [],
+      fino: ''
     });
   };
   const createTestRitual = async () => {
@@ -3329,6 +3405,30 @@ function GlobalAwakeningPlatform() {
     }
     await valutaPush();
   };
+  const rileggiRituale = async id => {
+    const {
+      data
+    } = await supabase.from('rituali_correnti').select('*').eq('id', id);
+    setRituals(prev => {
+      const riga = Array.isArray(data) && data[0];
+      if (!riga) return prev.filter(r => r.id !== id);
+      return prev.some(r => r.id === id) ? prev.map(r => r.id === id ? riga : r) : [riga, ...prev];
+    });
+  };
+  const leaveRitual = async ritualId => {
+    const {
+      error
+    } = await supabase.rpc('leave_ritual', {
+      p_ritual_id: ritualId,
+      p_session_id: sessionId,
+      p_password_hash: passwordHash || ''
+    });
+    if (error) {
+      setErrorToast(t.rituals.leaveFailed);
+      return;
+    }
+    await rileggiRituale(ritualId);
+  };
   const sendEnergy = async ritualId => {
     const ritual = rituals.find(r => r.id === ritualId);
     if (!ritual) return;
@@ -3349,7 +3449,7 @@ function GlobalAwakeningPlatform() {
       showErrorToast();
       return;
     }
-    setRituals(prev => prev.map(r => r.id === ritualId ? data[0] : r));
+    await rileggiRituale(ritualId);
   };
   const [ritualToDelete, setRitualToDelete] = useState(null);
   const doDeleteRitual = async ritualId => {
@@ -3366,6 +3466,21 @@ function GlobalAwakeningPlatform() {
       return;
     }
     setRituals(prev => prev.filter(r => r.id !== ritualId));
+  };
+  const [ritualToStop, setRitualToStop] = useState(null);
+  const doFermaRituale = async ritualId => {
+    const {
+      error
+    } = await supabase.rpc('ferma_rituale', {
+      p_ritual_id: ritualId,
+      p_session_id: sessionId,
+      p_password_hash: passwordHash || ''
+    });
+    if (error) {
+      setErrorToast(t.rituals.stopFailed);
+      return;
+    }
+    await rileggiRituale(ritualId);
   };
   const getRitualStatus = ritual => {
     const now = new Date();
