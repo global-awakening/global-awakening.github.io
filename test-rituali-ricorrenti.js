@@ -35,6 +35,10 @@ async function anon(p, opts = {}) {
 }
 const rpc = (fn, params) => anon(`rpc/${fn}`, { method: 'POST', body: JSON.stringify(params) });
 const ok = (r) => r.status >= 200 && r.status < 300;
+// Date relative a oggi: le asserzioni che dipendono da now() non possono usare date fisse, o il
+// test diventa rosso da solo quando passano. Le date fisse restano solo per get_ritual_occurrences
+// (funzione pura della regola: create_ritual accetta anche date passate).
+const giorno = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
 const msg = (r) => String(r.body && r.body.message);
 
 // Rituale via RPC pubblica; un creator_id diverso per caso (rate limit: 5 ogni 10 minuti).
@@ -64,10 +68,13 @@ async function crea(tag, extra) {
       check(ok(occ) && JSON.stringify(viste) === JSON.stringify(attese),
         'get_ritual_occurrences: 5 appuntamenti, 07:00 di Roma anche dopo il cambio ora', occ.body);
 
-      // 2. La vista espone le colonne nuove; la tabella delle presenze è chiusa alla chiave pubblica.
-      const v = await anon(`rituali_correnti?id=eq.${r.id}`);
+      // 2. La vista espone le colonne nuove (su un ciclo futuro, date relative a oggi); la tabella
+      //    delle presenze è chiusa alla chiave pubblica.
+      const f = await crea('d', { p_date: giorno(30), p_time: '05:00', p_ripeti_giorni: [1, 2, 3, 4, 5, 6, 7],
+                                  p_ripeti_fino: giorno(34), p_fuso: 'Europe/Rome' });
+      const v = await anon(`rituali_correnti?id=eq.${f.id}`);
       const riga = Array.isArray(v.body) ? v.body[0] : null;
-      check(riga && riga.date && riga.time && riga.occorrenza_numero === 1 && riga.occorrenze_totali === 5
+      check(riga && riga.date === giorno(30) && riga.time === '05:00:00' && riga.occorrenza_numero === 1 && riga.occorrenze_totali === 5
             && riga.presenti_ora === 0,
         'la vista restituisce date, time, occorrenza_numero, occorrenze_totali, presenti_ora', v.body);
       const p = await anon('ritual_presence?select=*');
@@ -77,21 +84,23 @@ async function crea(tag, extra) {
 
     // 3. La chiamata a 10 parametri dell'app online crea ancora un rituale singolo.
     {
-      const r = await crea('b', { p_date: '2026-12-01', p_time: '08:00' });
+      const r = await crea('b', { p_date: giorno(30), p_time: '08:00' });
       check(r.ripeti_giorni === null && r.ripeti_fino === null && r.fuso === null,
         'la chiamata a 10 parametri crea un rituale singolo (nessuna regola)', r);
       const v = await anon(`rituali_correnti?id=eq.${r.id}`);
       const riga = Array.isArray(v.body) ? v.body[0] : null;
-      check(riga && riga.date === '2026-12-01' && riga.time === '08:00:00' && riga.occorrenza_numero === 1
+      check(riga && riga.date === giorno(30) && riga.time === '08:00:00' && riga.occorrenza_numero === 1
             && riga.occorrenze_totali === 1, 'per il singolo la vista lascia data e ora intatte', v.body);
     }
 
     // 4. Ciclo in corso: giornaliero in UTC, partito 2 giorni fa, iniziato un minuto fa.
     {
-      const ora = new Date();
-      const inizio = new Date(ora.getTime() - 2 * 86400000);
-      const alle = new Date(ora.getTime() - 60000).toISOString().slice(11, 16);
-      const fino = new Date(ora.getTime() + 5 * 86400000).toISOString().slice(0, 10);
+      // Data e ora dallo stesso istante t0: a cavallo della mezzanotte UTC il giorno di partenza
+      // segue l'ora, e l'appuntamento corrente è sempre il 3°.
+      const t0 = new Date(Date.now() - 60000);
+      const inizio = new Date(t0.getTime() - 2 * 86400000);
+      const alle = t0.toISOString().slice(11, 16);
+      const fino = new Date(t0.getTime() + 5 * 86400000).toISOString().slice(0, 10);
       const c = await crea('c', { p_date: inizio.toISOString().slice(0, 10), p_time: alle,
                                   p_ripeti_giorni: [1, 2, 3, 4, 5, 6, 7], p_ripeti_fino: fino, p_fuso: 'UTC' });
       const ospite = `${PREFISSO}-ospite`;
@@ -128,7 +137,7 @@ async function crea(tag, extra) {
       check(ok(n1) && occ === corrente, 'l\'insert senza occorrenza prende l\'appuntamento corrente',
         { status: n1.status, body: n1.body, atteso: new Date(corrente).toISOString() });
       const n2 = await serviceFetch('ritual_notifications_sent', { method: 'POST', body: JSON.stringify(riga) });
-      check(n2.status === 409, 'secondo insert uguale respinto (409)', { status: n2.status, body: n2.body });
+      check(n2.status === 409 && n2.body && n2.body.code === '23505', 'secondo insert uguale respinto (409, 23505)', { status: n2.status, body: n2.body });
 
       // Fermare il ciclo: prima un altro non può, poi il creatore sì, e non due volte.
       const fa = await rpc('ferma_rituale', { p_ritual_id: c.id, p_session_id: ospite, p_password_hash: '' });
@@ -144,11 +153,16 @@ async function crea(tag, extra) {
     fail(`errore imprevisto: ${e.message}`);
   } finally {
     console.log('\n— Pulizia —');
-    const a = await serviceFetch(`rituals?creator_id=like.${PREFISSO}*`, { method: 'DELETE' });
-    const b = await serviceFetch(`push_subscriptions?endpoint=eq.${encodeURIComponent(ENDPOINT)}`, { method: 'DELETE' });
-    console.log(`  rituali: HTTP ${a.status}, abbonamento finto: HTTP ${b.status}`);
-    const resto = await serviceFetch(`rituals?creator_id=like.${PREFISSO}*&select=id`);
-    check(Array.isArray(resto.body) && resto.body.length === 0, 'nessun rituale di prova rimasto');
+    // Ogni passo in try/catch: se la rete cade il riepilogo esce comunque, dichiarando la pulizia mancata.
+    try {
+      const a = await serviceFetch(`rituals?creator_id=like.${PREFISSO}*`, { method: 'DELETE' });
+      const b = await serviceFetch(`push_subscriptions?endpoint=eq.${encodeURIComponent(ENDPOINT)}`, { method: 'DELETE' });
+      console.log(`  rituali: HTTP ${a.status}, abbonamento finto: HTTP ${b.status}`);
+      const resto = await serviceFetch(`rituals?creator_id=like.${PREFISSO}*&select=id`);
+      check(Array.isArray(resto.body) && resto.body.length === 0, 'nessun rituale di prova rimasto');
+    } catch (e) {
+      fail(`pulizia non riuscita (righe rric-${TS} da rimuovere a mano): ${e.message}`);
+    }
     console.log(`\nRisultato: ${passed} passati, ${failed} falliti`);
   }
 })();
