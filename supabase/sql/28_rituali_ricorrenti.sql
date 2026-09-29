@@ -256,6 +256,165 @@ END;
 $$;
 GRANT EXECUTE ON FUNCTION create_ritual(text,text,text,text,text,int,date,time,int,text,smallint[],date,text) TO anon;
 
+-- ── Lasciare un ciclo ──────────────────────────────────────────────────────
+-- Un solo «Partecipa» vale per tutto il ciclo (D3); serve quindi anche l'uscita. Il creatore non
+-- esce: per lui ci sono Cancella e Ferma. Auth condizionale: i session_id sono leggibili da tutti
+-- nell'array participants, e togliere qualcuno gli spegnerebbe le notifiche. Per gli ospiti il
+-- session_id resta l'unica prova (rischio accettato, spec §4).
+CREATE OR REPLACE FUNCTION leave_ritual(p_ritual_id bigint, p_session_id text, p_password_hash text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v rituals%ROWTYPE;
+BEGIN
+  IF p_session_id IS NULL OR p_session_id = '' THEN RAISE EXCEPTION 'session_required'; END IF;
+  IF length(p_session_id) > 255 THEN RAISE EXCEPTION 'session_id_too_long'; END IF;
+  SELECT * INTO v FROM rituals WHERE id = p_ritual_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'ritual_not_found'; END IF;
+  IF v.creator_id = p_session_id THEN RAISE EXCEPTION 'creator_cannot_leave'; END IF;
+  IF EXISTS (SELECT 1 FROM profiles WHERE session_id = p_session_id AND email IS NOT NULL)
+     AND NOT EXISTS (SELECT 1 FROM profiles WHERE session_id = p_session_id AND password_hash = p_password_hash) THEN
+    RAISE EXCEPTION 'Auth failed';
+  END IF;
+  UPDATE rituals
+     SET participants = coalesce((SELECT jsonb_agg(e) FROM jsonb_array_elements(participants) e
+                                   WHERE e <> to_jsonb(p_session_id)), '[]'::jsonb),
+         candles      = coalesce((SELECT jsonb_agg(e) FROM jsonb_array_elements(candles) e
+                                   WHERE e <> to_jsonb(p_session_id)), '[]'::jsonb)
+   WHERE id = p_ritual_id;
+  DELETE FROM ritual_presence WHERE ritual_id = p_ritual_id AND session_id = p_session_id;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION leave_ritual(bigint, text, text) TO anon;
+
+-- ── Fermare un ciclo ───────────────────────────────────────────────────────
+-- Stessi cancelli di delete_ritual (25_): esiste, è del chiamante, credenziale per i registrati.
+-- Prima del primo appuntamento non si ferma: si cancella (senza appuntamenti la riga non
+-- avrebbe un «corrente» e resterebbe appesa).
+CREATE OR REPLACE FUNCTION ferma_rituale(p_ritual_id bigint, p_session_id text, p_password_hash text)
+RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v rituals%ROWTYPE;
+BEGIN
+  SELECT * INTO v FROM rituals WHERE id = p_ritual_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'ritual_not_found'; END IF;
+  IF coalesce(v.creator_id, '') IS DISTINCT FROM coalesce(p_session_id, '') THEN RAISE EXCEPTION 'not_creator'; END IF;
+  IF EXISTS (SELECT 1 FROM profiles WHERE nickname = v.creator)
+     AND NOT EXISTS (SELECT 1 FROM profiles WHERE nickname = v.creator AND password_hash = p_password_hash) THEN
+    RAISE EXCEPTION 'Auth failed';
+  END IF;
+  IF v.ripeti_giorni IS NULL THEN RAISE EXCEPTION 'not_recurring'; END IF;
+  IF v.fermato_il IS NOT NULL THEN RAISE EXCEPTION 'already_stopped'; END IF;
+  IF now() < ((v.date || ' ' || v.time)::timestamp AT TIME ZONE 'UTC') THEN RAISE EXCEPTION 'not_started'; END IF;
+  UPDATE rituals SET fermato_il = now() WHERE id = p_ritual_id;
+  RETURN p_ritual_id;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION ferma_rituale(bigint, text, text) TO anon;
+
+-- ── Candele per appuntamento ───────────────────────────────────────────────
+-- Corpo di 11_ con una regola in più: le candele di un appuntamento passato si spengono prima di
+-- accendere quella nuova. candles_occorrenza NULL = «quello corrente» (i rituali singoli di prima
+-- della 28_ ce l'hanno NULL: le candele degli altri non devono sparire al primo tocco).
+CREATE OR REPLACE FUNCTION toggle_ritual_candle(p_ritual_id bigint, p_session_id text)
+RETURNS SETOF rituals LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v rituals%ROWTYPE; v_occ timestamptz;
+BEGIN
+  IF p_session_id IS NULL OR p_session_id = '' THEN RAISE EXCEPTION 'session_required'; END IF;
+  IF length(p_session_id) > 255 THEN RAISE EXCEPTION 'session_id_too_long'; END IF;
+  SELECT * INTO v FROM rituals WHERE id = p_ritual_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'ritual_not_found'; END IF;
+  v_occ := rituale_occorrenza_corrente(v);
+  UPDATE rituals SET candles = '[]'::jsonb
+   WHERE id = p_ritual_id AND candles_occorrenza IS NOT NULL AND candles_occorrenza IS DISTINCT FROM v_occ;
+  RETURN QUERY
+    UPDATE rituals
+       SET candles = CASE
+             WHEN candles @> to_jsonb(array[p_session_id]) THEN
+               coalesce((SELECT jsonb_agg(e) FROM jsonb_array_elements(candles) e
+                          WHERE e <> to_jsonb(p_session_id)), '[]'::jsonb)
+             ELSE candles || to_jsonb(p_session_id) END,
+           candles_occorrenza = v_occ
+     WHERE id = p_ritual_id
+     RETURNING *;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION toggle_ritual_candle(bigint, text) TO anon;
+
+-- ── Presenze ───────────────────────────────────────────────────────────────
+-- La stanza la chiama all'apertura e ogni 30 secondi; conta chi si è fatto vivo nell'ultimo
+-- minuto. Trustful come join_ritual: conta, non autorizza niente. Tetto di 500 righe per
+-- appuntamento: oltre, chi arriva non viene scritto ma il numero torna lo stesso.
+CREATE OR REPLACE FUNCTION segna_presenza_rituale(p_ritual_id bigint, p_session_id text)
+RETURNS int LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v rituals%ROWTYPE; v_occ timestamptz;
+BEGIN
+  IF p_session_id IS NULL OR p_session_id = '' THEN RAISE EXCEPTION 'session_required'; END IF;
+  IF length(p_session_id) > 255 THEN RAISE EXCEPTION 'session_id_too_long'; END IF;
+  SELECT * INTO v FROM rituals WHERE id = p_ritual_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'ritual_not_found'; END IF;
+  v_occ := rituale_occorrenza_corrente(v);
+  IF v_occ IS NULL OR now() < v_occ OR now() >= v_occ + make_interval(mins => v.duration) THEN
+    RAISE EXCEPTION 'not_live';
+  END IF;
+  DELETE FROM ritual_presence WHERE ritual_id = p_ritual_id AND occorrenza <> v_occ;
+  IF EXISTS (SELECT 1 FROM ritual_presence WHERE ritual_id = p_ritual_id AND occorrenza = v_occ AND session_id = p_session_id)
+     OR (SELECT count(*) FROM ritual_presence WHERE ritual_id = p_ritual_id AND occorrenza = v_occ) < 500 THEN
+    INSERT INTO ritual_presence (ritual_id, occorrenza, session_id) VALUES (p_ritual_id, v_occ, p_session_id)
+      ON CONFLICT (ritual_id, occorrenza, session_id) DO UPDATE SET visto_il = now();
+  END IF;
+  RETURN rituale_presenti_ora(p_ritual_id, v_occ);
+END;
+$$;
+GRANT EXECUTE ON FUNCTION segna_presenza_rituale(bigint, text) TO anon;
+
+-- ── Pulizia ────────────────────────────────────────────────────────────────
+-- I singoli: stessa condizione di prima, verbatim. I ricorrenti: finito l'ultimo appuntamento,
+-- oppure nessun appuntamento.
+CREATE OR REPLACE FUNCTION cleanup_expired_rituals()
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE n int;
+BEGIN
+  WITH expired AS (
+    DELETE FROM rituals r
+     WHERE (r.ripeti_giorni IS NULL
+            AND (r.date::date + r.time::time) + make_interval(mins => coalesce(r.duration, 0))
+                < (now() AT TIME ZONE 'UTC')::timestamp)
+        OR (r.ripeti_giorni IS NOT NULL
+            AND coalesce(rituale_occorrenza_corrente(r) + make_interval(mins => coalesce(r.duration, 0)) < now(), true))
+     RETURNING id)
+  SELECT count(*)::int INTO n FROM expired;
+  RETURN n;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION cleanup_expired_rituals() TO anon;
+
+-- ── Notifiche: una per appuntamento ────────────────────────────────────────
+ALTER TABLE ritual_notifications_sent ADD COLUMN IF NOT EXISTS occorrenza timestamptz NOT NULL DEFAULT 'epoch';
+ALTER TABLE ritual_notifications_sent DROP CONSTRAINT IF EXISTS ritual_notifications_sent_pkey;
+UPDATE ritual_notifications_sent s
+   SET occorrenza = rituale_occorrenza_corrente(r)
+  FROM rituals r
+ WHERE r.id = s.ritual_id AND s.occorrenza = 'epoch' AND rituale_occorrenza_corrente(r) IS NOT NULL;
+ALTER TABLE ritual_notifications_sent
+  ADD CONSTRAINT ritual_notifications_sent_pkey PRIMARY KEY (ritual_id, subscription_id, kind, occorrenza);
+
+-- La funzione di oggi, finché non viene ripubblicata, scrive senza occorrenza: il trigger mette
+-- quella corrente, così le sue righe e quelle della funzione nuova si riconoscono e non partono
+-- doppioni nel passaggio.
+CREATE OR REPLACE FUNCTION ritual_notifications_occorrenza()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v timestamptz;
+BEGIN
+  IF NEW.occorrenza = 'epoch' THEN
+    SELECT rituale_occorrenza_corrente(r) INTO v FROM rituals r WHERE r.id = NEW.ritual_id;
+    IF v IS NOT NULL THEN NEW.occorrenza := v; END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_ritual_notifications_occorrenza ON ritual_notifications_sent;
+CREATE TRIGGER trg_ritual_notifications_occorrenza
+  BEFORE INSERT ON ritual_notifications_sent
+  FOR EACH ROW EXECUTE FUNCTION ritual_notifications_occorrenza();
+
 NOTIFY pgrst, 'reload schema';
 
 COMMIT;

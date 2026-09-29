@@ -104,8 +104,70 @@ async function parteA(db) {
   return { c, s };
 }
 
+async function parteB(db, { c, s }) {
+  console.log('\n— lasciare, fermare, candele, presenze, pulizia, notifiche —');
+  const vista = async (id) => (await db.query(`SELECT * FROM rituali_correnti WHERE id = $1`, [id])).rows[0];
+
+  // leave_ritual.
+  await db.query(`SELECT join_ritual($1, 'ospite2')`, [c.id]);
+  await db.query(`SELECT leave_ritual($1, 'ospite2', NULL)`, [c.id]);
+  check(!(await vista(c.id)).participants.includes('ospite2'), 'un ospite lascia il ciclo');
+  check((await errore(db.query(`SELECT leave_ritual($1, 'ciclo', NULL)`, [c.id]))).includes('creator_cannot_leave'), 'il creatore non può lasciare');
+  await db.query(`INSERT INTO profiles (session_id, nickname, email, password_hash) VALUES ('reg1','Reg1','r@test.com','pbkdf2$1$a$b')`);
+  await db.query(`SELECT join_ritual($1, 'reg1')`, [c.id]);
+  check((await errore(db.query(`SELECT leave_ritual($1, 'reg1', 'sbagliato')`, [c.id]))).includes('Auth failed'), 'registrato: serve la credenziale per lasciare');
+  await db.query(`SELECT leave_ritual($1, 'reg1', 'pbkdf2$1$a$b')`, [c.id]);
+  check(!(await vista(c.id)).participants.includes('reg1'), 'registrato con credenziale: lascia');
+
+  // Candele per appuntamento: una candela di ieri non vale oggi.
+  const ieri = new Date(Date.now() - 86400000 - 60000).toISOString();
+  await db.query(`UPDATE rituals SET candles = '["vecchia"]', candles_occorrenza = $2 WHERE id = $1`, [c.id, ieri]);
+  check((await vista(c.id)).candles.length === 0, 'vista: la candela di ieri non si vede oggi');
+  await db.query(`SELECT * FROM toggle_ritual_candle($1, 'nuova')`, [c.id]);
+  check(JSON.stringify((await vista(c.id)).candles) === '["nuova"]', 'toggle: azzera ieri e accende oggi');
+  // Rituale singolo esistente (candles_occorrenza NULL): le candele degli altri restano.
+  await db.query(`UPDATE rituals SET candles = '["a"]', candles_occorrenza = NULL WHERE id = $1`, [s.id]);
+  await db.query(`SELECT * FROM toggle_ritual_candle($1, 'b')`, [s.id]);
+  check(JSON.stringify((await vista(s.id)).candles) === '["a","b"]', 'singolo: la candela di un altro non si spegne');
+
+  // Presenze.
+  check((await db.query(`SELECT segna_presenza_rituale($1, 'p1') AS n`, [c.id])).rows[0].n === 1, 'presenza: 1 persona qui adesso');
+  check((await db.query(`SELECT segna_presenza_rituale($1, 'p1') AS n`, [c.id])).rows[0].n === 1, 'presenza: idempotente');
+  await db.query(`UPDATE ritual_presence SET visto_il = now() - interval '2 minutes' WHERE session_id = 'p1'`);
+  check((await vista(c.id)).presenti_ora === 0, 'presenza: dopo 60 s senza segni non conta più');
+  check((await errore(db.query(`SELECT segna_presenza_rituale($1, 'p1')`, [s.id]))).includes('not_live'), 'presenza: rifiutata se l\'appuntamento non è in corso');
+
+  // ferma_rituale.
+  const futuro = (await crea(db, { giorni: [1,2,3,4,5,6,7], fino: '2026-12-31', fuso: 'UTC', data: '2026-12-01', ora: '07:00', creatore: 'fermo' })).rows[0];
+  check((await errore(db.query(`SELECT ferma_rituale($1, 'fermo', NULL)`, [futuro.id]))).includes('not_started'), 'fermare prima dell\'inizio: si usa Cancella');
+  check((await errore(db.query(`SELECT ferma_rituale($1, 'altro', NULL)`, [c.id]))).includes('not_creator'), 'solo il creatore ferma');
+  check((await errore(db.query(`SELECT ferma_rituale($1, 'sing', NULL)`, [s.id]))).includes('not_recurring'), 'un rituale singolo non si ferma');
+  const primaDi = (await db.query(`SELECT count(*)::int n FROM get_ritual_occurrences($1)`, [c.id])).rows[0].n;
+  await db.query(`SELECT ferma_rituale($1, 'ciclo', NULL)`, [c.id]);
+  const dopo = (await db.query(`SELECT count(*)::int n FROM get_ritual_occurrences($1)`, [c.id])).rows[0].n;
+  check(primaDi === 8 && dopo === 3, 'fermato: restano solo gli appuntamenti già iniziati (quello in corso finisce)', { primaDi, dopo });
+  check((await errore(db.query(`SELECT ferma_rituale($1, 'ciclo', NULL)`, [c.id]))).includes('already_stopped'), 'non si ferma due volte');
+
+  // Pulizia: non tocca un ciclo con appuntamenti futuri; cancella uno finito.
+  const finito = (await crea(db, { giorni: [1,2,3,4,5,6,7], fino: '2026-09-02', fuso: 'UTC', data: '2026-09-01', ora: '07:00', creatore: 'finito' })).rows[0];
+  await db.query(`SELECT cleanup_expired_rituals()`);
+  const ids = (await db.query(`SELECT id FROM rituals`)).rows.map(r => Number(r.id));
+  check(!ids.includes(Number(finito.id)) && ids.includes(Number(futuro.id)), 'pulizia: via il ciclo finito, resta quello futuro');
+
+  // Notifiche: dedup per appuntamento, e la riga «epoch» della funzione vecchia diventa l'appuntamento corrente.
+  const sub = (await db.query(`INSERT INTO push_subscriptions (session_id) VALUES ('x') RETURNING id`)).rows[0].id;
+  await db.query(`INSERT INTO ritual_notifications_sent (ritual_id, subscription_id, kind) VALUES ($1, $2, 'start')`, [futuro.id, sub]);
+  const occ = (await db.query(`SELECT occorrenza FROM ritual_notifications_sent WHERE ritual_id = $1`, [futuro.id])).rows[0].occorrenza;
+  check(iso(occ) === '2026-12-01T07:00:00.000Z', 'riga senza occorrenza: il trigger mette l\'appuntamento corrente', iso(occ));
+  check(!!(await errore(db.query(`INSERT INTO ritual_notifications_sent (ritual_id, subscription_id, kind, occorrenza) VALUES ($1, $2, 'start', '2026-12-01T07:00:00Z')`, [futuro.id, sub]))), 'stesso appuntamento: conflitto (niente doppione)');
+  check(!(await errore(db.query(`INSERT INTO ritual_notifications_sent (ritual_id, subscription_id, kind, occorrenza) VALUES ($1, $2, 'start', '2026-12-02T07:00:00Z')`, [futuro.id, sub]))), 'appuntamento dopo: la notifica riparte');
+}
+
 (async () => {
   const db = await creaDbLocale();
-  await parteA(db);
+  const ctx = await parteA(db);
+  await parteB(db, ctx);
+  const { applicaFile } = require('./scripts/pg-locale');
+  check(!(await errore(applicaFile(db, 'supabase/sql/28_rituali_ricorrenti.sql'))), '28_ si rilancia senza errori (idempotente)');
   console.log(`\n${passed} passati, ${failed} falliti`);
 })().catch(e => { console.log('  ❌ eccezione: ' + e.message); process.exitCode = 1; });
