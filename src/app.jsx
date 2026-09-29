@@ -3370,20 +3370,26 @@
 
           // Il rituale arrivato dalla notifica: se è in corso si entra, se no non si fa niente di
           // speciale; se non esiste più (già pulito) lo si dimentica.
+          // Si aspetta che la persona abbia superato la richiesta del nome: prima, la stanza
+          // segnerebbe la presenza con un identificativo provvisorio e farebbe partire la musica
+          // sopra la schermata d'accesso. L'id resta qui e la stanza si apre dopo l'entrata.
           React.useEffect(() => {
-            if (ritualeDaAprire == null || rituals.length === 0) return;
+            if (showNicknamePrompt || ritualeDaAprire == null || rituals.length === 0) return;
             const r = rituals.find(x => x.id === ritualeDaAprire);
             if (r && getRitualStatus(r) === 'live') setStanzaId(r.id);
             setRitualeDaAprire(null);
-          }, [ritualeDaAprire, rituals]);
+          }, [ritualeDaAprire, rituals, showNicknamePrompt]);
 
           // Nella stanza ci si segna all'ingresso e ogni 30 secondi: il numero conta chi si è fatto
           // vivo nell'ultimo minuto (28_). Finito l'appuntamento, la stanza si chiude da sola: la
           // lista si ricarica ogni 10 s (loadData) e getRitualStatus viene rivalutato a ogni giro.
           const stanzaLive = !!stanza && getRitualStatus(stanza) === 'live';
           React.useEffect(() => {
+            // Il numero di prima non vale per un'altra stanza (né per una riaperta più tardi):
+            // meglio nessun numero per un attimo che quello sbagliato.
+            setPresentiStanza(null);
             if (stanzaId == null) return;
-            if (!stanzaLive) { setStanzaId(null); setPresentiStanza(null); return; }
+            if (!stanzaLive) { setStanzaId(null); return; }
             let vivo = true;
             const segna = async () => {
               const { data, error } = await supabase.rpc('segna_presenza_rituale', { p_ritual_id: stanzaId, p_session_id: sessionId });
@@ -5829,11 +5835,12 @@ ${ritual.description || ''}` })}
               {/* preload="none": il brano pesa, non lo scarica chi non entra mai in una sessione */}
               <audio ref={musicRef} src={MUSIC_SRC} loop preload="none" />
               {/* La stanza del rituale: la preghiera in grande e quante persone ci sono adesso.
-                  zIndex 9999, sotto la soglia (10000): quando serve il tocco per la musica, la
-                  soglia deve restare sopra. */}
+                  zIndex 9990: sotto la soglia (10000), che quando serve il tocco per la musica
+                  deve restare sopra, e sotto gli avvisi (9997-9999), che altrimenti la stanza
+                  coprirebbe — un errore sulla candela non si vedrebbe. */}
               {stanza && stanzaLive && (
                 <div data-test="ritual-room" role="dialog" aria-label={t.rituals.room}
-                  style={{position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', flexDirection: 'column',
+                  style={{position: 'fixed', inset: 0, zIndex: 9990, display: 'flex', flexDirection: 'column',
                           alignItems: 'center', padding: '2rem 1.25rem', gap: '1rem', overflowY: 'auto',
                           background: 'rgba(10, 6, 30, 0.94)', backdropFilter: 'blur(6px)'}}>
                   <button data-test="room-close" onClick={() => setStanzaId(null)} className="btn-secondary"

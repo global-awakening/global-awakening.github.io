@@ -3508,17 +3508,17 @@ function GlobalAwakeningPlatform() {
     return `${minutes}m`;
   };
   React.useEffect(() => {
-    if (ritualeDaAprire == null || rituals.length === 0) return;
+    if (showNicknamePrompt || ritualeDaAprire == null || rituals.length === 0) return;
     const r = rituals.find(x => x.id === ritualeDaAprire);
     if (r && getRitualStatus(r) === 'live') setStanzaId(r.id);
     setRitualeDaAprire(null);
-  }, [ritualeDaAprire, rituals]);
+  }, [ritualeDaAprire, rituals, showNicknamePrompt]);
   const stanzaLive = !!stanza && getRitualStatus(stanza) === 'live';
   React.useEffect(() => {
+    setPresentiStanza(null);
     if (stanzaId == null) return;
     if (!stanzaLive) {
       setStanzaId(null);
-      setPresentiStanza(null);
       return;
     }
     let vivo = true;
@@ -7221,7 +7221,7 @@ ${ritual.description || ''}`
     style: {
       position: 'fixed',
       inset: 0,
-      zIndex: 9999,
+      zIndex: 9990,
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',

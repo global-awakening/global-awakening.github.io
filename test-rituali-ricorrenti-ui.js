@@ -153,11 +153,22 @@ const apriRituali = async (page) => {
 
       // ── 4. Review Focus 1: la candela non deve riportare il ciclo al giorno 1 ──
       console.log('\n4. Candela nella stanza');
-      await pageB.locator('[data-test="room-candle"]').click();
-      await pageB.waitForTimeout(1000);
-      check(await stanza.isVisible(), 'dopo la candela la stanza è ancora aperta');
-      const dopo = await schedaB.locator('[data-test="ritual-recurrence"]').textContent().catch(() => '');
-      check(/giorno 2 |day 2 /.test(dopo || ''), 'dopo la candela la scheda dice ancora «giorno 2»', dopo);
+      // Prima si aspetta che la candela risulti davvero accesa (la riga è stata sostituita con
+      // quella riletta): senza, il controllo passerebbe anche se la sostituzione non avvenisse mai.
+      const candela = pageB.locator('[data-test="room-candle"]');
+      await candela.click();
+      const accesa = await candela.filter({ hasText: /\b1\b/ })
+        .waitFor({ state: 'visible', timeout: 10000 }).then(() => true).catch(() => false);
+      check(accesa, 'la candela nella stanza risulta accesa (1)', await candela.innerText().catch(() => ''));
+      const ancoraGiorno2 = async (quando) => {
+        check(await stanza.isVisible(), `${quando} la stanza è ancora aperta`);
+        const testo = await schedaB.locator('[data-test="ritual-recurrence"]').textContent().catch(() => '');
+        check(/giorno 2 |day 2 /.test(testo || ''), `${quando} la scheda dice ancora «giorno 2»`, testo);
+      };
+      await ancoraGiorno2('dopo la candela');
+      // E dopo un giro del ricaricamento periodico (ogni 10 s), che rilegge tutto dalla vista.
+      await pageB.waitForTimeout(11000);
+      await ancoraGiorno2('dopo un ricaricamento');
 
       await pageB.locator('[data-test="room-close"]').click();
       await stanza.waitFor({ state: 'detached', timeout: 5000 })
@@ -213,7 +224,10 @@ const apriRituali = async (page) => {
     console.log('\n— Pulizia —');
     const via = await serviceFetch(`rituals?creator_id=like.${encodeURIComponent(PREFISSO)}*`, { method: 'DELETE' });
     console.log(`  rituali di prova cancellati: ${Array.isArray(via.body) ? via.body.length : via.status}`);
+    // Rete di sicurezza: se il rituale del modulo avesse preso un creator_id diverso da quello
+    // atteso, lo si trova comunque per nome (i nomi di questo giro finiscono tutti con TS).
     await purge(SUPABASE_URL, [
+      `rituals?name=like.${encodeURIComponent(`RicUI_*_${TS}`)}`,
       `profiles?nickname=eq.${encodeURIComponent(NICK_A)}`,
       `profiles?nickname=eq.${encodeURIComponent(NICK_B)}`,
       `online_users?nickname=eq.${encodeURIComponent(NICK_A)}`,
