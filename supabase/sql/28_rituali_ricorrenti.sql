@@ -392,7 +392,14 @@ ALTER TABLE ritual_notifications_sent DROP CONSTRAINT IF EXISTS ritual_notificat
 UPDATE ritual_notifications_sent s
    SET occorrenza = rituale_occorrenza_corrente(r)
   FROM rituals r
- WHERE r.id = s.ritual_id AND s.occorrenza = 'epoch' AND rituale_occorrenza_corrente(r) IS NOT NULL;
+-- Se sulla stessa terna (rituale, iscrizione, tipo) esiste già la riga dell'appuntamento corrente
+-- (una riga «epoch» rimasta irrisolta in un giro precedente, con la regola rotta, e poi l'altra
+-- risolta), promuovere anche questa creerebbe un doppione e la PK fallirebbe (23505) al rilancio:
+-- la riga «epoch» resta com'è, e la sua chiave è comunque distinta.
+ WHERE r.id = s.ritual_id AND s.occorrenza = 'epoch' AND rituale_occorrenza_corrente(r) IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM ritual_notifications_sent x
+                    WHERE x.ritual_id = s.ritual_id AND x.subscription_id = s.subscription_id
+                      AND x.kind = s.kind AND x.occorrenza = rituale_occorrenza_corrente(r));
 ALTER TABLE ritual_notifications_sent
   ADD CONSTRAINT ritual_notifications_sent_pkey PRIMARY KEY (ritual_id, subscription_id, kind, occorrenza);
 

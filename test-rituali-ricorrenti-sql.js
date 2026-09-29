@@ -159,12 +159,35 @@ async function parteB(db, { c, s }) {
   await db.query(`INSERT INTO ritual_notifications_sent (ritual_id, subscription_id, kind) VALUES ($1, $2, 'start')`, [futuro.id, sub]);
   const occ = (await db.query(`SELECT occorrenza FROM ritual_notifications_sent WHERE ritual_id = $1`, [futuro.id])).rows[0].occorrenza;
   check(iso(occ) === '2026-12-01T07:00:00.000Z', 'riga senza occorrenza: il trigger mette l\'appuntamento corrente', iso(occ));
-  check(!!(await errore(db.query(`INSERT INTO ritual_notifications_sent (ritual_id, subscription_id, kind, occorrenza) VALUES ($1, $2, 'start', '2026-12-01T07:00:00Z')`, [futuro.id, sub]))), 'stesso appuntamento: conflitto (niente doppione)');
+  const dup = await errore(db.query(`INSERT INTO ritual_notifications_sent (ritual_id, subscription_id, kind, occorrenza) VALUES ($1, $2, 'start', '2026-12-01T07:00:00Z')`, [futuro.id, sub]));
+  check(!!dup && /duplicate key/.test(dup), 'stesso appuntamento: conflitto di chiave (niente doppione)', dup);
   check(!(await errore(db.query(`INSERT INTO ritual_notifications_sent (ritual_id, subscription_id, kind, occorrenza) VALUES ($1, $2, 'start', '2026-12-02T07:00:00Z')`, [futuro.id, sub]))), 'appuntamento dopo: la notifica riparte');
+
+  // Un ciclo fermato con un appuntamento in corso non viene toccato dalla pulizia.
+  check((await db.query(`SELECT 1 FROM rituals WHERE id = $1 AND fermato_il IS NOT NULL`, [c.id])).rows.length === 1, 'pulizia: il ciclo fermato con appuntamento in corso resta');
+
+  // Rilancio con una riga «epoch» irrisolta accanto a una già risolta (regola rotta poi riparata).
+  const guasto = (await crea(db, { giorni: [1,2,3,4,5,6,7], fino: '2026-12-31', fuso: 'UTC', data: '2026-12-10', ora: '07:00', creatore: 'guasto' })).rows[0];
+  await db.query(`UPDATE rituals SET fuso = 'Marte/Olympus' WHERE id = $1`, [guasto.id]);
+  await db.query(`INSERT INTO ritual_notifications_sent (ritual_id, subscription_id, kind) VALUES ($1, $2, 'start')`, [guasto.id, sub]);
+  await db.query(`UPDATE rituals SET fuso = 'UTC' WHERE id = $1`, [guasto.id]);
+  await db.query(`INSERT INTO ritual_notifications_sent (ritual_id, subscription_id, kind, occorrenza) VALUES ($1, $2, 'start', '2026-12-10T07:00:00Z')`, [guasto.id, sub]);
+  const { applicaFile } = require('./scripts/pg-locale');
+  const rilancio = await errore(applicaFile(db, 'supabase/sql/28_rituali_ricorrenti.sql'));
+  check(!rilancio, '28_ si rilancia con una riga epoch accanto a una risolta', rilancio);
 }
 
 (async () => {
   const db = await creaDbLocale();
+  // Backfill su righe nate PRIMA della 28_ (PK a 3 colonne).
+  const vecchio = await creaDbLocale({ con28: false });
+  await vecchio.query(`INSERT INTO rituals (creator, creator_id, name, type, sacred_number, date, time, duration) VALUES ('V','v1','Vecchio','consciousness',11,'2026-12-01','07:00',30)`);
+  const vid = (await vecchio.query(`SELECT id FROM rituals`)).rows[0].id;
+  const vsub = (await vecchio.query(`INSERT INTO push_subscriptions (session_id) VALUES ('v') RETURNING id`)).rows[0].id;
+  await vecchio.query(`INSERT INTO ritual_notifications_sent (ritual_id, subscription_id, kind) VALUES ($1, $2, 'start')`, [vid, vsub]);
+  await require('./scripts/pg-locale').applicaFile(vecchio, 'supabase/sql/28_rituali_ricorrenti.sql');
+  const vocc = (await vecchio.query(`SELECT occorrenza FROM ritual_notifications_sent`)).rows[0].occorrenza;
+  check(iso(vocc) === '2026-12-01T07:00:00.000Z', "backfill: la riga precedente alla 28_ prende l'inizio del rituale", iso(vocc));
   const ctx = await parteA(db);
   await parteB(db, ctx);
   const { applicaFile } = require('./scripts/pg-locale');
