@@ -15,7 +15,7 @@
  */
 
 const { chromium } = require('playwright');
-const { requireServiceKey, serviceFetch, createTestAccount, deleteTestAccount } = require('./test-helpers');
+const { requireServiceKey, serviceFetch, createTestAccount, deleteTestAccount, quotaEmailOccupata } = require('./test-helpers');
 requireServiceKey();
 
 const APP_URL = 'http://localhost:4321/app';  // /app per evitare il redirect 301 di `serve`
@@ -75,6 +75,11 @@ async function cleanup() {
 
     // Step 2 — Genera il token magic con la RPC di servizio (come fa davvero l'Edge Function)
     console.log('\nStep 2: genera token magic con crea_token_account');
+    const occupata = await quotaEmailOccupata(1);
+    if (occupata) {
+      console.log(`  ⚠️  SALTATO: quota globale delle email occupata da email vere (${occupata}). Riprovare fra un'ora.`);
+      throw Object.assign(new Error('quota occupata'), { saltato: true });
+    }
     const tokenRes = await serviceFetch('rpc/crea_token_account', {
       method: 'POST',
       body: JSON.stringify({ p_tipo: 'magic', p_email: EMAIL }),
@@ -144,8 +149,10 @@ async function cleanup() {
     else pass('nessun errore JS critico');
 
   } catch (err) {
-    fail(`errore imprevisto: ${err.message}`);
-    console.error(err);
+    if (!err.saltato) { // saltato: già detto sopra, non è un rosso
+      fail(`errore imprevisto: ${err.message}`);
+      console.error(err);
+    }
   } finally {
     console.log('\n  (cleanup profilo + token...)');
     await cleanup();

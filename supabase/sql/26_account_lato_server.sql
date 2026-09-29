@@ -226,9 +226,12 @@ REVOKE ALL ON account_email_log FROM PUBLIC, anon, authenticated;
 -- ── crea_token_account (solo ruolo di servizio, la chiama send-account-email) ──
 -- NULL vuol dire «non spedire»: email non registrata o tetto raggiunto. La funzione Edge
 -- risponde comunque «se l'indirizzo è registrato, ti abbiamo scritto».
--- Tetti: per email 1/minuto, 5/ora, 3/giorno; globali 30/ora, 40/giorno. Quelli giornalieri
--- proteggono la quota di EmailJS: la registrazione non verifica l'email, quindi chiunque può
--- iscrivere indirizzi altrui e farci spedire posta a sconosciuti. Le righe si tengono 2 giorni
+-- Tetti: per email 1/minuto, 5/ora, 3/giorno; globali 3/ora, 6/giorno. Quelli globali stanno
+-- dentro la quota di EmailJS (piano gratuito: 200 email al mese, da dividere con alert-cron;
+-- abbassati il 28/09 da 30/ora e 40/giorno, che l'avrebbero esaurita in 5 giorni). E la
+-- registrazione non verifica l'email, quindi chiunque può iscrivere indirizzi altrui e farci
+-- spedire posta a sconosciuti. Nota per i test: anche i token creati dai test contano finché
+-- non vengono ripuliti, quindi con richieste vere nell'ultima ora i test possono non averne. Le righe si tengono 2 giorni
 -- (la finestra più lunga è di 1 giorno), così la pulizia non tocca righe ancora contate.
 CREATE OR REPLACE FUNCTION crea_token_account(p_tipo text, p_email text)
 RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
@@ -245,8 +248,8 @@ BEGIN
   IF (SELECT count(*) FROM account_email_log WHERE email = v_email AND created_at > now() - interval '1 minute') >= 1
      OR (SELECT count(*) FROM account_email_log WHERE email = v_email AND created_at > now() - interval '1 hour') >= 5
      OR (SELECT count(*) FROM account_email_log WHERE email = v_email AND created_at > now() - interval '1 day') >= 3
-     OR (SELECT count(*) FROM account_email_log WHERE created_at > now() - interval '1 hour') >= 30
-     OR (SELECT count(*) FROM account_email_log WHERE created_at > now() - interval '1 day') >= 40 THEN
+     OR (SELECT count(*) FROM account_email_log WHERE created_at > now() - interval '1 hour') >= 3
+     OR (SELECT count(*) FROM account_email_log WHERE created_at > now() - interval '1 day') >= 6 THEN
     RETURN NULL;
   END IF;
 
@@ -298,6 +301,9 @@ BEGIN
      WHERE session_id = v_p.session_id
     RETURNING * INTO v_p;
   END IF;
+  -- Chi apre il link ha la casella: i suoi falliti si azzerano, come col reset. Senza, dopo
+  -- l'azzeramento delle credenziali chi è rimasto collegato con la vecchia si bloccherebbe da solo.
+  DELETE FROM login_attempts WHERE email = v_p.email;
 
   RETURN jsonb_build_object('ok', true, 'profilo', account_profilo_json(v_p),
                             'password_hash', v_p.password_hash);

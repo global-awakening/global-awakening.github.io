@@ -166,5 +166,24 @@ async function deleteTestAccount(email) {
   }
 }
 
+/**
+ * Tetti globali di crea_token_account (26_): 3 email all'ora, 6 al giorno, per stare dentro la
+ * quota di EmailJS. Le email vere degli iscritti contano come quelle dei test, quindi un test che
+ * chiede un token alla RPC può restare senza. Restituisce il motivo se la quota è occupata,
+ * null se c'è posto per `servono` token.
+ */
+async function quotaEmailOccupata(servono = 1) {
+  const conta = async (da) => {
+    const r = await serviceFetch(`account_email_log?created_at=gt.${da}&select=id`);
+    return Array.isArray(r.body) ? r.body.length : 0;
+  };
+  const ora = await conta(new Date(Date.now() - 3600 * 1000).toISOString());
+  const giorno = await conta(new Date(Date.now() - 24 * 3600 * 1000).toISOString());
+  if (ora + servono > 3) return `${ora} email nell'ultima ora (tetto 3)`;
+  if (giorno + servono > 6) return `${giorno} email nelle ultime 24 ore (tetto 6)`;
+  return null;
+}
+
 module.exports = { loadTestEnv, getServiceKey, purge, loginAsGuest,
-  SUPABASE_URL, requireServiceKey, serviceFetch, createTestAccount, deleteTestAccount };
+  SUPABASE_URL, requireServiceKey, serviceFetch, createTestAccount, deleteTestAccount,
+  quotaEmailOccupata };

@@ -10,7 +10,7 @@
  * Setup e pulizia con la chiave di servizio (test-helpers). Senza chiave il test si ferma.
  */
 const crypto = require('crypto');
-const { requireServiceKey, serviceFetch, createTestAccount, deleteTestAccount, SUPABASE_URL } = require('./test-helpers');
+const { requireServiceKey, serviceFetch, createTestAccount, deleteTestAccount, quotaEmailOccupata, SUPABASE_URL } = require('./test-helpers');
 
 requireServiceKey();
 const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
@@ -36,6 +36,14 @@ async function anon(p, opts = {}) {
 const rpc = (fn, params) => anon(`rpc/${fn}`, { method: 'POST', body: JSON.stringify(params) });
 async function rpcServizio(fn, params) {
   return serviceFetch(`rpc/${fn}`, { method: 'POST', body: JSON.stringify(params) });
+}
+// Token inserito con la chiave di servizio, come farebbe crea_token_account ma senza passare
+// dai tetti: le prove di consume/reset non devono consumare la quota email degli iscritti.
+async function tokenDiretto(tabella, email) {
+  const token = crypto.randomUUID();
+  await serviceFetch(tabella, { method: 'POST', body: JSON.stringify(
+    { email, token, expires_at: new Date(Date.now() + 15 * 60000).toISOString() }) });
+  return token;
 }
 
 // Stessa derivazione di deriveStrongHash in src/app.jsx.
@@ -189,12 +197,40 @@ async function testLinkResetProfilo() {
   const daAnon = await rpc('crea_token_account', { p_tipo: 'magic', p_email: a.email });
   check(daAnon.status === 401 || (daAnon.body && daAnon.body.code === '42501'),
     'crea_token_account NON è chiamabile con la chiave pubblica', daAnon);
-  const t1 = (await rpcServizio('crea_token_account', { p_tipo: 'magic', p_email: ` ${a.email.toUpperCase()}` })).body;
-  check(typeof t1 === 'string' && t1.length >= 32, 'la chiave di servizio ottiene un token per un\'email registrata (maiuscole ok)', t1);
+  // Le email vere degli iscritti occupano la stessa quota globale (3/ora): se è piena, le due
+  // prove che chiedono un token vero si saltano (lo si dice), e il token si inserisce a mano.
+  let t1;
+  const occupata = await quotaEmailOccupata(1);
+  if (occupata) {
+    console.log(`  ⚠️  SALTATE 2 prove di crea_token_account: quota globale occupata da email vere (${occupata})`);
+    t1 = await tokenDiretto('magic_links', a.email);
+  } else {
+    t1 = (await rpcServizio('crea_token_account', { p_tipo: 'magic', p_email: ` ${a.email.toUpperCase()}` })).body;
+    check(typeof t1 === 'string' && t1.length >= 32, 'la chiave di servizio ottiene un token per un\'email registrata (maiuscole ok)', t1);
+    const tFretta = (await rpcServizio('crea_token_account', { p_tipo: 'magic', p_email: a.email })).body;
+    check(tFretta === null, 'seconda richiesta nello stesso minuto → nessun token (tetto 1/min)', tFretta);
+  }
   const tX = (await rpcServizio('crea_token_account', { p_tipo: 'magic', p_email: `nessuno-${TS}@test.com` })).body;
   check(tX === null, 'email non registrata → nessun token', tX);
-  const tFretta = (await rpcServizio('crea_token_account', { p_tipo: 'magic', p_email: a.email })).body;
-  check(tFretta === null, 'seconda richiesta nello stesso minuto → nessun token (tetto 1/min)', tFretta);
+
+  // Tetti globali (3/ora, 6/giorno): righe sintetiche di altre email riempiono la finestra, poi
+  // un'email registrata e mai servita resta senza token. Le righe si tolgono subito: finché ci
+  // sono, anche gli iscritti veri restano senza email.
+  const q = await creaAccount('quota', PW);
+  const sintetiche = async (n, quando) => serviceFetch('account_email_log', { method: 'POST', body: JSON.stringify(
+    Array.from({ length: n }, (_, i) => ({ email: `acct-qfill-${i}-${TS}@test.com`, tipo: 'magic', created_at: quando }))) });
+  const viaSintetiche = () => serviceFetch(`account_email_log?email=like.acct-qfill-*-${TS}@test.com`, { method: 'DELETE' });
+  try {
+    await sintetiche(3, new Date().toISOString());
+    const tOra = (await rpcServizio('crea_token_account', { p_tipo: 'magic', p_email: q.email })).body;
+    check(tOra === null, '3 email di altri nell\'ultima ora → nessun token (tetto globale 3/ora)', tOra);
+    await viaSintetiche();
+    await sintetiche(6, new Date(Date.now() - 2 * 3600 * 1000).toISOString());
+    const tGiornoGlob = (await rpcServizio('crea_token_account', { p_tipo: 'magic', p_email: q.email })).body;
+    check(tGiornoGlob === null, '6 email di altri nelle ultime 24 ore → nessun token (tetto globale 6/giorno)', tGiornoGlob);
+  } finally {
+    await viaSintetiche();
+  }
 
   // Tetto giornaliero per email (3/giorno): tre righe sintetiche di 2 ore fa riempiono la
   // finestra di un giorno senza toccare quelle di un minuto e di un'ora.
@@ -234,15 +270,26 @@ async function testLinkResetProfilo() {
 
   // Account senza hash: il link crea una credenziale casuale.
   const n = await creaAccount('linknoh', PW, { senzaHash: true });
-  const tn = (await rpcServizio('crea_token_account', { p_tipo: 'magic', p_email: n.email })).body;
+  const tn = await tokenDiretto('magic_links', n.email);
   const cn = (await rpc('consume_magic_link', { p_token: tn })).body;
   const salvataN = (await serviceFetch(`profiles?email=eq.${encodeURIComponent(n.email)}&select=password_hash`)).body[0].password_hash;
   check(cn && cn.ok === true && /^pbkdf2\$/.test(cn.password_hash || '') && salvataN === cn.password_hash,
     'account senza hash: il link crea e salva una credenziale', cn);
 
+  // Chi entra dal link ha dimostrato di avere la casella: i suoi tentativi falliti si azzerano,
+  // come col reset. Senza, dopo l'azzeramento delle credenziali (27b) chi è rimasto collegato
+  // con quella vecchia può bloccarsi da solo per 15 minuti.
+  const lk = await creaAccount('linkazz', PW);
+  for (let i = 0; i < 3; i++) await login(lk.email, 'sbagliata');
+  const tk = await tokenDiretto('magic_links', lk.email);
+  const ck = (await rpc('consume_magic_link', { p_token: tk })).body;
+  const dopoLink = (await serviceFetch(`login_attempts?email=eq.${encodeURIComponent(lk.email)}&select=id`)).body;
+  check(ck && ck.ok === true && Array.isArray(dopoLink) && dopoLink.length === 0,
+    'link valido → i tentativi falliti di quell\'email si azzerano', { ck, righe: dopoLink && dopoLink.length });
+
   // reset_password.
   const r = await creaAccount('reset', PW);
-  const tr = (await rpcServizio('crea_token_account', { p_tipo: 'reset', p_email: r.email })).body;
+  const tr = await tokenDiretto('password_resets', r.email);
   const nuovo = pbkdf2('Nuova456!', nuovoSale());
   const malR = (await rpc('reset_password', { p_token: tr, p_new_hash: 'abc' })).body;
   check(malR && malR.motivo === 'dati_non_validi', 'reset con hash malformato → dati_non_validi (token non consumato)', malR);
@@ -357,6 +404,7 @@ async function pulizia() {
   // restare a bloccare l'IP di questa macchina o a sporcare login_attempts.
   await serviceFetch(`login_attempts?email=like.acct-ipfill-*-${TS}@test.com`, { method: 'DELETE' });
   await serviceFetch(`login_attempts?email=like.acct-glob-*-${TS}@test.com`, { method: 'DELETE' });
+  await serviceFetch(`account_email_log?email=like.acct-qfill-*-${TS}@test.com`, { method: 'DELETE' });
 }
 
 (async () => {
