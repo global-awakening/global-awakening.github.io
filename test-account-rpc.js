@@ -7,6 +7,8 @@
  * Esecuzione:
  *   node test-account-rpc.js
  *
+ * Dal 29/09/2026 la 27_ è applicata: le verifiche negative (testDopoChiusura) girano sempre.
+ *
  * Setup e pulizia con la chiave di servizio (test-helpers). Senza chiave il test si ferma.
  */
 const crypto = require('crypto');
@@ -397,6 +399,62 @@ async function testTelepatia() {
   }
 }
 
+async function testDopoChiusura() {
+  console.log('\n— verifiche negative dopo la 27_ —');
+  // Rifiuto vero: 401/403 o errore di permesso di Postgres. Un 400 o un 404 qualunque (tabella
+  // sbagliata, sintassi) non deve bastare a far passare il test.
+  const negato = (r) => r.status === 401 || r.status === 403 || !!(r.body && r.body.code === '42501');
+  const a = await creaAccount('chiuso', 'Password123!');
+  const e = encodeURIComponent(a.email);
+  const n = encodeURIComponent(a.nickname);
+  const hashR = await anon(`profiles?email=eq.${e}&select=password_hash`);
+  check(negato(hashR), 'anon non legge password_hash', hashR);
+  const emailR = await anon(`profiles?nickname=eq.${n}&select=email`);
+  check(negato(emailR), 'anon non legge email', emailR);
+  const filtroR = await anon(`profiles?email=eq.${e}&select=nickname`);
+  check(filtroR.status !== 200, 'anon non filtra su una colonna nascosta (email)', filtroR);
+  const starR = await anon(`profiles?nickname=eq.${n}&select=*`);
+  check(negato(starR), 'anon non fa select=* su profiles', starR);
+  const pubR = await anon(`profiles?nickname=eq.${n}&select=nickname,bio`);
+  check(pubR.status === 200 && Array.isArray(pubR.body) && pubR.body.length === 1, 'le colonne pubbliche restano leggibili', pubR);
+  const keep = await anon('profiles?select=session_id&limit=1');
+  check(keep.status === 200, 'la lettura del keepalive funziona', keep.status);
+  const upd = await anon(`profiles?nickname=eq.${n}`, { method: 'PATCH', body: JSON.stringify({ bio: 'x' }) });
+  const rigaBio = (await serviceFetch(`profiles?email=eq.${e}&select=bio`)).body;
+  const bio = rigaBio && rigaBio[0] ? rigaBio[0].bio : undefined;
+  check(negato(upd) && bio === '', 'anon non scrive profiles', { status: upd.status, bio });
+  const del = await anon(`profiles?nickname=eq.${n}`, { method: 'DELETE' });
+  const ancora = (await serviceFetch(`profiles?email=eq.${e}&select=session_id`)).body;
+  check(negato(del) && Array.isArray(ancora) && ancora.length === 1, 'anon non cancella profiles', { status: del.status, ancora });
+  const insP = await anon('profiles', { method: 'POST', body: JSON.stringify({ session_id: `acct-insanon-${TS}`, nickname: `InsAnon_${TS}` }) });
+  check(negato(insP), 'anon non inserisce in profiles', insP);
+  await serviceFetch(`profiles?session_id=eq.acct-insanon-${TS}`, { method: 'DELETE' });
+  const ins = await anon('magic_links', { method: 'POST', body: JSON.stringify({ email: a.email, token: crypto.randomUUID(), expires_at: new Date(Date.now() + 600000).toISOString() }) });
+  check(negato(ins), 'anon non inserisce in magic_links', ins);
+  const ml = await anon('magic_links?select=token&limit=1');
+  check(negato(ml), 'anon non legge magic_links', ml);
+  const pr = await anon('password_resets?select=token&limit=1');
+  check(negato(pr), 'anon non legge password_resets', pr);
+  const ael = await anon('account_email_log?select=id&limit=1');
+  check(negato(ael), 'anon non legge account_email_log', ael);
+  const ts = await anon('telepathy_scores?select=user_id&limit=1');
+  check(negato(ts), 'anon non legge telepathy_scores.user_id', ts);
+  const tsPub = await anon('telepathy_scores?select=nickname,matches_count&limit=1');
+  check(tsPub.status === 200, 'le colonne pubbliche di telepathy_scores restano leggibili', tsPub.status);
+  const utenteTs = `acct-tsanon-${TS}`;
+  const tsIns = await anon('telepathy_scores', { method: 'POST', body: JSON.stringify({ user_id: utenteTs, nickname: 'X', rounds_count: 999, matches_count: 999 }) });
+  check(negato(tsIns), 'anon non inserisce in telepathy_scores', tsIns);
+  await serviceFetch(`telepathy_scores?user_id=eq.${utenteTs}`, { method: 'DELETE' });
+  const tsUpd = await anon(`telepathy_scores?nickname=eq.${n}`, { method: 'PATCH', body: JSON.stringify({ matches_count: 999 }) });
+  check(negato(tsUpd), 'anon non modifica telepathy_scores', tsUpd);
+  const la = await anon('login_attempts?select=id&limit=1');
+  check(negato(la), 'anon non legge login_attempts', la);
+  const sec = await anon('app_secrets?select=nome&limit=1');
+  check(negato(sec), 'anon non legge app_secrets', sec);
+  const vecchia = await rpc('merge_telepathy_scores', { p_old_user_id: 'x', p_new_user_id: 'y', p_nickname: 'z' });
+  check(vecchia.status >= 400, 'la firma senza credenziale di merge_telepathy_scores non esiste più', vecchia.status);
+}
+
 async function pulizia() {
   for (const e of EMAILS) await deleteTestAccount(e);
   await serviceFetch(`login_attempts?email=like.nessuno-${TS}@test.com`, { method: 'DELETE' });
@@ -412,6 +470,7 @@ async function pulizia() {
     await testLoginERegistrazione();
     await testLinkResetProfilo();
     await testTelepatia();
+    await testDopoChiusura();
   } catch (e) {
     fail('eccezione: ' + e.message);
   } finally {
