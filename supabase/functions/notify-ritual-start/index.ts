@@ -4,7 +4,8 @@
  * Svegliata ogni minuto dal cron pg_cron (vedi 23_cron_push.sql).
  *
  * Si REGISTRA l'invio PRIMA di spedirlo, sfruttando la chiave primaria composta
- * (rituale, telefono, tipo) di `ritual_notifications_sent`: se l'INSERT va in conflitto,
+ * (rituale, appuntamento, telefono, tipo — l'appuntamento dalla 28_) di
+ * `ritual_notifications_sent`: se l'INSERT va in conflitto,
  * un'altra esecuzione ha già preso quella notifica e si salta.
  *
  * La prenotazione si libera SOLO quando abbiamo una risposta esplicita che dice «non
@@ -68,8 +69,11 @@ Deno.serve(async () => {
   const giorno = 86400000;
   const soloData = (t: number) => new Date(t).toISOString().slice(0, 10);
 
+  // Si legge la vista `rituali_correnti`, non la tabella: per i rituali ricorrenti `date`/`time`
+  // sono l'appuntamento corrente (migration 28_), quindi il filtro ±1 giorno e `istanteInizio`
+  // restano giusti senza sapere niente di ricorrenze.
   const { data: rituali, error: erroreRituali } = await supabase
-    .from('rituals')
+    .from('rituali_correnti')
     .select('id, name, date, time, duration, participants')
     .gte('date', soloData(adesso - giorno))
     .lte('date', soloData(adesso + giorno));
@@ -122,9 +126,11 @@ Deno.serve(async () => {
 
     for (const ab of abbonamenti) {
       // 1. Prenotazione.
+      // La chiave include l'appuntamento (`occorrenza`): senza, la notifica di domani di un
+      // rituale ricorrente troverebbe «già presa» quella di oggi e non partirebbe mai.
       const { error: erroreDedup } = await supabase
         .from('ritual_notifications_sent')
-        .insert({ ritual_id: rituale.id, subscription_id: ab.id, kind: tipo });
+        .insert({ ritual_id: rituale.id, subscription_id: ab.id, kind: tipo, occorrenza: new Date(inizio).toISOString() });
 
       if (erroreDedup) {
         // 23505 = conflitto sulla chiave primaria: già presa da un'altra esecuzione, è il
@@ -175,7 +181,9 @@ Deno.serve(async () => {
               .delete()
               .eq('ritual_id', rituale.id)
               .eq('subscription_id', ab.id)
-              .eq('kind', tipo);
+              .eq('kind', tipo)
+              // Solo la prenotazione di QUESTO appuntamento: le altre date restano prese.
+              .eq('occorrenza', new Date(inizio).toISOString());
             break;
 
           case 'trattieni':

@@ -70,7 +70,7 @@ const partecipanti = async (scheda) => {
   const prima = await partecipanti(schedaOk);
   // Il ricaricamento automatico (ogni 10s) potrebbe cadere nei 2 secondi di attesa e far passare
   // il test anche senza la correzione: durante la prova le letture dei rituali vengono bloccate.
-  await page.route('**/rest/v1/rituals?*', (route) =>
+  await page.route('**/rest/v1/rituali_correnti?*', (route) =>
     route.request().method() === 'GET' ? route.abort() : route.continue());
   await schedaOk.locator('[data-test="join-ritual"]').click();
 
@@ -85,7 +85,7 @@ const partecipanti = async (scheda) => {
   const dopo = await partecipanti(schedaOk);
   if (prima !== null && dopo === prima + 1) pass(`il numero dei partecipanti sale subito (${prima} → ${dopo})`);
   else fail(`il numero dei partecipanti non è salito subito (${prima} → ${dopo})`);
-  await page.unroute('**/rest/v1/rituals?*');
+  await page.unroute('**/rest/v1/rituali_correnti?*');
 
   // ── 2. Adesione fallita: la persona lo viene a sapere ────────────────
   await page.route('**/rest/v1/rpc/join_ritual', (route) => route.fulfill({

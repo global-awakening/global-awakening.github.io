@@ -244,6 +244,25 @@
             },
             rituals: {
               title: "Global Rituals",
+              repeat: "Repeats", repeatNever: "Just once", repeatDaily: "Every day", repeatDays: "Chosen days",
+              until: "Until", weekdaysShort: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+              everyDay: "Every day", atTime: "at", dayOf: (n, m) => `day ${n} of ${m}`,
+              leave: "Leave", leaveFailed: "Could not leave the ritual.",
+              stop: "Stop", stopTitle: "Stop the cycle?",
+              stopBody: "The cycle stops: there will be no more sessions. The current one, if any, ends normally.",
+              stopYes: "Stop", stopNo: "Let it continue", stopFailed: "Could not stop the cycle.",
+              reloginNeeded: "To continue, please sign in again: use “Forgot password?” to choose a new password.",
+              room: "Ritual room", peopleHere: (n) => n === 1 ? "1 person here now" : `${n} people here now`,
+              closeRoom: "Close", enterRoom: "Enter", descCounter: (n) => `${n} characters left`,
+              recurrenceErrors: {
+                recurrence_incomplete: "Choose the days and an end date.",
+                recurrence_days_invalid: "Choose at least one day of the week.",
+                recurrence_end_invalid: "The end date must be after the start, at most one year away.",
+                recurrence_duration_too_long: "A repeating ritual lasts 12 hours at most.",
+                recurrence_empty: "None of the chosen days falls in this period.",
+                recurrence_limit: "You already have 10 repeating rituals: stop one before creating another.",
+                timezone_invalid: "Your phone's time zone is not recognised."
+              },
               subtitle: "Synchronized awakening ceremonies",
               deleteRitual: "Delete",
               deleteTitle: "Delete this ritual?",
@@ -592,6 +611,25 @@
             },
             rituals: {
               title: "Rituali Globali",
+              repeat: "Si ripete", repeatNever: "Una volta sola", repeatDaily: "Ogni giorno", repeatDays: "Giorni scelti",
+              until: "Fino al", weekdaysShort: ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"],
+              everyDay: "Ogni giorno", atTime: "alle", dayOf: (n, m) => `giorno ${n} di ${m}`,
+              leave: "Lascia", leaveFailed: "Non è stato possibile lasciare il rituale.",
+              stop: "Ferma", stopTitle: "Fermare il ciclo?",
+              stopBody: "Il ciclo si ferma: non ci saranno altri appuntamenti. Quello in corso, se c'è, finisce normalmente.",
+              stopYes: "Ferma", stopNo: "Lascialo andare", stopFailed: "Non è stato possibile fermare il ciclo.",
+              reloginNeeded: "Per continuare accedi di nuovo: usa «Password dimenticata?» per scegliere una nuova password.",
+              room: "Stanza del rituale", peopleHere: (n) => n === 1 ? "1 persona qui adesso" : `${n} persone qui adesso`,
+              closeRoom: "Chiudi", enterRoom: "Entra", descCounter: (n) => `ancora ${n} caratteri`,
+              recurrenceErrors: {
+                recurrence_incomplete: "Scegli i giorni e la data di fine.",
+                recurrence_days_invalid: "Scegli almeno un giorno della settimana.",
+                recurrence_end_invalid: "La data di fine deve essere dopo l'inizio, al massimo fra un anno.",
+                recurrence_duration_too_long: "Un rituale che si ripete dura al massimo 12 ore.",
+                recurrence_empty: "In questo periodo non cade nessuno dei giorni scelti.",
+                recurrence_limit: "Hai già 10 rituali che si ripetono: fermane uno prima di crearne un altro.",
+                timezone_invalid: "Il fuso orario del telefono non è riconosciuto."
+              },
               subtitle: "Cerimonie di risveglio sincronizzate",
               deleteRitual: "Cancella",
               deleteTitle: "Cancellare questo rituale?",
@@ -987,7 +1025,10 @@
             sacredNumber: 11,
             date: '',
             time: '',
-            duration: DURATA_RITUALE_PREDEFINITA
+            duration: DURATA_RITUALE_PREDEFINITA,
+            ripeti: 'mai',
+            giorni: [],
+            fino: ''
           });
           
           React.useEffect(() => { expandedPostIdRef.current = expandedPostId; }, [expandedPostId]);
@@ -1048,6 +1089,18 @@
             if (tok) window.history.replaceState({}, '', window.location.pathname);
             return tok || '';
           });
+          // Dalla notifica si arriva con ?ritual=<id> (push-helpers.js). Si toglie subito
+          // dall'indirizzo, come reset e magic, e si tiene qui finché i rituali non sono caricati:
+          // può servire un'entrata come ospite prima.
+          const [ritualeDaAprire, setRitualeDaAprire] = useState(() => {
+            const p = new URLSearchParams(window.location.search);
+            const id = p.get('ritual');
+            if (id) window.history.replaceState({}, '', window.location.pathname);
+            return id && /^\d+$/.test(id) ? Number(id) : null;
+          });
+          const [stanzaId, setStanzaId] = useState(null);
+          const [presentiStanza, setPresentiStanza] = useState(null);
+          const stanza = stanzaId != null ? rituals.find(r => r.id === stanzaId) : null;
           const [magicLinkEmail, setMagicLinkEmail] = useState('');
           const [showMagicLink, setShowMagicLink] = useState(false);
           const t = translations[lang];
@@ -1445,7 +1498,7 @@
           // Load data from Supabase
           useEffect(() => {
             const loadData = async () => {
-              const { data: ritualsData } = await supabase.from('rituals').select('*').order('created_at', { ascending: false });
+              const { data: ritualsData } = await supabase.from('rituali_correnti').select('*').order('created_at', { ascending: false });
               if (ritualsData) {
                 const now = new Date();
                 const expired = ritualsData.filter(r => {
@@ -1475,6 +1528,8 @@
             const interval = setInterval(loadData, 10000);
             
             // Subscribe to real-time updates
+            // Le viste non emettono eventi realtime: si ascolta la tabella, e ogni modifica fa
+            // comunque ricaricare da rituali_correnti (loadData).
             const ritualsChannel = supabase.channel('rituals-channel').on('postgres_changes', { event: '*', schema: 'public', table: 'rituals' }, () => loadData()).subscribe();
 
             return () => {
@@ -2962,6 +3017,16 @@
             const dataUtc = istanteLocale.toISOString().slice(0, 10);
             const oraUtc = istanteLocale.toISOString().slice(11, 16);
 
+            // Ripetizione (28_): i giorni ISO 1=lun…7=dom, la fine nel calendario di chi crea, il
+            // fuso dal telefono. Ora e giorno locali li ricava il server dall'istante: qui non si
+            // mandano, così non possono contraddirlo.
+            const ricorre = newRitual.ripeti !== 'mai';
+            const giorni = newRitual.ripeti === 'ogni' ? [1, 2, 3, 4, 5, 6, 7] : newRitual.giorni;
+            if (ricorre && (!newRitual.fino || giorni.length === 0)) {
+              setErrorToast(t.rituals.recurrenceErrors.recurrence_incomplete);
+              return;
+            }
+
             const ritualData = {
               creator: nickname || 'Anonymous',
               creator_id: sessionId,
@@ -2988,17 +3053,18 @@
                 p_date: ritualData.date,
                 p_time: ritualData.time,
                 p_duration: ritualData.duration,
-                p_password_hash: passwordHash
+                p_password_hash: passwordHash,
+                ...(ricorre ? { p_ripeti_giorni: giorni, p_ripeti_fino: newRitual.fino, p_fuso: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } : {})
               });
               if (error) {
                 console.warn('Supabase RPC create_ritual error:', error);
                 setSavingContent(false);
-                showErrorToast();
+                // Gli errori di ricorrenza hanno una frase loro: dicono cosa correggere.
+                const codice = Object.keys(t.rituals.recurrenceErrors).find(k => (error.message || '').includes(k));
+                if (codice) setErrorToast(t.rituals.recurrenceErrors[codice]); else showErrorToast();
                 return;  // modale resta aperto, form non svuotato
               }
-              if (Array.isArray(data) && data[0]) {
-                setRituals(prev => [data[0], ...prev]);
-              }
+              if (Array.isArray(data) && data[0]) await rileggiRituale(data[0].id);
             } catch (err) {
               console.warn('Create ritual failed:', err);
               setSavingContent(false);
@@ -3014,7 +3080,10 @@
               sacredNumber: 11,
               date: '',
               time: '',
-              duration: DURATA_RITUALE_PREDEFINITA
+              duration: DURATA_RITUALE_PREDEFINITA,
+              ripeti: 'mai',
+              giorni: [],
+              fino: ''
             });
           };
 
@@ -3214,6 +3283,38 @@
             await valutaPush();
           };
 
+          // Le RPC che restituiscono una riga (create_ritual, toggle_ritual_candle) la danno dalla
+          // TABELLA: per un rituale che si ripete lì date/time sono il primo appuntamento, non quello
+          // di oggi. Sostituirla a quella della vista riporterebbe il rituale al giorno 1 (stanza
+          // chiusa, musica spenta). Si rilegge dalla vista, che è l'unica fonte per l'app.
+          const rileggiRituale = async (id) => {
+            const { data, error } = await supabase.from('rituali_correnti').select('*').eq('id', id);
+            // Se la lettura fallisce (rete, timeout) non sappiamo com'è il rituale: toglierlo dalla
+            // lista lo farebbe sparire per un errore passeggero. Si rimuove solo quando la lettura
+            // è riuscita e non ha restituito nessuna riga (rituale davvero sparito).
+            if (error) return;
+            setRituals(prev => {
+              const riga = Array.isArray(data) && data[0];
+              if (!riga) return prev.filter(r => r.id !== id);
+              return prev.some(r => r.id === id) ? prev.map(r => r.id === id ? riga : r) : [riga, ...prev];
+            });
+          };
+
+          // Chi è registrato ma ha la password azzerata (27b_, la falla account) ha ancora in
+          // memoria una credenziale vecchia: il database risponde «Auth failed» e un generico
+          // «non è stato possibile» la lascerebbe senza sapere cosa fare. Le si dice come uscirne.
+          const messaggioErroreRituale = (error, generico) =>
+            ((error && error.message) || '').includes('Auth failed') ? t.rituals.reloginNeeded : generico;
+
+          // Lasciare un rituale a cui ci si era iscritti (il creatore non può: deve cancellarlo o fermarlo).
+          const leaveRitual = async (ritualId) => {
+            const { error } = await supabase.rpc('leave_ritual', {
+              p_ritual_id: ritualId, p_session_id: sessionId, p_password_hash: passwordHash || ''
+            });
+            if (error) { setErrorToast(messaggioErroreRituale(error, t.rituals.leaveFailed)); return; }
+            await rileggiRituale(ritualId);
+          };
+
           const sendEnergy = async (ritualId) => {
             const ritual = rituals.find(r => r.id === ritualId);
             if (!ritual) return;
@@ -3226,7 +3327,7 @@
               p_session_id: sessionId
             });
             if (error || !data || data.length === 0) { showErrorToast(); return; }
-            setRituals(prev => prev.map(r => r.id === ritualId ? data[0] : r));
+            await rileggiRituale(ritualId);
           };
 
           // Cancellazione del proprio rituale. Il vero controllo sta nel database
@@ -3249,6 +3350,16 @@
             setRituals(prev => prev.filter(r => r.id !== ritualId));
           };
 
+          // Fermare il ciclo di un rituale ricorrente (il controllo vero sta in 28_ferma_rituale).
+          const [ritualToStop, setRitualToStop] = useState(null);
+          const doFermaRituale = async (ritualId) => {
+            const { error } = await supabase.rpc('ferma_rituale', {
+              p_ritual_id: ritualId, p_session_id: sessionId, p_password_hash: passwordHash || ''
+            });
+            if (error) { setErrorToast(messaggioErroreRituale(error, t.rituals.stopFailed)); return; }
+            await rileggiRituale(ritualId);
+          };
+
           const getRitualStatus = (ritual) => {
             const now = new Date();
             const ritualTime = new Date(`${ritual.date}T${ritual.time}Z`);
@@ -3265,6 +3376,38 @@
             return `${minutes}m`;
           };
 
+          // Il rituale arrivato dalla notifica: se è in corso si entra, se no non si fa niente di
+          // speciale; se non esiste più (già pulito) lo si dimentica.
+          // Si aspetta che la persona abbia superato la richiesta del nome: prima, la stanza
+          // segnerebbe la presenza con un identificativo provvisorio e farebbe partire la musica
+          // sopra la schermata d'accesso. L'id resta qui e la stanza si apre dopo l'entrata.
+          React.useEffect(() => {
+            if (showNicknamePrompt || ritualeDaAprire == null || rituals.length === 0) return;
+            const r = rituals.find(x => x.id === ritualeDaAprire);
+            if (r && getRitualStatus(r) === 'live') setStanzaId(r.id);
+            setRitualeDaAprire(null);
+          }, [ritualeDaAprire, rituals, showNicknamePrompt]);
+
+          // Nella stanza ci si segna all'ingresso e ogni 30 secondi: il numero conta chi si è fatto
+          // vivo nell'ultimo minuto (28_). Finito l'appuntamento, la stanza si chiude da sola: la
+          // lista si ricarica ogni 10 s (loadData) e getRitualStatus viene rivalutato a ogni giro.
+          const stanzaLive = !!stanza && getRitualStatus(stanza) === 'live';
+          React.useEffect(() => {
+            // Il numero di prima non vale per un'altra stanza (né per una riaperta più tardi):
+            // meglio nessun numero per un attimo che quello sbagliato.
+            setPresentiStanza(null);
+            if (stanzaId == null) return;
+            if (!stanzaLive) { setStanzaId(null); return; }
+            let vivo = true;
+            const segna = async () => {
+              const { data, error } = await supabase.rpc('segna_presenza_rituale', { p_ritual_id: stanzaId, p_session_id: sessionId });
+              if (vivo && !error && typeof data === 'number') setPresentiStanza(data);
+            };
+            segna();
+            const timer = setInterval(segna, 30000);
+            return () => { vivo = false; clearInterval(timer); };
+          }, [stanzaId, stanzaLive, sessionId]);
+
           // Data e ora del rituale nel fuso di chi guarda. Nel database restano in UTC:
           // un rituale mondiale è un istante solo, che ognuno legge sul proprio orologio.
           const formatRitualWhen = (ritual) => {
@@ -3277,6 +3420,19 @@
               hour: '2-digit', minute: '2-digit', hour12: false,
               timeZoneName: 'short'
             }).format(istante);
+          };
+
+          // «Ogni giorno alle 07:00» / «Lun, Mer, Ven alle 07:00»: l'ora è quella di chi guarda,
+          // calcolata dall'appuntamento corrente (date/time della vista), come il resto della scheda.
+          // I giorni della settimana sono invece quelli del fuso del creatore: per chi guarda da un
+          // fuso lontano il giorno può non coincidere con il suo calendario. Non si converte (fuori perimetro).
+          const descriviRipetizione = (ritual) => {
+            const g = ritual.ripeti_giorni || [];
+            const quando = g.length === 7 ? t.rituals.everyDay : g.map(n => t.rituals.weekdaysShort[n - 1]).join(', ');
+            const istante = new Date(`${ritual.date}T${ritual.time}Z`);
+            const ora = isNaN(istante.getTime()) ? '' : new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB',
+              { hour: '2-digit', minute: '2-digit', hour12: false }).format(istante);
+            return `${quando} ${t.rituals.atTime} ${ora}`;
           };
 
           // Musica di sottofondo. Suona solo quando una sessione è davvero in corso: un rituale
@@ -3296,8 +3452,10 @@
               return next;
             });
           };
+          // Anche la stanza aperta su un rituale in corso fa partire la musica: ci si può entrare
+          // dalla notifica senza essere iscritti.
           const ritualeLive = rituals.find(r =>
-            Array.isArray(r.participants) && r.participants.includes(sessionId) && getRitualStatus(r) === 'live');
+            (r.id === stanzaId || (Array.isArray(r.participants) && r.participants.includes(sessionId))) && getRitualStatus(r) === 'live');
           const inLiveRitual = !!ritualeLive;
           const inTelepathySession = !!partner && !sessionEnded;
           const musicOn = (inLiveRitual || inTelepathySession) && !musicMuted;
@@ -4019,6 +4177,12 @@
                         const candleCount = (ritual.candles || []).length;
                         const isCandleLit = (ritual.candles || []).includes(sessionId);
                         
+                        const ricorrente = Array.isArray(ritual.ripeti_giorni);
+                        // Per un rituale che si ripete il cestino vale solo prima che la serie sia
+                        // partita (primo appuntamento nel futuro); dopo si «ferma», non si cancella.
+                        const primoIstante = ricorrente ? new Date(`${ritual.prima_date}T${ritual.prima_time}Z`) : null;
+                        const serieNonPartita = ricorrente && primoIstante > new Date();
+                        const serieIniziata = ricorrente && !serieNonPartita;
                         const ritualComments = ritualCommentsMap[ritual.id] || [];
                         const isRitualExpanded = expandedRitualId === ritual.id;
                         return (
@@ -4027,7 +4191,14 @@
                               <div>
                                 <div style={{fontSize: '2rem'}} className="mb-2">{ritualTypes.find(t => t.id === ritual.type)?.icon}</div>
                                 <h3 className="text-xl font-bold text-white mb-1">{ritual.name}</h3>
-                                <p className="text-secondary text-sm">{ritual.description}</p>
+                                {Array.isArray(ritual.ripeti_giorni) && (
+                                  <p data-test="ritual-recurrence" className="text-sm" style={{color: '#c4b5fd'}}>
+                                    🔁 {descriviRipetizione(ritual)} · {t.rituals.dayOf(ritual.occorrenza_numero, ritual.occorrenze_totali)}
+                                  </p>
+                                )}
+                                {/* Sulla scheda bastano tre righe: il testo intero (fino a 2000 caratteri) si legge nella stanza. */}
+                                <p className="text-secondary text-sm" data-test="ritual-desc"
+                                  style={{display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', whiteSpace: 'pre-line'}}>{ritual.description}</p>
                                 {ritual.creator && (
                                   <span
                                     className="text-xs"
@@ -4058,7 +4229,10 @@ ${ritual.description || ''}` })}
                               </span>
                             </div>
 
-                            <div className="flex gap-2 mb-3">
+                            {/* flexWrap: con «Entra» un rituale in corso del proprio creatore ha fino a
+                                cinque pulsanti, e su una riga sola «Ferma» usciva dalla scheda, finendo
+                                sotto la scheda accanto (irraggiungibile). */}
+                            <div className="flex gap-2 mb-3" style={{flexWrap: 'wrap'}}>
                               <button
                                 data-test="join-ritual"
                                 onClick={() => joinRitual(ritual.id)}
@@ -4067,6 +4241,13 @@ ${ritual.description || ''}` })}
                               >
                                 {isJoined ? t.rituals.joined : t.rituals.join}
                               </button>
+                              {/* La stanza si apre solo mentre il rituale è in corso: prima e dopo non c'è
+                                  nessuno dentro, e la preghiera si legge già sulla scheda. */}
+                              {isLive && (
+                                <button data-test="open-room" onClick={() => setStanzaId(ritual.id)} className="btn-primary px-4">
+                                  {t.rituals.enterRoom} 🕯️
+                                </button>
+                              )}
                               {isLive && (
                                 <button onClick={() => sendEnergy(ritual.id)} className="btn-secondary px-4">
                                   ⚡ {ritual.energy}
@@ -4091,7 +4272,7 @@ ${ritual.description || ''}` })}
                               {/* Solo a chi l'ha creato, e solo finche' non e' iniziato: dentro
                                   un rituale in corso c'e' gente che sta meditando, e non deve
                                   vederselo sparire sotto gli occhi. */}
-                              {ritual.creator_id === sessionId && status !== 'live' && status !== 'ended' && (
+                              {ritual.creator_id === sessionId && (ricorrente ? serieNonPartita : (status !== 'live' && status !== 'ended')) && (
                                 <button
                                   data-test="delete-ritual"
                                   onClick={() => setRitualToDelete(ritual)}
@@ -4106,6 +4287,18 @@ ${ritual.description || ''}` })}
                                     cursor: 'pointer'
                                   }}
                                 >🗑️</button>
+                              )}
+                              {isJoined && ritual.creator_id !== sessionId && (
+                                <button data-test="leave-ritual" className="btn-secondary px-4" onClick={() => leaveRitual(ritual.id)}>
+                                  {t.rituals.leave}
+                                </button>
+                              )}
+                              {ritual.creator_id === sessionId && serieIniziata && !ritual.fermato_il && (
+                                <button
+                                  data-test="stop-ritual"
+                                  onClick={() => setRitualToStop(ritual)}
+                                  className="btn-secondary px-4"
+                                >{t.rituals.stop}</button>
                               )}
                             </div>
 
@@ -5268,6 +5461,33 @@ ${ritual.description || ''}` })}
                 </div>
               )}
 
+              {ritualToStop && (
+                <div style={{position: 'fixed', inset: 0, zIndex: 9998, display: 'flex',
+                             alignItems: 'center', justifyContent: 'center', padding: '1rem',
+                             background: 'rgba(0,0,0,0.7)'}}
+                     onClick={() => setRitualToStop(null)}>
+                  <div className="bg-glass rounded-2xl border-glass p-4"
+                       style={{maxWidth: '22rem', width: '100%'}}
+                       onClick={e => e.stopPropagation()}>
+                    <h3 className="text-white font-bold mb-2">{t.rituals.stopTitle}</h3>
+                    <p className="text-primary font-medium mb-1">{ritualToStop.name}</p>
+                    <p className="text-secondary text-sm">{t.rituals.stopBody}</p>
+                    <div className="flex gap-2" style={{marginTop: '1rem'}}>
+                      <button
+                        data-test="stop-ritual-confirm"
+                        style={{padding: '0.6rem 1rem', borderRadius: '0.75rem', flex: 1,
+                                border: '1px solid rgba(248,113,113,0.5)', background: 'rgba(248,113,113,0.12)',
+                                color: '#fca5a5', cursor: 'pointer', fontWeight: 600}}
+                        onClick={() => { doFermaRituale(ritualToStop.id); setRitualToStop(null); }}
+                      >{t.rituals.stopYes}</button>
+                      <button className="btn-secondary" style={{flex: 1}}
+                        data-test="stop-ritual-cancel"
+                        onClick={() => setRitualToStop(null)}>{t.rituals.stopNo}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {reportTarget && (
                 <div style={{position: 'fixed', inset: 0, zIndex: 9998, display: 'flex',
                              alignItems: 'center', justifyContent: 'center', padding: '1rem',
@@ -5503,9 +5723,12 @@ ${ritual.description || ''}` })}
                           value={newRitual.description}
                           onChange={(e) => setNewRitual({...newRitual, description: e.target.value})}
                           placeholder="Describe the ritual..."
-                          rows="3"
-                          maxLength={500}
+                          rows="5"
+                          maxLength={5000}
                         />
+                        {5000 - newRitual.description.length < 500 && (
+                          <div className="text-xs text-secondary">{t.rituals.descCounter(5000 - newRitual.description.length)}</div>
+                        )}
                       </div>
 
                       <div className="grid grid-cols-2 gap-4">
@@ -5557,8 +5780,53 @@ ${ritual.description || ''}` })}
                           // min era 5: con il predefinito a 3 il campo avrebbe rifiutato il
                           // proprio valore iniziale. Il server accetta da 1 minuto in su.
                           min="1"
-                          max="180"
+                          max={newRitual.ripeti === 'mai' ? 180 : 720}
                         />
+                      </div>
+
+                      <div>
+                        <label className="text-white text-sm mb-2" style={{display: 'block'}}>{t.rituals.repeat}</label>
+                        <select
+                          data-test="repeat-select"
+                          value={newRitual.ripeti}
+                          onChange={(e) => setNewRitual({...newRitual, ripeti: e.target.value})}
+                        >
+                          <option value="mai">{t.rituals.repeatNever}</option>
+                          <option value="ogni">{t.rituals.repeatDaily}</option>
+                          <option value="giorni">{t.rituals.repeatDays}</option>
+                        </select>
+                        {newRitual.ripeti === 'giorni' && (
+                          <div className="flex gap-1" style={{marginTop: '0.5rem', flexWrap: 'wrap'}}>
+                            {[1, 2, 3, 4, 5, 6, 7].map(n => {
+                              const attivo = (newRitual.giorni || []).includes(n);
+                              return (
+                                <button
+                                  key={n}
+                                  type="button"
+                                  data-test={`repeat-day-${n}`}
+                                  aria-pressed={attivo}
+                                  onClick={() => setNewRitual({...newRitual, giorni: attivo
+                                    ? newRitual.giorni.filter(g => g !== n)
+                                    : [...(newRitual.giorni || []), n].sort((a, b) => a - b)})}
+                                  className={attivo ? 'btn-primary' : 'btn-secondary'}
+                                  style={{padding: '0.4rem 0.6rem', fontSize: '0.8rem', minHeight: '40px'}}
+                                >{t.rituals.weekdaysShort[n - 1]}</button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {newRitual.ripeti !== 'mai' && (
+                          <div style={{marginTop: '0.5rem'}}>
+                            <label className="text-white text-sm mb-2" style={{display: 'block'}}>{t.rituals.until}</label>
+                            <input
+                              type="date"
+                              data-test="repeat-until"
+                              value={newRitual.fino || ''}
+                              min={newRitual.date}
+                              onChange={(e) => setNewRitual({...newRitual, fino: e.target.value})}
+                            />
+                          </div>
+                        )}
                       </div>
 
                       <div className="grid grid-cols-2 gap-4 mt-4">
@@ -5576,6 +5844,49 @@ ${ritual.description || ''}` })}
 
               {/* preload="none": il brano pesa, non lo scarica chi non entra mai in una sessione */}
               <audio ref={musicRef} src={MUSIC_SRC} loop preload="none" />
+              {/* La stanza del rituale: la preghiera in grande e quante persone ci sono adesso.
+                  zIndex 9990: sotto la soglia (10000), che quando serve il tocco per la musica
+                  deve restare sopra, e sotto gli avvisi (9997-9999), che altrimenti la stanza
+                  coprirebbe — un errore sulla candela non si vedrebbe. */}
+              {stanza && stanzaLive && (
+                <div data-test="ritual-room" role="dialog" aria-label={t.rituals.room}
+                  style={{position: 'fixed', inset: 0, zIndex: 9990, display: 'flex', flexDirection: 'column',
+                          alignItems: 'center', padding: '2rem 1.25rem', gap: '1rem', overflowY: 'auto',
+                          background: 'rgba(10, 6, 30, 0.94)', backdropFilter: 'blur(6px)'}}>
+                  <button data-test="room-close" onClick={() => setStanzaId(null)} className="btn-secondary"
+                    style={{alignSelf: 'flex-end'}}>{t.rituals.closeRoom}</button>
+                  <div style={{fontSize: '3rem'}}>{ritualTypes.find(x => x.id === stanza.type)?.icon}</div>
+                  <h2 className="text-white" style={{fontSize: '1.6rem', fontWeight: 700, textAlign: 'center'}}>{stanza.name}</h2>
+                  <div data-test="room-people" style={{color: '#4ade80'}}>
+                    {presentiStanza != null ? t.rituals.peopleHere(presentiStanza) : ''}
+                  </div>
+                  {stanza.description && (
+                    <div data-test="room-text" className="text-white"
+                      style={{whiteSpace: 'pre-wrap', fontSize: '1.35rem', lineHeight: 1.6, maxWidth: '40rem', textAlign: 'center'}}>
+                      {stanza.description}
+                    </div>
+                  )}
+                  <div style={{display: 'flex', gap: '0.75rem'}}>
+                    <button data-test="room-candle" onClick={() => toggleCandle(stanza.id)} className="btn-secondary px-4">
+                      🕯️ {(stanza.candles || []).length}
+                    </button>
+                    {/* Il 🔊 dell'intestazione resta sotto la stanza a tutto schermo: senza questo
+                        pulsante, per silenziare la musica bisognerebbe uscire dalla stanza.
+                        Stessa guardia del pulsante in alto: il click nato dal tocco che ha
+                        appena sbloccato la musica non deve spegnerla. */}
+                    <button data-test="room-music"
+                      onClick={() => {
+                        if (Date.now() - sbloccoMusicaRef.current < 1000) return;
+                        toggleMusic();
+                      }}
+                      className="btn-secondary px-4"
+                      title={musicaInAttesaDiGesto ? t.musicTap : undefined}
+                      aria-label={musicaInAttesaDiGesto ? t.musicTap : (musicMuted ? t.musicUnmute : t.musicMute)}>
+                      {musicMuted ? '🔇' : (musicaInAttesaDiGesto ? '🔈' : '🔊')}
+                    </button>
+                  </div>
+                </div>
+              )}
               {sogliaAperta && ritualeLive && (
                 <div
                   data-test="soglia-rituale"

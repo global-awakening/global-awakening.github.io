@@ -7,8 +7,9 @@
  *
  * SOGLIE, non intervalli stretti. Se un'esecuzione del cron salta, quella dopo recupera invece
  * di perdere la notifica. È la tabella ritual_notifications_sent (chiave primaria composta su
- * rituale + telefono + tipo) a rendere sicura una soglia larga: la seconda occasione non
- * produce un doppione, perché la prenotazione è già stata presa.
+ * rituale + appuntamento + telefono + tipo; l'appuntamento c'è dalla 28_, così ogni giorno di
+ * un rituale ricorrente ha le sue notifiche) a rendere sicura una soglia larga: la seconda
+ * occasione non produce un doppione, perché la prenotazione è già stata presa.
  */
 
 const QUINDICI_MINUTI = 15 * 60000;

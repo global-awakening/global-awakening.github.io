@@ -436,6 +436,38 @@ const translations = {
     },
     rituals: {
       title: "Global Rituals",
+      repeat: "Repeats",
+      repeatNever: "Just once",
+      repeatDaily: "Every day",
+      repeatDays: "Chosen days",
+      until: "Until",
+      weekdaysShort: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+      everyDay: "Every day",
+      atTime: "at",
+      dayOf: (n, m) => `day ${n} of ${m}`,
+      leave: "Leave",
+      leaveFailed: "Could not leave the ritual.",
+      stop: "Stop",
+      stopTitle: "Stop the cycle?",
+      stopBody: "The cycle stops: there will be no more sessions. The current one, if any, ends normally.",
+      stopYes: "Stop",
+      stopNo: "Let it continue",
+      stopFailed: "Could not stop the cycle.",
+      reloginNeeded: "To continue, please sign in again: use “Forgot password?” to choose a new password.",
+      room: "Ritual room",
+      peopleHere: n => n === 1 ? "1 person here now" : `${n} people here now`,
+      closeRoom: "Close",
+      enterRoom: "Enter",
+      descCounter: n => `${n} characters left`,
+      recurrenceErrors: {
+        recurrence_incomplete: "Choose the days and an end date.",
+        recurrence_days_invalid: "Choose at least one day of the week.",
+        recurrence_end_invalid: "The end date must be after the start, at most one year away.",
+        recurrence_duration_too_long: "A repeating ritual lasts 12 hours at most.",
+        recurrence_empty: "None of the chosen days falls in this period.",
+        recurrence_limit: "You already have 10 repeating rituals: stop one before creating another.",
+        timezone_invalid: "Your phone's time zone is not recognised."
+      },
       subtitle: "Synchronized awakening ceremonies",
       deleteRitual: "Delete",
       deleteTitle: "Delete this ritual?",
@@ -801,6 +833,38 @@ const translations = {
     },
     rituals: {
       title: "Rituali Globali",
+      repeat: "Si ripete",
+      repeatNever: "Una volta sola",
+      repeatDaily: "Ogni giorno",
+      repeatDays: "Giorni scelti",
+      until: "Fino al",
+      weekdaysShort: ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"],
+      everyDay: "Ogni giorno",
+      atTime: "alle",
+      dayOf: (n, m) => `giorno ${n} di ${m}`,
+      leave: "Lascia",
+      leaveFailed: "Non è stato possibile lasciare il rituale.",
+      stop: "Ferma",
+      stopTitle: "Fermare il ciclo?",
+      stopBody: "Il ciclo si ferma: non ci saranno altri appuntamenti. Quello in corso, se c'è, finisce normalmente.",
+      stopYes: "Ferma",
+      stopNo: "Lascialo andare",
+      stopFailed: "Non è stato possibile fermare il ciclo.",
+      reloginNeeded: "Per continuare accedi di nuovo: usa «Password dimenticata?» per scegliere una nuova password.",
+      room: "Stanza del rituale",
+      peopleHere: n => n === 1 ? "1 persona qui adesso" : `${n} persone qui adesso`,
+      closeRoom: "Chiudi",
+      enterRoom: "Entra",
+      descCounter: n => `ancora ${n} caratteri`,
+      recurrenceErrors: {
+        recurrence_incomplete: "Scegli i giorni e la data di fine.",
+        recurrence_days_invalid: "Scegli almeno un giorno della settimana.",
+        recurrence_end_invalid: "La data di fine deve essere dopo l'inizio, al massimo fra un anno.",
+        recurrence_duration_too_long: "Un rituale che si ripete dura al massimo 12 ore.",
+        recurrence_empty: "In questo periodo non cade nessuno dei giorni scelti.",
+        recurrence_limit: "Hai già 10 rituali che si ripetono: fermane uno prima di crearne un altro.",
+        timezone_invalid: "Il fuso orario del telefono non è riconosciuto."
+      },
       subtitle: "Cerimonie di risveglio sincronizzate",
       deleteRitual: "Cancella",
       deleteTitle: "Cancellare questo rituale?",
@@ -1175,7 +1239,10 @@ function GlobalAwakeningPlatform() {
     sacredNumber: 11,
     date: '',
     time: '',
-    duration: DURATA_RITUALE_PREDEFINITA
+    duration: DURATA_RITUALE_PREDEFINITA,
+    ripeti: 'mai',
+    giorni: [],
+    fino: ''
   });
   React.useEffect(() => {
     expandedPostIdRef.current = expandedPostId;
@@ -1236,6 +1303,15 @@ function GlobalAwakeningPlatform() {
     if (tok) window.history.replaceState({}, '', window.location.pathname);
     return tok || '';
   });
+  const [ritualeDaAprire, setRitualeDaAprire] = useState(() => {
+    const p = new URLSearchParams(window.location.search);
+    const id = p.get('ritual');
+    if (id) window.history.replaceState({}, '', window.location.pathname);
+    return id && /^\d+$/.test(id) ? Number(id) : null;
+  });
+  const [stanzaId, setStanzaId] = useState(null);
+  const [presentiStanza, setPresentiStanza] = useState(null);
+  const stanza = stanzaId != null ? rituals.find(r => r.id === stanzaId) : null;
   const [magicLinkEmail, setMagicLinkEmail] = useState('');
   const [showMagicLink, setShowMagicLink] = useState(false);
   const t = translations[lang];
@@ -1649,7 +1725,7 @@ function GlobalAwakeningPlatform() {
     const loadData = async () => {
       const {
         data: ritualsData
-      } = await supabase.from('rituals').select('*').order('created_at', {
+      } = await supabase.from('rituali_correnti').select('*').order('created_at', {
         ascending: false
       });
       if (ritualsData) {
@@ -3106,6 +3182,12 @@ function GlobalAwakeningPlatform() {
     }
     const dataUtc = istanteLocale.toISOString().slice(0, 10);
     const oraUtc = istanteLocale.toISOString().slice(11, 16);
+    const ricorre = newRitual.ripeti !== 'mai';
+    const giorni = newRitual.ripeti === 'ogni' ? [1, 2, 3, 4, 5, 6, 7] : newRitual.giorni;
+    if (ricorre && (!newRitual.fino || giorni.length === 0)) {
+      setErrorToast(t.rituals.recurrenceErrors.recurrence_incomplete);
+      return;
+    }
     const ritualData = {
       creator: nickname || 'Anonymous',
       creator_id: sessionId,
@@ -3134,17 +3216,21 @@ function GlobalAwakeningPlatform() {
         p_date: ritualData.date,
         p_time: ritualData.time,
         p_duration: ritualData.duration,
-        p_password_hash: passwordHash
+        p_password_hash: passwordHash,
+        ...(ricorre ? {
+          p_ripeti_giorni: giorni,
+          p_ripeti_fino: newRitual.fino,
+          p_fuso: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+        } : {})
       });
       if (error) {
         console.warn('Supabase RPC create_ritual error:', error);
         setSavingContent(false);
-        showErrorToast();
+        const codice = Object.keys(t.rituals.recurrenceErrors).find(k => (error.message || '').includes(k));
+        if (codice) setErrorToast(t.rituals.recurrenceErrors[codice]);else showErrorToast();
         return;
       }
-      if (Array.isArray(data) && data[0]) {
-        setRituals(prev => [data[0], ...prev]);
-      }
+      if (Array.isArray(data) && data[0]) await rileggiRituale(data[0].id);
     } catch (err) {
       console.warn('Create ritual failed:', err);
       setSavingContent(false);
@@ -3160,7 +3246,10 @@ function GlobalAwakeningPlatform() {
       sacredNumber: 11,
       date: '',
       time: '',
-      duration: DURATA_RITUALE_PREDEFINITA
+      duration: DURATA_RITUALE_PREDEFINITA,
+      ripeti: 'mai',
+      giorni: [],
+      fino: ''
     });
   };
   const createTestRitual = async () => {
@@ -3329,6 +3418,33 @@ function GlobalAwakeningPlatform() {
     }
     await valutaPush();
   };
+  const rileggiRituale = async id => {
+    const {
+      data,
+      error
+    } = await supabase.from('rituali_correnti').select('*').eq('id', id);
+    if (error) return;
+    setRituals(prev => {
+      const riga = Array.isArray(data) && data[0];
+      if (!riga) return prev.filter(r => r.id !== id);
+      return prev.some(r => r.id === id) ? prev.map(r => r.id === id ? riga : r) : [riga, ...prev];
+    });
+  };
+  const messaggioErroreRituale = (error, generico) => (error && error.message || '').includes('Auth failed') ? t.rituals.reloginNeeded : generico;
+  const leaveRitual = async ritualId => {
+    const {
+      error
+    } = await supabase.rpc('leave_ritual', {
+      p_ritual_id: ritualId,
+      p_session_id: sessionId,
+      p_password_hash: passwordHash || ''
+    });
+    if (error) {
+      setErrorToast(messaggioErroreRituale(error, t.rituals.leaveFailed));
+      return;
+    }
+    await rileggiRituale(ritualId);
+  };
   const sendEnergy = async ritualId => {
     const ritual = rituals.find(r => r.id === ritualId);
     if (!ritual) return;
@@ -3349,7 +3465,7 @@ function GlobalAwakeningPlatform() {
       showErrorToast();
       return;
     }
-    setRituals(prev => prev.map(r => r.id === ritualId ? data[0] : r));
+    await rileggiRituale(ritualId);
   };
   const [ritualToDelete, setRitualToDelete] = useState(null);
   const doDeleteRitual = async ritualId => {
@@ -3367,6 +3483,21 @@ function GlobalAwakeningPlatform() {
     }
     setRituals(prev => prev.filter(r => r.id !== ritualId));
   };
+  const [ritualToStop, setRitualToStop] = useState(null);
+  const doFermaRituale = async ritualId => {
+    const {
+      error
+    } = await supabase.rpc('ferma_rituale', {
+      p_ritual_id: ritualId,
+      p_session_id: sessionId,
+      p_password_hash: passwordHash || ''
+    });
+    if (error) {
+      setErrorToast(messaggioErroreRituale(error, t.rituals.stopFailed));
+      return;
+    }
+    await rileggiRituale(ritualId);
+  };
   const getRitualStatus = ritual => {
     const now = new Date();
     const ritualTime = new Date(`${ritual.date}T${ritual.time}Z`);
@@ -3379,6 +3510,38 @@ function GlobalAwakeningPlatform() {
     if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
   };
+  React.useEffect(() => {
+    if (showNicknamePrompt || ritualeDaAprire == null || rituals.length === 0) return;
+    const r = rituals.find(x => x.id === ritualeDaAprire);
+    if (r && getRitualStatus(r) === 'live') setStanzaId(r.id);
+    setRitualeDaAprire(null);
+  }, [ritualeDaAprire, rituals, showNicknamePrompt]);
+  const stanzaLive = !!stanza && getRitualStatus(stanza) === 'live';
+  React.useEffect(() => {
+    setPresentiStanza(null);
+    if (stanzaId == null) return;
+    if (!stanzaLive) {
+      setStanzaId(null);
+      return;
+    }
+    let vivo = true;
+    const segna = async () => {
+      const {
+        data,
+        error
+      } = await supabase.rpc('segna_presenza_rituale', {
+        p_ritual_id: stanzaId,
+        p_session_id: sessionId
+      });
+      if (vivo && !error && typeof data === 'number') setPresentiStanza(data);
+    };
+    segna();
+    const timer = setInterval(segna, 30000);
+    return () => {
+      vivo = false;
+      clearInterval(timer);
+    };
+  }, [stanzaId, stanzaLive, sessionId]);
   const formatRitualWhen = ritual => {
     const istante = new Date(`${ritual.date}T${ritual.time}Z`);
     if (isNaN(istante.getTime())) return `${ritual.date} ${ritual.time}`;
@@ -3391,6 +3554,17 @@ function GlobalAwakeningPlatform() {
       hour12: false,
       timeZoneName: 'short'
     }).format(istante);
+  };
+  const descriviRipetizione = ritual => {
+    const g = ritual.ripeti_giorni || [];
+    const quando = g.length === 7 ? t.rituals.everyDay : g.map(n => t.rituals.weekdaysShort[n - 1]).join(', ');
+    const istante = new Date(`${ritual.date}T${ritual.time}Z`);
+    const ora = isNaN(istante.getTime()) ? '' : new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(istante);
+    return `${quando} ${t.rituals.atTime} ${ora}`;
   };
   const MUSIC_SRC = 'assets/meditation-music-rockot.mp3';
   const MUSIC_VOLUME = 0.35;
@@ -3411,7 +3585,7 @@ function GlobalAwakeningPlatform() {
       return next;
     });
   };
-  const ritualeLive = rituals.find(r => Array.isArray(r.participants) && r.participants.includes(sessionId) && getRitualStatus(r) === 'live');
+  const ritualeLive = rituals.find(r => (r.id === stanzaId || Array.isArray(r.participants) && r.participants.includes(sessionId)) && getRitualStatus(r) === 'live');
   const inLiveRitual = !!ritualeLive;
   const inTelepathySession = !!partner && !sessionEnded;
   const musicOn = (inLiveRitual || inTelepathySession) && !musicMuted;
@@ -4423,6 +4597,10 @@ function GlobalAwakeningPlatform() {
     const isJoined = ritual.participants.includes(sessionId);
     const candleCount = (ritual.candles || []).length;
     const isCandleLit = (ritual.candles || []).includes(sessionId);
+    const ricorrente = Array.isArray(ritual.ripeti_giorni);
+    const primoIstante = ricorrente ? new Date(`${ritual.prima_date}T${ritual.prima_time}Z`) : null;
+    const serieNonPartita = ricorrente && primoIstante > new Date();
+    const serieIniziata = ricorrente && !serieNonPartita;
     const ritualComments = ritualCommentsMap[ritual.id] || [];
     const isRitualExpanded = expandedRitualId === ritual.id;
     return React.createElement("div", {
@@ -4437,8 +4615,22 @@ function GlobalAwakeningPlatform() {
       className: "mb-2"
     }, ritualTypes.find(t => t.id === ritual.type)?.icon), React.createElement("h3", {
       className: "text-xl font-bold text-white mb-1"
-    }, ritual.name), React.createElement("p", {
-      className: "text-secondary text-sm"
+    }, ritual.name), Array.isArray(ritual.ripeti_giorni) && React.createElement("p", {
+      "data-test": "ritual-recurrence",
+      className: "text-sm",
+      style: {
+        color: '#c4b5fd'
+      }
+    }, "\uD83D\uDD01 ", descriviRipetizione(ritual), " \xB7 ", t.rituals.dayOf(ritual.occorrenza_numero, ritual.occorrenze_totali)), React.createElement("p", {
+      className: "text-secondary text-sm",
+      "data-test": "ritual-desc",
+      style: {
+        display: '-webkit-box',
+        WebkitLineClamp: 3,
+        WebkitBoxOrient: 'vertical',
+        overflow: 'hidden',
+        whiteSpace: 'pre-line'
+      }
     }, ritual.description), ritual.creator && React.createElement("span", {
       className: "text-xs",
       style: {
@@ -4488,13 +4680,20 @@ ${ritual.description || ''}`
         color: isLive ? '#4ade80' : '#fbbf24'
       }
     }, isLive ? t.rituals.live : status === 'ended' ? t.rituals.ended : `${t.rituals.startsIn} ${status}`)), React.createElement("div", {
-      className: "flex gap-2 mb-3"
+      className: "flex gap-2 mb-3",
+      style: {
+        flexWrap: 'wrap'
+      }
     }, React.createElement("button", {
       "data-test": "join-ritual",
       onClick: () => joinRitual(ritual.id),
       className: isJoined ? 'btn-secondary flex-1' : 'btn-primary flex-1',
       disabled: isJoined || status === 'ended'
     }, isJoined ? t.rituals.joined : t.rituals.join), isLive && React.createElement("button", {
+      "data-test": "open-room",
+      onClick: () => setStanzaId(ritual.id),
+      className: "btn-primary px-4"
+    }, t.rituals.enterRoom, " \uD83D\uDD6F\uFE0F"), isLive && React.createElement("button", {
       onClick: () => sendEnergy(ritual.id),
       className: "btn-secondary px-4"
     }, "\u26A1 ", ritual.energy), React.createElement("button", {
@@ -4514,7 +4713,7 @@ ${ritual.description || ''}`
       style: {
         filter: isCandleLit ? 'none' : 'grayscale(1) opacity(0.6)'
       }
-    }, "\uD83D\uDD6F\uFE0F"), " ", candleCount), ritual.creator_id === sessionId && status !== 'live' && status !== 'ended' && React.createElement("button", {
+    }, "\uD83D\uDD6F\uFE0F"), " ", candleCount), ritual.creator_id === sessionId && (ricorrente ? serieNonPartita : status !== 'live' && status !== 'ended') && React.createElement("button", {
       "data-test": "delete-ritual",
       onClick: () => setRitualToDelete(ritual),
       className: "px-4",
@@ -4527,7 +4726,15 @@ ${ritual.description || ''}`
         color: '#fca5a5',
         cursor: 'pointer'
       }
-    }, "\uD83D\uDDD1\uFE0F")), React.createElement("div", {
+    }, "\uD83D\uDDD1\uFE0F"), isJoined && ritual.creator_id !== sessionId && React.createElement("button", {
+      "data-test": "leave-ritual",
+      className: "btn-secondary px-4",
+      onClick: () => leaveRitual(ritual.id)
+    }, t.rituals.leave), ritual.creator_id === sessionId && serieIniziata && !ritual.fermato_il && React.createElement("button", {
+      "data-test": "stop-ritual",
+      onClick: () => setRitualToStop(ritual),
+      className: "btn-secondary px-4"
+    }, t.rituals.stop)), React.createElement("div", {
       className: "flex gap-2"
     }, React.createElement("button", {
       onClick: () => toggleRitualComments(ritual.id),
@@ -6440,7 +6647,60 @@ ${ritual.description || ''}`
     },
     "data-test": "delete-ritual-cancel",
     onClick: () => setRitualToDelete(null)
-  }, t.rituals.deleteNo)))), reportTarget && React.createElement("div", {
+  }, t.rituals.deleteNo)))), ritualToStop && React.createElement("div", {
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 9998,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '1rem',
+      background: 'rgba(0,0,0,0.7)'
+    },
+    onClick: () => setRitualToStop(null)
+  }, React.createElement("div", {
+    className: "bg-glass rounded-2xl border-glass p-4",
+    style: {
+      maxWidth: '22rem',
+      width: '100%'
+    },
+    onClick: e => e.stopPropagation()
+  }, React.createElement("h3", {
+    className: "text-white font-bold mb-2"
+  }, t.rituals.stopTitle), React.createElement("p", {
+    className: "text-primary font-medium mb-1"
+  }, ritualToStop.name), React.createElement("p", {
+    className: "text-secondary text-sm"
+  }, t.rituals.stopBody), React.createElement("div", {
+    className: "flex gap-2",
+    style: {
+      marginTop: '1rem'
+    }
+  }, React.createElement("button", {
+    "data-test": "stop-ritual-confirm",
+    style: {
+      padding: '0.6rem 1rem',
+      borderRadius: '0.75rem',
+      flex: 1,
+      border: '1px solid rgba(248,113,113,0.5)',
+      background: 'rgba(248,113,113,0.12)',
+      color: '#fca5a5',
+      cursor: 'pointer',
+      fontWeight: 600
+    },
+    onClick: () => {
+      doFermaRituale(ritualToStop.id);
+      setRitualToStop(null);
+    }
+  }, t.rituals.stopYes), React.createElement("button", {
+    className: "btn-secondary",
+    style: {
+      flex: 1
+    },
+    "data-test": "stop-ritual-cancel",
+    onClick: () => setRitualToStop(null)
+  }, t.rituals.stopNo)))), reportTarget && React.createElement("div", {
     style: {
       position: 'fixed',
       inset: 0,
@@ -6817,9 +7077,11 @@ ${ritual.description || ''}`
       description: e.target.value
     }),
     placeholder: "Describe the ritual...",
-    rows: "3",
-    maxLength: 500
-  })), React.createElement("div", {
+    rows: "5",
+    maxLength: 5000
+  }), 5000 - newRitual.description.length < 500 && React.createElement("div", {
+    className: "text-xs text-secondary"
+  }, t.rituals.descCounter(5000 - newRitual.description.length))), React.createElement("div", {
     className: "grid grid-cols-2 gap-4"
   }, React.createElement("div", null, React.createElement("label", {
     className: "text-white text-sm mb-2",
@@ -6888,8 +7150,68 @@ ${ritual.description || ''}`
       duration: parseInt(e.target.value)
     }),
     min: "1",
-    max: "180"
-  })), React.createElement("div", {
+    max: newRitual.ripeti === 'mai' ? 180 : 720
+  })), React.createElement("div", null, React.createElement("label", {
+    className: "text-white text-sm mb-2",
+    style: {
+      display: 'block'
+    }
+  }, t.rituals.repeat), React.createElement("select", {
+    "data-test": "repeat-select",
+    value: newRitual.ripeti,
+    onChange: e => setNewRitual({
+      ...newRitual,
+      ripeti: e.target.value
+    })
+  }, React.createElement("option", {
+    value: "mai"
+  }, t.rituals.repeatNever), React.createElement("option", {
+    value: "ogni"
+  }, t.rituals.repeatDaily), React.createElement("option", {
+    value: "giorni"
+  }, t.rituals.repeatDays)), newRitual.ripeti === 'giorni' && React.createElement("div", {
+    className: "flex gap-1",
+    style: {
+      marginTop: '0.5rem',
+      flexWrap: 'wrap'
+    }
+  }, [1, 2, 3, 4, 5, 6, 7].map(n => {
+    const attivo = (newRitual.giorni || []).includes(n);
+    return React.createElement("button", {
+      key: n,
+      type: "button",
+      "data-test": `repeat-day-${n}`,
+      "aria-pressed": attivo,
+      onClick: () => setNewRitual({
+        ...newRitual,
+        giorni: attivo ? newRitual.giorni.filter(g => g !== n) : [...(newRitual.giorni || []), n].sort((a, b) => a - b)
+      }),
+      className: attivo ? 'btn-primary' : 'btn-secondary',
+      style: {
+        padding: '0.4rem 0.6rem',
+        fontSize: '0.8rem',
+        minHeight: '40px'
+      }
+    }, t.rituals.weekdaysShort[n - 1]);
+  })), newRitual.ripeti !== 'mai' && React.createElement("div", {
+    style: {
+      marginTop: '0.5rem'
+    }
+  }, React.createElement("label", {
+    className: "text-white text-sm mb-2",
+    style: {
+      display: 'block'
+    }
+  }, t.rituals.until), React.createElement("input", {
+    type: "date",
+    "data-test": "repeat-until",
+    value: newRitual.fino || '',
+    min: newRitual.date,
+    onChange: e => setNewRitual({
+      ...newRitual,
+      fino: e.target.value
+    })
+  }))), React.createElement("div", {
     className: "grid grid-cols-2 gap-4 mt-4"
   }, React.createElement("button", {
     onClick: () => setShowCreateRitual(false),
@@ -6903,7 +7225,75 @@ ${ritual.description || ''}`
     src: MUSIC_SRC,
     loop: true,
     preload: "none"
-  }), sogliaAperta && ritualeLive && React.createElement("div", {
+  }), stanza && stanzaLive && React.createElement("div", {
+    "data-test": "ritual-room",
+    role: "dialog",
+    "aria-label": t.rituals.room,
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 9990,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      padding: '2rem 1.25rem',
+      gap: '1rem',
+      overflowY: 'auto',
+      background: 'rgba(10, 6, 30, 0.94)',
+      backdropFilter: 'blur(6px)'
+    }
+  }, React.createElement("button", {
+    "data-test": "room-close",
+    onClick: () => setStanzaId(null),
+    className: "btn-secondary",
+    style: {
+      alignSelf: 'flex-end'
+    }
+  }, t.rituals.closeRoom), React.createElement("div", {
+    style: {
+      fontSize: '3rem'
+    }
+  }, ritualTypes.find(x => x.id === stanza.type)?.icon), React.createElement("h2", {
+    className: "text-white",
+    style: {
+      fontSize: '1.6rem',
+      fontWeight: 700,
+      textAlign: 'center'
+    }
+  }, stanza.name), React.createElement("div", {
+    "data-test": "room-people",
+    style: {
+      color: '#4ade80'
+    }
+  }, presentiStanza != null ? t.rituals.peopleHere(presentiStanza) : ''), stanza.description && React.createElement("div", {
+    "data-test": "room-text",
+    className: "text-white",
+    style: {
+      whiteSpace: 'pre-wrap',
+      fontSize: '1.35rem',
+      lineHeight: 1.6,
+      maxWidth: '40rem',
+      textAlign: 'center'
+    }
+  }, stanza.description), React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: '0.75rem'
+    }
+  }, React.createElement("button", {
+    "data-test": "room-candle",
+    onClick: () => toggleCandle(stanza.id),
+    className: "btn-secondary px-4"
+  }, "\uD83D\uDD6F\uFE0F ", (stanza.candles || []).length), React.createElement("button", {
+    "data-test": "room-music",
+    onClick: () => {
+      if (Date.now() - sbloccoMusicaRef.current < 1000) return;
+      toggleMusic();
+    },
+    className: "btn-secondary px-4",
+    title: musicaInAttesaDiGesto ? t.musicTap : undefined,
+    "aria-label": musicaInAttesaDiGesto ? t.musicTap : musicMuted ? t.musicUnmute : t.musicMute
+  }, musicMuted ? '🔇' : musicaInAttesaDiGesto ? '🔈' : '🔊'))), sogliaAperta && ritualeLive && React.createElement("div", {
     "data-test": "soglia-rituale",
     role: "button",
     tabIndex: 0,

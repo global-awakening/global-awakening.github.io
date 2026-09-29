@@ -16,7 +16,9 @@ importScripts('push-helpers.js');
 // non arrivava al telefono nemmeno reinstallando l'app, perche' la cache e' di Chrome e
 // sopravvive. Il bump serve a far ripartire i service worker gia' installati con la regola nuova.
 // v10: via EmailJS dal precache (28/09/2026): token ed email ora li fa il server.
-const CACHE = 'ga-pwa-v10';
+// v11: rituali che si ripetono e stanza del rituale (29/09/2026). L'app legge dalla vista nuova
+// e apre la stanza da ?ritual=: senza il bump le app installate resterebbero sul codice di prima.
+const CACHE = 'ga-pwa-v11';
 const PRECACHE = [
   'app.html', 'app.js', 'push-helpers.js', 'music-helpers.js', 'index.html', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
