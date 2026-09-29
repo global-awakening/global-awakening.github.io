@@ -74,6 +74,27 @@ EXCEPTION WHEN others THEN
 END;
 $$;
 
+-- Posizione e totale («giorno 3 di 8»): protette come l'appuntamento corrente, perché la vista le
+-- chiama per ogni riga. Una regola rotta (fuso sconosciuto, date storte) dà NULL e rompe solo
+-- la sua scheda, non l'elenco per tutti.
+CREATE OR REPLACE FUNCTION rituale_occorrenza_numero(r rituals, p_occ timestamptz)
+RETURNS int LANGUAGE plpgsql STABLE SET search_path = public AS $$
+BEGIN
+  RETURN (SELECT count(*)::int FROM rituale_occorrenze(r) o WHERE o <= p_occ);
+EXCEPTION WHEN others THEN
+  RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION rituale_occorrenze_totali(r rituals)
+RETURNS int LANGUAGE plpgsql STABLE SET search_path = public AS $$
+BEGIN
+  RETURN (SELECT count(*)::int FROM rituale_occorrenze(r));
+EXCEPTION WHEN others THEN
+  RETURN NULL;
+END;
+$$;
+
 -- Quante persone sono nella stanza adesso: viste negli ultimi 60 secondi. SECURITY DEFINER
 -- perché anon non legge ritual_presence (si contano, non si elencano).
 CREATE OR REPLACE FUNCTION rituale_presenti_ora(p_ritual_id bigint, p_occorrenza timestamptz)
@@ -101,9 +122,9 @@ SELECT r.id, r.creator, r.creator_id, r.name, r.description, r.type, r.sacred_nu
        r.candles_occorrenza,
        r.date AS prima_date, r.time AS prima_time,
        CASE WHEN r.ripeti_giorni IS NULL THEN 1
-            ELSE (SELECT count(*)::int FROM rituale_occorrenze(r) o WHERE o <= c.occ) END AS occorrenza_numero,
+            ELSE rituale_occorrenza_numero(r, c.occ) END AS occorrenza_numero,
        CASE WHEN r.ripeti_giorni IS NULL THEN 1
-            ELSE (SELECT count(*)::int FROM rituale_occorrenze(r)) END AS occorrenze_totali,
+            ELSE rituale_occorrenze_totali(r) END AS occorrenze_totali,
        CASE WHEN c.occ IS NULL THEN 0 ELSE rituale_presenti_ora(r.id, c.occ) END AS presenti_ora
   FROM rituals r
   CROSS JOIN LATERAL (SELECT rituale_occorrenza_corrente(r) AS occ) c;
@@ -111,8 +132,12 @@ SELECT r.id, r.creator, r.creator_id, r.name, r.description, r.type, r.sacred_nu
 GRANT SELECT ON rituali_correnti TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION rituale_occorrenze(rituals)                   TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION rituale_occorrenza_corrente(rituals)          TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION rituale_occorrenza_numero(rituals, timestamptz) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION rituale_occorrenze_totali(rituals)            TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION rituale_presenti_ora(bigint, timestamptz)     TO anon, authenticated, service_role;
 
+-- Volutamente SECURITY INVOKER (non definer come le altre): chi chiama vede solo i rituali che la
+-- sua policy di SELECT gli lascia vedere; con definer si esporrebbero righe che non potrebbe leggere.
 CREATE OR REPLACE FUNCTION get_ritual_occurrences(p_ritual_id bigint)
 RETURNS SETOF timestamptz LANGUAGE sql STABLE SET search_path = public AS $$
   SELECT o FROM rituals r, rituale_occorrenze(r) o WHERE r.id = p_ritual_id ORDER BY o

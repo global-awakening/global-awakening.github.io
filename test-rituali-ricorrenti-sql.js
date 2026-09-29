@@ -63,11 +63,26 @@ async function parteA(db) {
   const vs = (await db.query(`SELECT * FROM rituali_correnti WHERE id = $1`, [s.id])).rows[0];
   check(vs.date === s.date && vs.time === s.time && vs.occorrenza_numero === 1 && vs.occorrenze_totali === 1,
     'rituale singolo: vista uguale alla tabella, giorno 1 di 1', vs);
-  // Riga malformata (può esistere da vecchie scritture dirette): la vista non deve esplodere.
+  // Righe malformate (da vecchie scritture dirette, o regole rotte): la vista non deve esplodere.
+  // Si selezionano le colonne calcolate vere: con count(*) il planner le salterebbe.
   await db.query(`INSERT INTO rituals (creator, creator_id, name, type, sacred_number, date, time, duration) VALUES ('x','x','rotto','consciousness',11,'non-una-data','boh',3)`);
-  check(!(await errore(db.query(`SELECT count(*) FROM rituali_correnti`))), 'una riga malformata non spegne la vista');
-  // Via subito: la pulizia di oggi (e quella nuova, per i singoli) fa date::date e su questa esploderebbe.
-  await db.query(`DELETE FROM rituals WHERE name = 'rotto'`);
+  await db.query(`INSERT INTO rituals (creator, creator_id, name, type, sacred_number, date, time, duration, ripeti_giorni, ripeti_fino, fuso, ora_locale, data_inizio_locale)
+                  VALUES ('x','x','rotto-ric','consciousness',11,'2026-10-05','05:00:00',30,'{1}','2026-10-30','Marte/X','07:00','2026-10-05')`);
+  const mal = await errore(db.query(`SELECT id, date, time, candles, occorrenza_numero, occorrenze_totali, presenti_ora FROM rituali_correnti`));
+  check(!mal, 'righe malformate (singola e ricorrente) non spengono la vista', mal);
+  // Via subito: la pulizia di oggi (e quella nuova, per i singoli) fa date::date e su queste esploderebbe.
+  await db.query(`DELETE FROM rituals WHERE name IN ('rotto','rotto-ric')`);
+
+  // «Fino al» a +366 giorni esatti dal primo giorno: accettato.
+  const l366 = await errore(crea(db, { giorni: [1], fino: '2027-10-06', fuso: 'Europe/Rome', data: '2026-10-05', ora: '05:00', creatore: 'l366' }));
+  check(!l366, 'fino al = primo giorno + 366 è accettato', l366);
+  // Buco dell'ora legale: ogni giorno alle 02:30 di Roma (01:30Z il 27/03) attraversa il 29/03/2026,
+  // quando quell'ora locale non esiste. Si crea e non esplode.
+  const buco = await errore(crea(db, { giorni: [1,2,3,4,5,6,7], fino: '2026-03-31', fuso: 'Europe/Rome', data: '2026-03-27', ora: '01:30', creatore: 'buco' }));
+  check(!buco, "ora inesistente per il salto dell'ora legale: creazione senza errori", buco);
+  const bucoId = (await db.query(`SELECT id FROM rituals WHERE creator_id = 'buco'`)).rows[0];
+  const nBuco = bucoId ? (await occorrenze(db, bucoId.id)).length : -1;
+  check(nBuco === 5, 'buco ora legale: 5 appuntamenti dal 27 al 31/03', nBuco);
 
   // Vista su un ciclo in corso: ogni giorno in UTC, partito 2 giorni fa, alle (adesso - 1 minuto).
   const t0 = new Date(Date.now() - 60000);
