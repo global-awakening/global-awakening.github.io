@@ -252,7 +252,7 @@
               stopBody: "The cycle stops: there will be no more sessions. The current one, if any, ends normally.",
               stopYes: "Stop", stopNo: "Let it continue", stopFailed: "Could not stop the cycle.",
               room: "Ritual room", peopleHere: (n) => n === 1 ? "1 person here now" : `${n} people here now`,
-              closeRoom: "Close", descCounter: (n) => `${n} characters left`,
+              closeRoom: "Close", enterRoom: "Enter", descCounter: (n) => `${n} characters left`,
               recurrenceErrors: {
                 recurrence_incomplete: "Choose the days and an end date.",
                 recurrence_days_invalid: "Choose at least one day of the week.",
@@ -618,7 +618,7 @@
               stopBody: "Il ciclo si ferma: non ci saranno altri appuntamenti. Quello in corso, se c'è, finisce normalmente.",
               stopYes: "Ferma", stopNo: "Lascialo andare", stopFailed: "Non è stato possibile fermare il ciclo.",
               room: "Stanza del rituale", peopleHere: (n) => n === 1 ? "1 persona qui adesso" : `${n} persone qui adesso`,
-              closeRoom: "Chiudi", descCounter: (n) => `ancora ${n} caratteri`,
+              closeRoom: "Chiudi", enterRoom: "Entra", descCounter: (n) => `ancora ${n} caratteri`,
               recurrenceErrors: {
                 recurrence_incomplete: "Scegli i giorni e la data di fine.",
                 recurrence_days_invalid: "Scegli almeno un giorno della settimana.",
@@ -1087,6 +1087,18 @@
             if (tok) window.history.replaceState({}, '', window.location.pathname);
             return tok || '';
           });
+          // Dalla notifica si arriva con ?ritual=<id> (push-helpers.js). Si toglie subito
+          // dall'indirizzo, come reset e magic, e si tiene qui finché i rituali non sono caricati:
+          // può servire un'entrata come ospite prima.
+          const [ritualeDaAprire, setRitualeDaAprire] = useState(() => {
+            const p = new URLSearchParams(window.location.search);
+            const id = p.get('ritual');
+            if (id) window.history.replaceState({}, '', window.location.pathname);
+            return id && /^\d+$/.test(id) ? Number(id) : null;
+          });
+          const [stanzaId, setStanzaId] = useState(null);
+          const [presentiStanza, setPresentiStanza] = useState(null);
+          const stanza = stanzaId != null ? rituals.find(r => r.id === stanzaId) : null;
           const [magicLinkEmail, setMagicLinkEmail] = useState('');
           const [showMagicLink, setShowMagicLink] = useState(false);
           const t = translations[lang];
@@ -3356,6 +3368,32 @@
             return `${minutes}m`;
           };
 
+          // Il rituale arrivato dalla notifica: se è in corso si entra, se no non si fa niente di
+          // speciale; se non esiste più (già pulito) lo si dimentica.
+          React.useEffect(() => {
+            if (ritualeDaAprire == null || rituals.length === 0) return;
+            const r = rituals.find(x => x.id === ritualeDaAprire);
+            if (r && getRitualStatus(r) === 'live') setStanzaId(r.id);
+            setRitualeDaAprire(null);
+          }, [ritualeDaAprire, rituals]);
+
+          // Nella stanza ci si segna all'ingresso e ogni 30 secondi: il numero conta chi si è fatto
+          // vivo nell'ultimo minuto (28_). Finito l'appuntamento, la stanza si chiude da sola: la
+          // lista si ricarica ogni 10 s (loadData) e getRitualStatus viene rivalutato a ogni giro.
+          const stanzaLive = !!stanza && getRitualStatus(stanza) === 'live';
+          React.useEffect(() => {
+            if (stanzaId == null) return;
+            if (!stanzaLive) { setStanzaId(null); setPresentiStanza(null); return; }
+            let vivo = true;
+            const segna = async () => {
+              const { data, error } = await supabase.rpc('segna_presenza_rituale', { p_ritual_id: stanzaId, p_session_id: sessionId });
+              if (vivo && !error && typeof data === 'number') setPresentiStanza(data);
+            };
+            segna();
+            const timer = setInterval(segna, 30000);
+            return () => { vivo = false; clearInterval(timer); };
+          }, [stanzaId, stanzaLive, sessionId]);
+
           // Data e ora del rituale nel fuso di chi guarda. Nel database restano in UTC:
           // un rituale mondiale è un istante solo, che ognuno legge sul proprio orologio.
           const formatRitualWhen = (ritual) => {
@@ -3400,8 +3438,10 @@
               return next;
             });
           };
+          // Anche la stanza aperta su un rituale in corso fa partire la musica: ci si può entrare
+          // dalla notifica senza essere iscritti.
           const ritualeLive = rituals.find(r =>
-            Array.isArray(r.participants) && r.participants.includes(sessionId) && getRitualStatus(r) === 'live');
+            (r.id === stanzaId || (Array.isArray(r.participants) && r.participants.includes(sessionId))) && getRitualStatus(r) === 'live');
           const inLiveRitual = !!ritualeLive;
           const inTelepathySession = !!partner && !sessionEnded;
           const musicOn = (inLiveRitual || inTelepathySession) && !musicMuted;
@@ -4173,7 +4213,10 @@ ${ritual.description || ''}` })}
                               </span>
                             </div>
 
-                            <div className="flex gap-2 mb-3">
+                            {/* flexWrap: con «Entra» un rituale in corso del proprio creatore ha fino a
+                                cinque pulsanti, e su una riga sola «Ferma» usciva dalla scheda, finendo
+                                sotto la scheda accanto (irraggiungibile). */}
+                            <div className="flex gap-2 mb-3" style={{flexWrap: 'wrap'}}>
                               <button
                                 data-test="join-ritual"
                                 onClick={() => joinRitual(ritual.id)}
@@ -4182,6 +4225,13 @@ ${ritual.description || ''}` })}
                               >
                                 {isJoined ? t.rituals.joined : t.rituals.join}
                               </button>
+                              {/* La stanza si apre solo mentre il rituale è in corso: prima e dopo non c'è
+                                  nessuno dentro, e la preghiera si legge già sulla scheda. */}
+                              {isLive && (
+                                <button data-test="open-room" onClick={() => setStanzaId(ritual.id)} className="btn-primary px-4">
+                                  {t.rituals.enterRoom} 🕯️
+                                </button>
+                              )}
                               {isLive && (
                                 <button onClick={() => sendEnergy(ritual.id)} className="btn-secondary px-4">
                                   ⚡ {ritual.energy}
@@ -5778,6 +5828,32 @@ ${ritual.description || ''}` })}
 
               {/* preload="none": il brano pesa, non lo scarica chi non entra mai in una sessione */}
               <audio ref={musicRef} src={MUSIC_SRC} loop preload="none" />
+              {/* La stanza del rituale: la preghiera in grande e quante persone ci sono adesso.
+                  zIndex 9999, sotto la soglia (10000): quando serve il tocco per la musica, la
+                  soglia deve restare sopra. */}
+              {stanza && stanzaLive && (
+                <div data-test="ritual-room" role="dialog" aria-label={t.rituals.room}
+                  style={{position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', flexDirection: 'column',
+                          alignItems: 'center', padding: '2rem 1.25rem', gap: '1rem', overflowY: 'auto',
+                          background: 'rgba(10, 6, 30, 0.94)', backdropFilter: 'blur(6px)'}}>
+                  <button data-test="room-close" onClick={() => setStanzaId(null)} className="btn-secondary"
+                    style={{alignSelf: 'flex-end'}}>{t.rituals.closeRoom}</button>
+                  <div style={{fontSize: '3rem'}}>{ritualTypes.find(x => x.id === stanza.type)?.icon}</div>
+                  <h2 className="text-white" style={{fontSize: '1.6rem', fontWeight: 700, textAlign: 'center'}}>{stanza.name}</h2>
+                  <div data-test="room-people" style={{color: '#4ade80'}}>
+                    {presentiStanza != null ? t.rituals.peopleHere(presentiStanza) : ''}
+                  </div>
+                  {stanza.description && (
+                    <div data-test="room-text" className="text-white"
+                      style={{whiteSpace: 'pre-wrap', fontSize: '1.35rem', lineHeight: 1.6, maxWidth: '40rem', textAlign: 'center'}}>
+                      {stanza.description}
+                    </div>
+                  )}
+                  <button data-test="room-candle" onClick={() => toggleCandle(stanza.id)} className="btn-secondary px-4">
+                    🕯️ {(stanza.candles || []).length}
+                  </button>
+                </div>
+              )}
               {sogliaAperta && ritualeLive && (
                 <div
                   data-test="soglia-rituale"

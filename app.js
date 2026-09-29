@@ -456,6 +456,7 @@ const translations = {
       room: "Ritual room",
       peopleHere: n => n === 1 ? "1 person here now" : `${n} people here now`,
       closeRoom: "Close",
+      enterRoom: "Enter",
       descCounter: n => `${n} characters left`,
       recurrenceErrors: {
         recurrence_incomplete: "Choose the days and an end date.",
@@ -851,6 +852,7 @@ const translations = {
       room: "Stanza del rituale",
       peopleHere: n => n === 1 ? "1 persona qui adesso" : `${n} persone qui adesso`,
       closeRoom: "Chiudi",
+      enterRoom: "Entra",
       descCounter: n => `ancora ${n} caratteri`,
       recurrenceErrors: {
         recurrence_incomplete: "Scegli i giorni e la data di fine.",
@@ -1299,6 +1301,15 @@ function GlobalAwakeningPlatform() {
     if (tok) window.history.replaceState({}, '', window.location.pathname);
     return tok || '';
   });
+  const [ritualeDaAprire, setRitualeDaAprire] = useState(() => {
+    const p = new URLSearchParams(window.location.search);
+    const id = p.get('ritual');
+    if (id) window.history.replaceState({}, '', window.location.pathname);
+    return id && /^\d+$/.test(id) ? Number(id) : null;
+  });
+  const [stanzaId, setStanzaId] = useState(null);
+  const [presentiStanza, setPresentiStanza] = useState(null);
+  const stanza = stanzaId != null ? rituals.find(r => r.id === stanzaId) : null;
   const [magicLinkEmail, setMagicLinkEmail] = useState('');
   const [showMagicLink, setShowMagicLink] = useState(false);
   const t = translations[lang];
@@ -3496,6 +3507,38 @@ function GlobalAwakeningPlatform() {
     if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
   };
+  React.useEffect(() => {
+    if (ritualeDaAprire == null || rituals.length === 0) return;
+    const r = rituals.find(x => x.id === ritualeDaAprire);
+    if (r && getRitualStatus(r) === 'live') setStanzaId(r.id);
+    setRitualeDaAprire(null);
+  }, [ritualeDaAprire, rituals]);
+  const stanzaLive = !!stanza && getRitualStatus(stanza) === 'live';
+  React.useEffect(() => {
+    if (stanzaId == null) return;
+    if (!stanzaLive) {
+      setStanzaId(null);
+      setPresentiStanza(null);
+      return;
+    }
+    let vivo = true;
+    const segna = async () => {
+      const {
+        data,
+        error
+      } = await supabase.rpc('segna_presenza_rituale', {
+        p_ritual_id: stanzaId,
+        p_session_id: sessionId
+      });
+      if (vivo && !error && typeof data === 'number') setPresentiStanza(data);
+    };
+    segna();
+    const timer = setInterval(segna, 30000);
+    return () => {
+      vivo = false;
+      clearInterval(timer);
+    };
+  }, [stanzaId, stanzaLive, sessionId]);
   const formatRitualWhen = ritual => {
     const istante = new Date(`${ritual.date}T${ritual.time}Z`);
     if (isNaN(istante.getTime())) return `${ritual.date} ${ritual.time}`;
@@ -3539,7 +3582,7 @@ function GlobalAwakeningPlatform() {
       return next;
     });
   };
-  const ritualeLive = rituals.find(r => Array.isArray(r.participants) && r.participants.includes(sessionId) && getRitualStatus(r) === 'live');
+  const ritualeLive = rituals.find(r => (r.id === stanzaId || Array.isArray(r.participants) && r.participants.includes(sessionId)) && getRitualStatus(r) === 'live');
   const inLiveRitual = !!ritualeLive;
   const inTelepathySession = !!partner && !sessionEnded;
   const musicOn = (inLiveRitual || inTelepathySession) && !musicMuted;
@@ -4626,13 +4669,20 @@ ${ritual.description || ''}`
         color: isLive ? '#4ade80' : '#fbbf24'
       }
     }, isLive ? t.rituals.live : status === 'ended' ? t.rituals.ended : `${t.rituals.startsIn} ${status}`)), React.createElement("div", {
-      className: "flex gap-2 mb-3"
+      className: "flex gap-2 mb-3",
+      style: {
+        flexWrap: 'wrap'
+      }
     }, React.createElement("button", {
       "data-test": "join-ritual",
       onClick: () => joinRitual(ritual.id),
       className: isJoined ? 'btn-secondary flex-1' : 'btn-primary flex-1',
       disabled: isJoined || status === 'ended'
     }, isJoined ? t.rituals.joined : t.rituals.join), isLive && React.createElement("button", {
+      "data-test": "open-room",
+      onClick: () => setStanzaId(ritual.id),
+      className: "btn-primary px-4"
+    }, t.rituals.enterRoom, " \uD83D\uDD6F\uFE0F"), isLive && React.createElement("button", {
       onClick: () => sendEnergy(ritual.id),
       className: "btn-secondary px-4"
     }, "\u26A1 ", ritual.energy), React.createElement("button", {
@@ -7164,7 +7214,61 @@ ${ritual.description || ''}`
     src: MUSIC_SRC,
     loop: true,
     preload: "none"
-  }), sogliaAperta && ritualeLive && React.createElement("div", {
+  }), stanza && stanzaLive && React.createElement("div", {
+    "data-test": "ritual-room",
+    role: "dialog",
+    "aria-label": t.rituals.room,
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 9999,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      padding: '2rem 1.25rem',
+      gap: '1rem',
+      overflowY: 'auto',
+      background: 'rgba(10, 6, 30, 0.94)',
+      backdropFilter: 'blur(6px)'
+    }
+  }, React.createElement("button", {
+    "data-test": "room-close",
+    onClick: () => setStanzaId(null),
+    className: "btn-secondary",
+    style: {
+      alignSelf: 'flex-end'
+    }
+  }, t.rituals.closeRoom), React.createElement("div", {
+    style: {
+      fontSize: '3rem'
+    }
+  }, ritualTypes.find(x => x.id === stanza.type)?.icon), React.createElement("h2", {
+    className: "text-white",
+    style: {
+      fontSize: '1.6rem',
+      fontWeight: 700,
+      textAlign: 'center'
+    }
+  }, stanza.name), React.createElement("div", {
+    "data-test": "room-people",
+    style: {
+      color: '#4ade80'
+    }
+  }, presentiStanza != null ? t.rituals.peopleHere(presentiStanza) : ''), stanza.description && React.createElement("div", {
+    "data-test": "room-text",
+    className: "text-white",
+    style: {
+      whiteSpace: 'pre-wrap',
+      fontSize: '1.35rem',
+      lineHeight: 1.6,
+      maxWidth: '40rem',
+      textAlign: 'center'
+    }
+  }, stanza.description), React.createElement("button", {
+    "data-test": "room-candle",
+    onClick: () => toggleCandle(stanza.id),
+    className: "btn-secondary px-4"
+  }, "\uD83D\uDD6F\uFE0F ", (stanza.candles || []).length)), sogliaAperta && ritualeLive && React.createElement("div", {
     "data-test": "soglia-rituale",
     role: "button",
     tabIndex: 0,
