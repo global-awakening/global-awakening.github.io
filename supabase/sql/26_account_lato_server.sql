@@ -301,6 +301,9 @@ BEGIN
      WHERE session_id = v_p.session_id
     RETURNING * INTO v_p;
   END IF;
+  -- Chi apre il link ha la casella: i suoi falliti si azzerano, come col reset. Senza, dopo
+  -- l'azzeramento delle credenziali chi è rimasto collegato con la vecchia si bloccherebbe da solo.
+  DELETE FROM login_attempts WHERE email = v_p.email;
 
   RETURN jsonb_build_object('ok', true, 'profilo', account_profilo_json(v_p),
                             'password_hash', v_p.password_hash);
