@@ -3274,7 +3274,11 @@
           // di oggi. Sostituirla a quella della vista riporterebbe il rituale al giorno 1 (stanza
           // chiusa, musica spenta). Si rilegge dalla vista, che è l'unica fonte per l'app.
           const rileggiRituale = async (id) => {
-            const { data } = await supabase.from('rituali_correnti').select('*').eq('id', id);
+            const { data, error } = await supabase.from('rituali_correnti').select('*').eq('id', id);
+            // Se la lettura fallisce (rete, timeout) non sappiamo com'è il rituale: toglierlo dalla
+            // lista lo farebbe sparire per un errore passeggero. Si rimuove solo quando la lettura
+            // è riuscita e non ha restituito nessuna riga (rituale davvero sparito).
+            if (error) return;
             setRituals(prev => {
               const riga = Array.isArray(data) && data[0];
               if (!riga) return prev.filter(r => r.id !== id);
@@ -3364,6 +3368,19 @@
               hour: '2-digit', minute: '2-digit', hour12: false,
               timeZoneName: 'short'
             }).format(istante);
+          };
+
+          // «Ogni giorno alle 07:00» / «Lun, Mer, Ven alle 07:00»: l'ora è quella di chi guarda,
+          // calcolata dall'appuntamento corrente (date/time della vista), come il resto della scheda.
+          // I giorni della settimana sono invece quelli del fuso del creatore: per chi guarda da un
+          // fuso lontano il giorno può non coincidere con il suo calendario. Non si converte (fuori perimetro).
+          const descriviRipetizione = (ritual) => {
+            const g = ritual.ripeti_giorni || [];
+            const quando = g.length === 7 ? t.rituals.everyDay : g.map(n => t.rituals.weekdaysShort[n - 1]).join(', ');
+            const istante = new Date(`${ritual.date}T${ritual.time}Z`);
+            const ora = isNaN(istante.getTime()) ? '' : new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB',
+              { hour: '2-digit', minute: '2-digit', hour12: false }).format(istante);
+            return `${quando} ${t.rituals.atTime} ${ora}`;
           };
 
           // Musica di sottofondo. Suona solo quando una sessione è davvero in corso: un rituale
@@ -4106,6 +4123,12 @@
                         const candleCount = (ritual.candles || []).length;
                         const isCandleLit = (ritual.candles || []).includes(sessionId);
                         
+                        const ricorrente = Array.isArray(ritual.ripeti_giorni);
+                        // Per un rituale che si ripete il cestino vale solo prima che la serie sia
+                        // partita (primo appuntamento nel futuro); dopo si «ferma», non si cancella.
+                        const primoIstante = ricorrente ? new Date(`${ritual.prima_date}T${ritual.prima_time}Z`) : null;
+                        const serieNonPartita = ricorrente && primoIstante > new Date();
+                        const serieIniziata = ricorrente && !serieNonPartita;
                         const ritualComments = ritualCommentsMap[ritual.id] || [];
                         const isRitualExpanded = expandedRitualId === ritual.id;
                         return (
@@ -4114,6 +4137,11 @@
                               <div>
                                 <div style={{fontSize: '2rem'}} className="mb-2">{ritualTypes.find(t => t.id === ritual.type)?.icon}</div>
                                 <h3 className="text-xl font-bold text-white mb-1">{ritual.name}</h3>
+                                {Array.isArray(ritual.ripeti_giorni) && (
+                                  <p data-test="ritual-recurrence" className="text-sm" style={{color: '#c4b5fd'}}>
+                                    🔁 {descriviRipetizione(ritual)} · {t.rituals.dayOf(ritual.occorrenza_numero, ritual.occorrenze_totali)}
+                                  </p>
+                                )}
                                 <p className="text-secondary text-sm">{ritual.description}</p>
                                 {ritual.creator && (
                                   <span
@@ -4178,7 +4206,7 @@ ${ritual.description || ''}` })}
                               {/* Solo a chi l'ha creato, e solo finche' non e' iniziato: dentro
                                   un rituale in corso c'e' gente che sta meditando, e non deve
                                   vederselo sparire sotto gli occhi. */}
-                              {ritual.creator_id === sessionId && status !== 'live' && status !== 'ended' && (
+                              {ritual.creator_id === sessionId && (ricorrente ? serieNonPartita : (status !== 'live' && status !== 'ended')) && (
                                 <button
                                   data-test="delete-ritual"
                                   onClick={() => setRitualToDelete(ritual)}
@@ -4193,6 +4221,18 @@ ${ritual.description || ''}` })}
                                     cursor: 'pointer'
                                   }}
                                 >🗑️</button>
+                              )}
+                              {isJoined && ritual.creator_id !== sessionId && (
+                                <button data-test="leave-ritual" className="btn-secondary px-4" onClick={() => leaveRitual(ritual.id)}>
+                                  {t.rituals.leave}
+                                </button>
+                              )}
+                              {ritual.creator_id === sessionId && serieIniziata && !ritual.fermato_il && (
+                                <button
+                                  data-test="stop-ritual"
+                                  onClick={() => setRitualToStop(ritual)}
+                                  className="btn-secondary px-4"
+                                >{t.rituals.stop}</button>
                               )}
                             </div>
 
@@ -5355,6 +5395,33 @@ ${ritual.description || ''}` })}
                 </div>
               )}
 
+              {ritualToStop && (
+                <div style={{position: 'fixed', inset: 0, zIndex: 9998, display: 'flex',
+                             alignItems: 'center', justifyContent: 'center', padding: '1rem',
+                             background: 'rgba(0,0,0,0.7)'}}
+                     onClick={() => setRitualToStop(null)}>
+                  <div className="bg-glass rounded-2xl border-glass p-4"
+                       style={{maxWidth: '22rem', width: '100%'}}
+                       onClick={e => e.stopPropagation()}>
+                    <h3 className="text-white font-bold mb-2">{t.rituals.stopTitle}</h3>
+                    <p className="text-primary font-medium mb-1">{ritualToStop.name}</p>
+                    <p className="text-secondary text-sm">{t.rituals.stopBody}</p>
+                    <div className="flex gap-2" style={{marginTop: '1rem'}}>
+                      <button
+                        data-test="stop-ritual-confirm"
+                        style={{padding: '0.6rem 1rem', borderRadius: '0.75rem', flex: 1,
+                                border: '1px solid rgba(248,113,113,0.5)', background: 'rgba(248,113,113,0.12)',
+                                color: '#fca5a5', cursor: 'pointer', fontWeight: 600}}
+                        onClick={() => { doFermaRituale(ritualToStop.id); setRitualToStop(null); }}
+                      >{t.rituals.stopYes}</button>
+                      <button className="btn-secondary" style={{flex: 1}}
+                        data-test="stop-ritual-cancel"
+                        onClick={() => setRitualToStop(null)}>{t.rituals.stopNo}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {reportTarget && (
                 <div style={{position: 'fixed', inset: 0, zIndex: 9998, display: 'flex',
                              alignItems: 'center', justifyContent: 'center', padding: '1rem',
@@ -5590,9 +5657,12 @@ ${ritual.description || ''}` })}
                           value={newRitual.description}
                           onChange={(e) => setNewRitual({...newRitual, description: e.target.value})}
                           placeholder="Describe the ritual..."
-                          rows="3"
-                          maxLength={500}
+                          rows="5"
+                          maxLength={5000}
                         />
+                        {5000 - newRitual.description.length < 500 && (
+                          <div className="text-xs text-secondary">{t.rituals.descCounter(5000 - newRitual.description.length)}</div>
+                        )}
                       </div>
 
                       <div className="grid grid-cols-2 gap-4">
@@ -5644,8 +5714,53 @@ ${ritual.description || ''}` })}
                           // min era 5: con il predefinito a 3 il campo avrebbe rifiutato il
                           // proprio valore iniziale. Il server accetta da 1 minuto in su.
                           min="1"
-                          max="180"
+                          max={newRitual.ripeti === 'mai' ? 180 : 720}
                         />
+                      </div>
+
+                      <div>
+                        <label className="text-white text-sm mb-2" style={{display: 'block'}}>{t.rituals.repeat}</label>
+                        <select
+                          data-test="repeat-select"
+                          value={newRitual.ripeti}
+                          onChange={(e) => setNewRitual({...newRitual, ripeti: e.target.value})}
+                        >
+                          <option value="mai">{t.rituals.repeatNever}</option>
+                          <option value="ogni">{t.rituals.repeatDaily}</option>
+                          <option value="giorni">{t.rituals.repeatDays}</option>
+                        </select>
+                        {newRitual.ripeti === 'giorni' && (
+                          <div className="flex gap-1" style={{marginTop: '0.5rem', flexWrap: 'wrap'}}>
+                            {[1, 2, 3, 4, 5, 6, 7].map(n => {
+                              const attivo = (newRitual.giorni || []).includes(n);
+                              return (
+                                <button
+                                  key={n}
+                                  type="button"
+                                  data-test={`repeat-day-${n}`}
+                                  aria-pressed={attivo}
+                                  onClick={() => setNewRitual({...newRitual, giorni: attivo
+                                    ? newRitual.giorni.filter(g => g !== n)
+                                    : [...(newRitual.giorni || []), n].sort((a, b) => a - b)})}
+                                  className={attivo ? 'btn-primary' : 'btn-secondary'}
+                                  style={{padding: '0.4rem 0.6rem', fontSize: '0.8rem', minHeight: '40px'}}
+                                >{t.rituals.weekdaysShort[n - 1]}</button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {newRitual.ripeti !== 'mai' && (
+                          <div style={{marginTop: '0.5rem'}}>
+                            <label className="text-white text-sm mb-2" style={{display: 'block'}}>{t.rituals.until}</label>
+                            <input
+                              type="date"
+                              data-test="repeat-until"
+                              value={newRitual.fino || ''}
+                              min={newRitual.date}
+                              onChange={(e) => setNewRitual({...newRitual, fino: e.target.value})}
+                            />
+                          </div>
+                        )}
                       </div>
 
                       <div className="grid grid-cols-2 gap-4 mt-4">

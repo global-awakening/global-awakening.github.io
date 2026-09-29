@@ -3407,8 +3407,10 @@ function GlobalAwakeningPlatform() {
   };
   const rileggiRituale = async id => {
     const {
-      data
+      data,
+      error
     } = await supabase.from('rituali_correnti').select('*').eq('id', id);
+    if (error) return;
     setRituals(prev => {
       const riga = Array.isArray(data) && data[0];
       if (!riga) return prev.filter(r => r.id !== id);
@@ -3506,6 +3508,17 @@ function GlobalAwakeningPlatform() {
       hour12: false,
       timeZoneName: 'short'
     }).format(istante);
+  };
+  const descriviRipetizione = ritual => {
+    const g = ritual.ripeti_giorni || [];
+    const quando = g.length === 7 ? t.rituals.everyDay : g.map(n => t.rituals.weekdaysShort[n - 1]).join(', ');
+    const istante = new Date(`${ritual.date}T${ritual.time}Z`);
+    const ora = isNaN(istante.getTime()) ? '' : new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(istante);
+    return `${quando} ${t.rituals.atTime} ${ora}`;
   };
   const MUSIC_SRC = 'assets/meditation-music-rockot.mp3';
   const MUSIC_VOLUME = 0.35;
@@ -4538,6 +4551,10 @@ function GlobalAwakeningPlatform() {
     const isJoined = ritual.participants.includes(sessionId);
     const candleCount = (ritual.candles || []).length;
     const isCandleLit = (ritual.candles || []).includes(sessionId);
+    const ricorrente = Array.isArray(ritual.ripeti_giorni);
+    const primoIstante = ricorrente ? new Date(`${ritual.prima_date}T${ritual.prima_time}Z`) : null;
+    const serieNonPartita = ricorrente && primoIstante > new Date();
+    const serieIniziata = ricorrente && !serieNonPartita;
     const ritualComments = ritualCommentsMap[ritual.id] || [];
     const isRitualExpanded = expandedRitualId === ritual.id;
     return React.createElement("div", {
@@ -4552,7 +4569,13 @@ function GlobalAwakeningPlatform() {
       className: "mb-2"
     }, ritualTypes.find(t => t.id === ritual.type)?.icon), React.createElement("h3", {
       className: "text-xl font-bold text-white mb-1"
-    }, ritual.name), React.createElement("p", {
+    }, ritual.name), Array.isArray(ritual.ripeti_giorni) && React.createElement("p", {
+      "data-test": "ritual-recurrence",
+      className: "text-sm",
+      style: {
+        color: '#c4b5fd'
+      }
+    }, "\uD83D\uDD01 ", descriviRipetizione(ritual), " \xB7 ", t.rituals.dayOf(ritual.occorrenza_numero, ritual.occorrenze_totali)), React.createElement("p", {
       className: "text-secondary text-sm"
     }, ritual.description), ritual.creator && React.createElement("span", {
       className: "text-xs",
@@ -4629,7 +4652,7 @@ ${ritual.description || ''}`
       style: {
         filter: isCandleLit ? 'none' : 'grayscale(1) opacity(0.6)'
       }
-    }, "\uD83D\uDD6F\uFE0F"), " ", candleCount), ritual.creator_id === sessionId && status !== 'live' && status !== 'ended' && React.createElement("button", {
+    }, "\uD83D\uDD6F\uFE0F"), " ", candleCount), ritual.creator_id === sessionId && (ricorrente ? serieNonPartita : status !== 'live' && status !== 'ended') && React.createElement("button", {
       "data-test": "delete-ritual",
       onClick: () => setRitualToDelete(ritual),
       className: "px-4",
@@ -4642,7 +4665,15 @@ ${ritual.description || ''}`
         color: '#fca5a5',
         cursor: 'pointer'
       }
-    }, "\uD83D\uDDD1\uFE0F")), React.createElement("div", {
+    }, "\uD83D\uDDD1\uFE0F"), isJoined && ritual.creator_id !== sessionId && React.createElement("button", {
+      "data-test": "leave-ritual",
+      className: "btn-secondary px-4",
+      onClick: () => leaveRitual(ritual.id)
+    }, t.rituals.leave), ritual.creator_id === sessionId && serieIniziata && !ritual.fermato_il && React.createElement("button", {
+      "data-test": "stop-ritual",
+      onClick: () => setRitualToStop(ritual),
+      className: "btn-secondary px-4"
+    }, t.rituals.stop)), React.createElement("div", {
       className: "flex gap-2"
     }, React.createElement("button", {
       onClick: () => toggleRitualComments(ritual.id),
@@ -6555,7 +6586,60 @@ ${ritual.description || ''}`
     },
     "data-test": "delete-ritual-cancel",
     onClick: () => setRitualToDelete(null)
-  }, t.rituals.deleteNo)))), reportTarget && React.createElement("div", {
+  }, t.rituals.deleteNo)))), ritualToStop && React.createElement("div", {
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 9998,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '1rem',
+      background: 'rgba(0,0,0,0.7)'
+    },
+    onClick: () => setRitualToStop(null)
+  }, React.createElement("div", {
+    className: "bg-glass rounded-2xl border-glass p-4",
+    style: {
+      maxWidth: '22rem',
+      width: '100%'
+    },
+    onClick: e => e.stopPropagation()
+  }, React.createElement("h3", {
+    className: "text-white font-bold mb-2"
+  }, t.rituals.stopTitle), React.createElement("p", {
+    className: "text-primary font-medium mb-1"
+  }, ritualToStop.name), React.createElement("p", {
+    className: "text-secondary text-sm"
+  }, t.rituals.stopBody), React.createElement("div", {
+    className: "flex gap-2",
+    style: {
+      marginTop: '1rem'
+    }
+  }, React.createElement("button", {
+    "data-test": "stop-ritual-confirm",
+    style: {
+      padding: '0.6rem 1rem',
+      borderRadius: '0.75rem',
+      flex: 1,
+      border: '1px solid rgba(248,113,113,0.5)',
+      background: 'rgba(248,113,113,0.12)',
+      color: '#fca5a5',
+      cursor: 'pointer',
+      fontWeight: 600
+    },
+    onClick: () => {
+      doFermaRituale(ritualToStop.id);
+      setRitualToStop(null);
+    }
+  }, t.rituals.stopYes), React.createElement("button", {
+    className: "btn-secondary",
+    style: {
+      flex: 1
+    },
+    "data-test": "stop-ritual-cancel",
+    onClick: () => setRitualToStop(null)
+  }, t.rituals.stopNo)))), reportTarget && React.createElement("div", {
     style: {
       position: 'fixed',
       inset: 0,
@@ -6932,9 +7016,11 @@ ${ritual.description || ''}`
       description: e.target.value
     }),
     placeholder: "Describe the ritual...",
-    rows: "3",
-    maxLength: 500
-  })), React.createElement("div", {
+    rows: "5",
+    maxLength: 5000
+  }), 5000 - newRitual.description.length < 500 && React.createElement("div", {
+    className: "text-xs text-secondary"
+  }, t.rituals.descCounter(5000 - newRitual.description.length))), React.createElement("div", {
     className: "grid grid-cols-2 gap-4"
   }, React.createElement("div", null, React.createElement("label", {
     className: "text-white text-sm mb-2",
@@ -7003,8 +7089,68 @@ ${ritual.description || ''}`
       duration: parseInt(e.target.value)
     }),
     min: "1",
-    max: "180"
-  })), React.createElement("div", {
+    max: newRitual.ripeti === 'mai' ? 180 : 720
+  })), React.createElement("div", null, React.createElement("label", {
+    className: "text-white text-sm mb-2",
+    style: {
+      display: 'block'
+    }
+  }, t.rituals.repeat), React.createElement("select", {
+    "data-test": "repeat-select",
+    value: newRitual.ripeti,
+    onChange: e => setNewRitual({
+      ...newRitual,
+      ripeti: e.target.value
+    })
+  }, React.createElement("option", {
+    value: "mai"
+  }, t.rituals.repeatNever), React.createElement("option", {
+    value: "ogni"
+  }, t.rituals.repeatDaily), React.createElement("option", {
+    value: "giorni"
+  }, t.rituals.repeatDays)), newRitual.ripeti === 'giorni' && React.createElement("div", {
+    className: "flex gap-1",
+    style: {
+      marginTop: '0.5rem',
+      flexWrap: 'wrap'
+    }
+  }, [1, 2, 3, 4, 5, 6, 7].map(n => {
+    const attivo = (newRitual.giorni || []).includes(n);
+    return React.createElement("button", {
+      key: n,
+      type: "button",
+      "data-test": `repeat-day-${n}`,
+      "aria-pressed": attivo,
+      onClick: () => setNewRitual({
+        ...newRitual,
+        giorni: attivo ? newRitual.giorni.filter(g => g !== n) : [...(newRitual.giorni || []), n].sort((a, b) => a - b)
+      }),
+      className: attivo ? 'btn-primary' : 'btn-secondary',
+      style: {
+        padding: '0.4rem 0.6rem',
+        fontSize: '0.8rem',
+        minHeight: '40px'
+      }
+    }, t.rituals.weekdaysShort[n - 1]);
+  })), newRitual.ripeti !== 'mai' && React.createElement("div", {
+    style: {
+      marginTop: '0.5rem'
+    }
+  }, React.createElement("label", {
+    className: "text-white text-sm mb-2",
+    style: {
+      display: 'block'
+    }
+  }, t.rituals.until), React.createElement("input", {
+    type: "date",
+    "data-test": "repeat-until",
+    value: newRitual.fino || '',
+    min: newRitual.date,
+    onChange: e => setNewRitual({
+      ...newRitual,
+      fino: e.target.value
+    })
+  }))), React.createElement("div", {
     className: "grid grid-cols-2 gap-4 mt-4"
   }, React.createElement("button", {
     onClick: () => setShowCreateRitual(false),
