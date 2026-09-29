@@ -53,7 +53,8 @@ async function applicaFile(db, rel) {
 }
 
 // con29: il tetto agli appuntamenti (29_) sta sopra la 28_, quindi segue la 28_ se non detto altro.
-async function creaDbLocale({ con28 = true, con29 = con28 } = {}) {
+// con30: la candela nella stanza (30_) sta sopra la 29_, e la segue allo stesso modo.
+async function creaDbLocale({ con28 = true, con29 = con28, con30 = con29 } = {}) {
   const { PGlite } = await import('@electric-sql/pglite');
   const db = new PGlite();
   await db.exec(`SET TIME ZONE 'UTC';`);
@@ -64,6 +65,7 @@ async function creaDbLocale({ con28 = true, con29 = con28 } = {}) {
   await applicaFile(db, 'supabase/sql/25_cancella_rituale.sql');      // delete_ritual
   if (con28) await applicaFile(db, 'supabase/sql/28_rituali_ricorrenti.sql');
   if (con28 && con29) await applicaFile(db, 'supabase/sql/29_tetto_occorrenze.sql');
+  if (con28 && con29 && con30) await applicaFile(db, 'supabase/sql/30_candela_nella_stanza.sql');
   return db;
 }
 

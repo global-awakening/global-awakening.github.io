@@ -284,6 +284,8 @@
               sendEnergy: "Send Energy",
               candleLight: "Light a candle",
               candleExtinguish: "Extinguish your candle",
+              candlesLitBy: "Candles lit by",
+              candleNotLive: "The candle can be lit during the ritual.",
               modalTitle: "Create Ritual",
               ritualName: "Ritual Name",
               description: "Description",
@@ -651,6 +653,8 @@
               sendEnergy: "Invia Energia",
               candleLight: "Accendi una candela",
               candleExtinguish: "Spegni la tua candela",
+              candlesLitBy: "Candele accese da",
+              candleNotLive: "La candela si accende durante il rituale.",
               modalTitle: "Crea Rituale",
               ritualName: "Nome Rituale",
               description: "Descrizione",
@@ -3321,11 +3325,17 @@
             await supabase.rpc('send_ritual_energy', { p_ritual_id: ritualId, p_amount: 10 });
           };
 
+          // Il nome serve alla stanza per dire chi ha acceso la candela. Per un profilo registrato
+          // il database usa quello del profilo e ignora questo (30_candela_nella_stanza.sql).
           const toggleCandle = async (ritualId) => {
             const { data, error } = await supabase.rpc('toggle_ritual_candle', {
               p_ritual_id: ritualId,
-              p_session_id: sessionId
+              p_session_id: sessionId,
+              p_nickname: nickname
             });
+            // not_live: l'appuntamento è finito mentre la stanza era aperta (o non è ancora
+            // iniziato). Merita una frase sua, non un generico errore di connessione.
+            if (error && (error.message || '').includes('not_live')) { showErrorToast(t.rituals.candleNotLive); return; }
             if (error || !data || data.length === 0) { showErrorToast(); return; }
             await rileggiRituale(ritualId);
           };
@@ -3387,6 +3397,13 @@
             if (r && getRitualStatus(r) === 'live') setStanzaId(r.id);
             setRitualeDaAprire(null);
           }, [ritualeDaAprire, rituals, showNicknamePrompt]);
+
+          // La candela della stanza: accesa da me? e chi l'ha accesa in questo appuntamento.
+          const candelaMiaStanza = !!stanza && (stanza.candles || []).includes(sessionId);
+          // Prima che la 30_ sia applicata la vista non ha candles_nomi: niente nomi, niente errore.
+          const nomiCandeleStanza = stanza
+            ? Object.values(stanza.candles_nomi || {}).filter(n => n && !isBlocked(n))
+            : [];
 
           // Nella stanza ci si segna all'ingresso e ogni 30 secondi: il numero conta chi si è fatto
           // vivo nell'ultimo minuto (28_). Finito l'appuntamento, la stanza si chiude da sola: la
@@ -4253,22 +4270,23 @@ ${ritual.description || ''}` })}
                                   ⚡ {ritual.energy}
                                 </button>
                               )}
-                              <button
-                                onClick={() => toggleCandle(ritual.id)}
+                              {/* Sulla scheda la candela si conta soltanto: si accende nella stanza,
+                                  durante il rituale, dove si prega insieme. */}
+                              <span
+                                data-test="card-candles"
                                 className="px-4"
-                                aria-label={isCandleLit ? t.rituals.candleExtinguish : t.rituals.candleLight}
-                                title={isCandleLit ? t.rituals.candleExtinguish : t.rituals.candleLight}
                                 style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '0.25rem',
                                   borderRadius: '0.75rem',
                                   border: isCandleLit ? '1px solid rgba(251,191,36,0.7)' : '1px solid rgba(255,255,255,0.2)',
                                   background: isCandleLit ? 'rgba(251,191,36,0.18)' : 'rgba(255,255,255,0.06)',
-                                  color: '#fff',
-                                  cursor: 'pointer',
-                                  transition: 'all 0.2s'
+                                  color: '#fff'
                                 }}
                               >
                                 <span style={{filter: isCandleLit ? 'none' : 'grayscale(1) opacity(0.6)'}}>🕯️</span> {candleCount}
-                              </button>
+                              </span>
                               {/* Solo a chi l'ha creato, e solo finche' non e' iniziato: dentro
                                   un rituale in corso c'e' gente che sta meditando, e non deve
                                   vederselo sparire sotto gli occhi. */}
@@ -5867,7 +5885,11 @@ ${ritual.description || ''}` })}
                     </div>
                   )}
                   <div style={{display: 'flex', gap: '0.75rem'}}>
-                    <button data-test="room-candle" onClick={() => toggleCandle(stanza.id)} className="btn-secondary px-4">
+                    <button data-test="room-candle" onClick={() => toggleCandle(stanza.id)} className="btn-secondary px-4"
+                      aria-pressed={candelaMiaStanza}
+                      aria-label={candelaMiaStanza ? t.rituals.candleExtinguish : t.rituals.candleLight}
+                      title={candelaMiaStanza ? t.rituals.candleExtinguish : t.rituals.candleLight}
+                      style={candelaMiaStanza ? {border: '1px solid rgba(251,191,36,0.7)', background: 'rgba(251,191,36,0.18)'} : undefined}>
                       🕯️ {(stanza.candles || []).length}
                     </button>
                     {/* Il 🔊 dell'intestazione resta sotto la stanza a tutto schermo: senza questo
@@ -5885,6 +5907,13 @@ ${ritual.description || ''}` })}
                       {musicMuted ? '🔇' : (musicaInAttesaDiGesto ? '🔈' : '🔊')}
                     </button>
                   </div>
+                  {/* Chi ha acceso una candela in questo appuntamento (la vista azzera i nomi di
+                      quelli passati). I bloccati non si mostrano, come altrove nell'app. */}
+                  {nomiCandeleStanza.length > 0 && (
+                    <div data-test="room-candle-names" style={{color: 'rgba(251,191,36,0.9)', textAlign: 'center', maxWidth: '40rem'}}>
+                      {t.rituals.candlesLitBy}: {nomiCandeleStanza.join(', ')}
+                    </div>
+                  )}
                 </div>
               )}
               {sogliaAperta && ritualeLive && (

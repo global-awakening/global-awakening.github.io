@@ -129,10 +129,14 @@ async function parteB(db, { c, s }) {
   check((await vista(c.id)).candles.length === 0, 'vista: la candela di ieri non si vede oggi');
   await db.query(`SELECT * FROM toggle_ritual_candle($1, 'nuova')`, [c.id]);
   check(JSON.stringify((await vista(c.id)).candles) === '["nuova"]', 'toggle: azzera ieri e accende oggi');
-  // Rituale singolo esistente (candles_occorrenza NULL): le candele degli altri restano.
-  await db.query(`UPDATE rituals SET candles = '["a"]', candles_occorrenza = NULL WHERE id = $1`, [s.id]);
-  await db.query(`SELECT * FROM toggle_ritual_candle($1, 'b')`, [s.id]);
-  check(JSON.stringify((await vista(s.id)).candles) === '["a","b"]', 'singolo: la candela di un altro non si spegne');
+  // Rituale singolo esistente (candles_occorrenza NULL): le candele degli altri restano. Dalla 30_
+  // la candela si accende solo durante l'appuntamento: serve un singolo in corso (s è futuro).
+  const t1 = new Date(Date.now() - 60000);
+  const sl = (await db.query(`SELECT * FROM create_ritual('Ospite','singlive','Singolo in corso','','consciousness',11,$1,$2,30,NULL)`,
+    [t1.toISOString().slice(0, 10), t1.toISOString().slice(11, 16)])).rows[0];
+  await db.query(`UPDATE rituals SET candles = '["a"]', candles_occorrenza = NULL WHERE id = $1`, [sl.id]);
+  await db.query(`SELECT * FROM toggle_ritual_candle($1, 'b')`, [sl.id]);
+  check(JSON.stringify((await vista(sl.id)).candles) === '["a","b"]', 'singolo: la candela di un altro non si spegne');
 
   // Presenze.
   check((await db.query(`SELECT segna_presenza_rituale($1, 'p1') AS n`, [c.id])).rows[0].n === 1, 'presenza: 1 persona qui adesso');
@@ -184,12 +188,13 @@ async function parteB(db, { c, s }) {
 // 29_: la funzione degli appuntamenti è aperta alla chiave pubblica e accetta una riga inventata.
 // Senza tetto, un ciclo dal 1900 al 2100 faceva calcolare 73.050 giorni a ogni chiamata.
 async function parteC(db) {
+  // La riga costruita a mano ha anche candles_nomi (30_), l'ultima colonna di rituals.
   const inventata = `ROW(1, 'x', 'x', 'x', NULL, 'x', 1, '1900-01-01', '07:00', 10, '[]'::jsonb, 0, now(), '[]'::jsonb,
-    ARRAY[1,2,3,4,5,6,7]::smallint[], DATE '2100-12-31', 'UTC', TIME '07:00', DATE '1900-01-01', NULL, NULL)::rituals`;
+    ARRAY[1,2,3,4,5,6,7]::smallint[], DATE '2100-12-31', 'UTC', TIME '07:00', DATE '1900-01-01', NULL, NULL, '{}'::jsonb)::rituals`;
   await db.query(`SET ROLE anon`);
   const n = await db.query(`SELECT count(*)::int AS n FROM rituale_occorrenze(${inventata})`).then(r => r.rows[0].n, e => e.message);
   const senzaDate = await db.query(`SELECT count(*)::int AS n FROM rituale_occorrenze(ROW(1, 'x', 'x', 'x', NULL, 'x', 1, '1900-01-01', '07:00', 10, '[]'::jsonb, 0, now(), '[]'::jsonb,
-    ARRAY[1]::smallint[], NULL, 'UTC', TIME '07:00', NULL, NULL, NULL)::rituals)`).then(r => r.rows[0].n, e => e.message);
+    ARRAY[1]::smallint[], NULL, 'UTC', TIME '07:00', NULL, NULL, NULL, '{}'::jsonb)::rituals)`).then(r => r.rows[0].n, e => e.message);
   await db.query(`RESET ROLE`);
   check(typeof n === 'number' && n > 0 && n <= 367, '29_: anon con una riga 1900→2100 ottiene al massimo 367 appuntamenti', n);
   check(senzaDate === 0, '29_: riga ricorrente senza date → nessun appuntamento', senzaDate);

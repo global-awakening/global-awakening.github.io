@@ -5,7 +5,8 @@
  * Le regole vere (quali giorni, quale appuntamento è «adesso», chi può fermare) stanno nel
  * database e sono provate da test-rituali-ricorrenti.js. Qui si prova quello che vede chi usa
  * l'app: la riga «giorno N di M», Partecipa/Lascia, la stanza con la preghiera in grande e il
- * numero di chi c'è adesso, l'apertura dalla notifica, il pulsante Ferma.
+ * numero di chi c'è adesso, la candela (solo nella stanza, con i nomi di chi l'ha accesa),
+ * l'apertura dalla notifica, il pulsante Ferma.
  *
  * Due persone, due contesti di browser distinti (A crea, B partecipa): due schede dello stesso
  * contesto condividerebbero localStorage, cioè la stessa identità di ospite.
@@ -160,6 +161,20 @@ const apriRituali = async (page) => {
       const accesa = await candela.filter({ hasText: /\b1\b/ })
         .waitFor({ state: 'visible', timeout: 10000 }).then(() => true).catch(() => false);
       check(accesa, 'la candela nella stanza risulta accesa (1)', await candela.innerText().catch(() => ''));
+      check(await candela.getAttribute('aria-pressed').catch(() => null) === 'true',
+        'la candela accesa è segnata come premuta (aria-pressed)');
+      // 30_: sotto la candela, chi l'ha accesa in questo appuntamento.
+      const nomi = pageB.locator('[data-test="room-candle-names"]');
+      const conNome = await nomi.filter({ hasText: NICK_B })
+        .waitFor({ state: 'visible', timeout: 10000 }).then(() => true).catch(() => false);
+      check(conNome, 'sotto la candela compare il nome di B', await nomi.innerText().catch(() => ''));
+      // Sulla scheda la candela si conta soltanto: nessun pulsante per accenderla.
+      const contatore = schedaB.locator('[data-test="card-candles"]');
+      const tag = await contatore.evaluate((el) => el.tagName).catch((e) => e.message);
+      check(tag === 'SPAN' && /\b1\b/.test(await contatore.textContent().catch(() => '')),
+        'la scheda mostra «🕯️ 1» come indicazione, non come pulsante', tag);
+      const pulsantiCandela = await schedaB.locator('button:not([data-test="open-room"])').filter({ hasText: '🕯️' }).count();
+      check(pulsantiCandela === 0, "sulla scheda non c'è un pulsante candela", pulsantiCandela);
       const ancoraGiorno2 = async (quando) => {
         check(await stanza.isVisible(), `${quando} la stanza è ancora aperta`);
         const testo = await schedaB.locator('[data-test="ritual-recurrence"]').textContent().catch(() => '');

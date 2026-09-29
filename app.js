@@ -489,6 +489,8 @@ const translations = {
       sendEnergy: "Send Energy",
       candleLight: "Light a candle",
       candleExtinguish: "Extinguish your candle",
+      candlesLitBy: "Candles lit by",
+      candleNotLive: "The candle can be lit during the ritual.",
       modalTitle: "Create Ritual",
       ritualName: "Ritual Name",
       description: "Description",
@@ -886,6 +888,8 @@ const translations = {
       sendEnergy: "Invia Energia",
       candleLight: "Accendi una candela",
       candleExtinguish: "Spegni la tua candela",
+      candlesLitBy: "Candele accese da",
+      candleNotLive: "La candela si accende durante il rituale.",
       modalTitle: "Crea Rituale",
       ritualName: "Nome Rituale",
       description: "Descrizione",
@@ -3459,8 +3463,13 @@ function GlobalAwakeningPlatform() {
       error
     } = await supabase.rpc('toggle_ritual_candle', {
       p_ritual_id: ritualId,
-      p_session_id: sessionId
+      p_session_id: sessionId,
+      p_nickname: nickname
     });
+    if (error && (error.message || '').includes('not_live')) {
+      showErrorToast(t.rituals.candleNotLive);
+      return;
+    }
     if (error || !data || data.length === 0) {
       showErrorToast();
       return;
@@ -3516,6 +3525,8 @@ function GlobalAwakeningPlatform() {
     if (r && getRitualStatus(r) === 'live') setStanzaId(r.id);
     setRitualeDaAprire(null);
   }, [ritualeDaAprire, rituals, showNicknamePrompt]);
+  const candelaMiaStanza = !!stanza && (stanza.candles || []).includes(sessionId);
+  const nomiCandeleStanza = stanza ? Object.values(stanza.candles_nomi || {}).filter(n => n && !isBlocked(n)) : [];
   const stanzaLive = !!stanza && getRitualStatus(stanza) === 'live';
   React.useEffect(() => {
     setPresentiStanza(null);
@@ -4696,18 +4707,17 @@ ${ritual.description || ''}`
     }, t.rituals.enterRoom, " \uD83D\uDD6F\uFE0F"), isLive && React.createElement("button", {
       onClick: () => sendEnergy(ritual.id),
       className: "btn-secondary px-4"
-    }, "\u26A1 ", ritual.energy), React.createElement("button", {
-      onClick: () => toggleCandle(ritual.id),
+    }, "\u26A1 ", ritual.energy), React.createElement("span", {
+      "data-test": "card-candles",
       className: "px-4",
-      "aria-label": isCandleLit ? t.rituals.candleExtinguish : t.rituals.candleLight,
-      title: isCandleLit ? t.rituals.candleExtinguish : t.rituals.candleLight,
       style: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '0.25rem',
         borderRadius: '0.75rem',
         border: isCandleLit ? '1px solid rgba(251,191,36,0.7)' : '1px solid rgba(255,255,255,0.2)',
         background: isCandleLit ? 'rgba(251,191,36,0.18)' : 'rgba(255,255,255,0.06)',
-        color: '#fff',
-        cursor: 'pointer',
-        transition: 'all 0.2s'
+        color: '#fff'
       }
     }, React.createElement("span", {
       style: {
@@ -7283,7 +7293,14 @@ ${ritual.description || ''}`
   }, React.createElement("button", {
     "data-test": "room-candle",
     onClick: () => toggleCandle(stanza.id),
-    className: "btn-secondary px-4"
+    className: "btn-secondary px-4",
+    "aria-pressed": candelaMiaStanza,
+    "aria-label": candelaMiaStanza ? t.rituals.candleExtinguish : t.rituals.candleLight,
+    title: candelaMiaStanza ? t.rituals.candleExtinguish : t.rituals.candleLight,
+    style: candelaMiaStanza ? {
+      border: '1px solid rgba(251,191,36,0.7)',
+      background: 'rgba(251,191,36,0.18)'
+    } : undefined
   }, "\uD83D\uDD6F\uFE0F ", (stanza.candles || []).length), React.createElement("button", {
     "data-test": "room-music",
     onClick: () => {
@@ -7293,7 +7310,14 @@ ${ritual.description || ''}`
     className: "btn-secondary px-4",
     title: musicaInAttesaDiGesto ? t.musicTap : undefined,
     "aria-label": musicaInAttesaDiGesto ? t.musicTap : musicMuted ? t.musicUnmute : t.musicMute
-  }, musicMuted ? '🔇' : musicaInAttesaDiGesto ? '🔈' : '🔊'))), sogliaAperta && ritualeLive && React.createElement("div", {
+  }, musicMuted ? '🔇' : musicaInAttesaDiGesto ? '🔈' : '🔊')), nomiCandeleStanza.length > 0 && React.createElement("div", {
+    "data-test": "room-candle-names",
+    style: {
+      color: 'rgba(251,191,36,0.9)',
+      textAlign: 'center',
+      maxWidth: '40rem'
+    }
+  }, t.rituals.candlesLitBy, ": ", nomiCandeleStanza.join(', '))), sogliaAperta && ritualeLive && React.createElement("div", {
     "data-test": "soglia-rituale",
     role: "button",
     tabIndex: 0,
