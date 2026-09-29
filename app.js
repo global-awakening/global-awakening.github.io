@@ -453,6 +453,7 @@ const translations = {
       stopYes: "Stop",
       stopNo: "Let it continue",
       stopFailed: "Could not stop the cycle.",
+      reloginNeeded: "To continue, please sign in again: use “Forgot password?” to choose a new password.",
       room: "Ritual room",
       peopleHere: n => n === 1 ? "1 person here now" : `${n} people here now`,
       closeRoom: "Close",
@@ -849,6 +850,7 @@ const translations = {
       stopYes: "Ferma",
       stopNo: "Lascialo andare",
       stopFailed: "Non è stato possibile fermare il ciclo.",
+      reloginNeeded: "Per continuare accedi di nuovo: usa «Password dimenticata?» per scegliere una nuova password.",
       room: "Stanza del rituale",
       peopleHere: n => n === 1 ? "1 persona qui adesso" : `${n} persone qui adesso`,
       closeRoom: "Chiudi",
@@ -3428,6 +3430,7 @@ function GlobalAwakeningPlatform() {
       return prev.some(r => r.id === id) ? prev.map(r => r.id === id ? riga : r) : [riga, ...prev];
     });
   };
+  const messaggioErroreRituale = (error, generico) => (error && error.message || '').includes('Auth failed') ? t.rituals.reloginNeeded : generico;
   const leaveRitual = async ritualId => {
     const {
       error
@@ -3437,7 +3440,7 @@ function GlobalAwakeningPlatform() {
       p_password_hash: passwordHash || ''
     });
     if (error) {
-      setErrorToast(t.rituals.leaveFailed);
+      setErrorToast(messaggioErroreRituale(error, t.rituals.leaveFailed));
       return;
     }
     await rileggiRituale(ritualId);
@@ -3490,7 +3493,7 @@ function GlobalAwakeningPlatform() {
       p_password_hash: passwordHash || ''
     });
     if (error) {
-      setErrorToast(t.rituals.stopFailed);
+      setErrorToast(messaggioErroreRituale(error, t.rituals.stopFailed));
       return;
     }
     await rileggiRituale(ritualId);
@@ -4619,7 +4622,15 @@ function GlobalAwakeningPlatform() {
         color: '#c4b5fd'
       }
     }, "\uD83D\uDD01 ", descriviRipetizione(ritual), " \xB7 ", t.rituals.dayOf(ritual.occorrenza_numero, ritual.occorrenze_totali)), React.createElement("p", {
-      className: "text-secondary text-sm"
+      className: "text-secondary text-sm",
+      "data-test": "ritual-desc",
+      style: {
+        display: '-webkit-box',
+        WebkitLineClamp: 3,
+        WebkitBoxOrient: 'vertical',
+        overflow: 'hidden',
+        whiteSpace: 'pre-line'
+      }
     }, ritual.description), ritual.creator && React.createElement("span", {
       className: "text-xs",
       style: {
@@ -7264,11 +7275,25 @@ ${ritual.description || ''}`
       maxWidth: '40rem',
       textAlign: 'center'
     }
-  }, stanza.description), React.createElement("button", {
+  }, stanza.description), React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: '0.75rem'
+    }
+  }, React.createElement("button", {
     "data-test": "room-candle",
     onClick: () => toggleCandle(stanza.id),
     className: "btn-secondary px-4"
-  }, "\uD83D\uDD6F\uFE0F ", (stanza.candles || []).length)), sogliaAperta && ritualeLive && React.createElement("div", {
+  }, "\uD83D\uDD6F\uFE0F ", (stanza.candles || []).length), React.createElement("button", {
+    "data-test": "room-music",
+    onClick: () => {
+      if (Date.now() - sbloccoMusicaRef.current < 1000) return;
+      toggleMusic();
+    },
+    className: "btn-secondary px-4",
+    title: musicaInAttesaDiGesto ? t.musicTap : undefined,
+    "aria-label": musicaInAttesaDiGesto ? t.musicTap : musicMuted ? t.musicUnmute : t.musicMute
+  }, musicMuted ? '🔇' : musicaInAttesaDiGesto ? '🔈' : '🔊'))), sogliaAperta && ritualeLive && React.createElement("div", {
     "data-test": "soglia-rituale",
     role: "button",
     tabIndex: 0,

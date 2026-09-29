@@ -52,7 +52,8 @@ async function applicaFile(db, rel) {
   await db.exec(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
 }
 
-async function creaDbLocale({ con28 = true } = {}) {
+// con29: il tetto agli appuntamenti (29_) sta sopra la 28_, quindi segue la 28_ se non detto altro.
+async function creaDbLocale({ con28 = true, con29 = con28 } = {}) {
   const { PGlite } = await import('@electric-sql/pglite');
   const db = new PGlite();
   await db.exec(`SET TIME ZONE 'UTC';`);
@@ -62,6 +63,7 @@ async function creaDbLocale({ con28 = true } = {}) {
   await applicaFile(db, 'supabase/sql/11_rpc_validation_hardening.sql'); // join, energia, candela
   await applicaFile(db, 'supabase/sql/25_cancella_rituale.sql');      // delete_ritual
   if (con28) await applicaFile(db, 'supabase/sql/28_rituali_ricorrenti.sql');
+  if (con28 && con29) await applicaFile(db, 'supabase/sql/29_tetto_occorrenze.sql');
   return db;
 }
 

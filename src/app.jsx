@@ -251,6 +251,7 @@
               stop: "Stop", stopTitle: "Stop the cycle?",
               stopBody: "The cycle stops: there will be no more sessions. The current one, if any, ends normally.",
               stopYes: "Stop", stopNo: "Let it continue", stopFailed: "Could not stop the cycle.",
+              reloginNeeded: "To continue, please sign in again: use “Forgot password?” to choose a new password.",
               room: "Ritual room", peopleHere: (n) => n === 1 ? "1 person here now" : `${n} people here now`,
               closeRoom: "Close", enterRoom: "Enter", descCounter: (n) => `${n} characters left`,
               recurrenceErrors: {
@@ -617,6 +618,7 @@
               stop: "Ferma", stopTitle: "Fermare il ciclo?",
               stopBody: "Il ciclo si ferma: non ci saranno altri appuntamenti. Quello in corso, se c'è, finisce normalmente.",
               stopYes: "Ferma", stopNo: "Lascialo andare", stopFailed: "Non è stato possibile fermare il ciclo.",
+              reloginNeeded: "Per continuare accedi di nuovo: usa «Password dimenticata?» per scegliere una nuova password.",
               room: "Stanza del rituale", peopleHere: (n) => n === 1 ? "1 persona qui adesso" : `${n} persone qui adesso`,
               closeRoom: "Chiudi", enterRoom: "Entra", descCounter: (n) => `ancora ${n} caratteri`,
               recurrenceErrors: {
@@ -3298,12 +3300,18 @@
             });
           };
 
+          // Chi è registrato ma ha la password azzerata (27b_, la falla account) ha ancora in
+          // memoria una credenziale vecchia: il database risponde «Auth failed» e un generico
+          // «non è stato possibile» la lascerebbe senza sapere cosa fare. Le si dice come uscirne.
+          const messaggioErroreRituale = (error, generico) =>
+            ((error && error.message) || '').includes('Auth failed') ? t.rituals.reloginNeeded : generico;
+
           // Lasciare un rituale a cui ci si era iscritti (il creatore non può: deve cancellarlo o fermarlo).
           const leaveRitual = async (ritualId) => {
             const { error } = await supabase.rpc('leave_ritual', {
               p_ritual_id: ritualId, p_session_id: sessionId, p_password_hash: passwordHash || ''
             });
-            if (error) { setErrorToast(t.rituals.leaveFailed); return; }
+            if (error) { setErrorToast(messaggioErroreRituale(error, t.rituals.leaveFailed)); return; }
             await rileggiRituale(ritualId);
           };
 
@@ -3348,7 +3356,7 @@
             const { error } = await supabase.rpc('ferma_rituale', {
               p_ritual_id: ritualId, p_session_id: sessionId, p_password_hash: passwordHash || ''
             });
-            if (error) { setErrorToast(t.rituals.stopFailed); return; }
+            if (error) { setErrorToast(messaggioErroreRituale(error, t.rituals.stopFailed)); return; }
             await rileggiRituale(ritualId);
           };
 
@@ -4188,7 +4196,9 @@
                                     🔁 {descriviRipetizione(ritual)} · {t.rituals.dayOf(ritual.occorrenza_numero, ritual.occorrenze_totali)}
                                   </p>
                                 )}
-                                <p className="text-secondary text-sm">{ritual.description}</p>
+                                {/* Sulla scheda bastano tre righe: il testo intero (fino a 2000 caratteri) si legge nella stanza. */}
+                                <p className="text-secondary text-sm" data-test="ritual-desc"
+                                  style={{display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', whiteSpace: 'pre-line'}}>{ritual.description}</p>
                                 {ritual.creator && (
                                   <span
                                     className="text-xs"
@@ -5856,9 +5866,25 @@ ${ritual.description || ''}` })}
                       {stanza.description}
                     </div>
                   )}
-                  <button data-test="room-candle" onClick={() => toggleCandle(stanza.id)} className="btn-secondary px-4">
-                    🕯️ {(stanza.candles || []).length}
-                  </button>
+                  <div style={{display: 'flex', gap: '0.75rem'}}>
+                    <button data-test="room-candle" onClick={() => toggleCandle(stanza.id)} className="btn-secondary px-4">
+                      🕯️ {(stanza.candles || []).length}
+                    </button>
+                    {/* Il 🔊 dell'intestazione resta sotto la stanza a tutto schermo: senza questo
+                        pulsante, per silenziare la musica bisognerebbe uscire dalla stanza.
+                        Stessa guardia del pulsante in alto: il click nato dal tocco che ha
+                        appena sbloccato la musica non deve spegnerla. */}
+                    <button data-test="room-music"
+                      onClick={() => {
+                        if (Date.now() - sbloccoMusicaRef.current < 1000) return;
+                        toggleMusic();
+                      }}
+                      className="btn-secondary px-4"
+                      title={musicaInAttesaDiGesto ? t.musicTap : undefined}
+                      aria-label={musicaInAttesaDiGesto ? t.musicTap : (musicMuted ? t.musicUnmute : t.musicMute)}>
+                      {musicMuted ? '🔇' : (musicaInAttesaDiGesto ? '🔈' : '🔊')}
+                    </button>
+                  </div>
                 </div>
               )}
               {sogliaAperta && ritualeLive && (

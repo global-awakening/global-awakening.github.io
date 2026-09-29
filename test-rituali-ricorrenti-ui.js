@@ -170,6 +170,27 @@ const apriRituali = async (page) => {
       await pageB.waitForTimeout(11000);
       await ancoraGiorno2('dopo un ricaricamento');
 
+      // Il 🔊 dell'intestazione sta sotto la stanza: dentro la stanza serve il suo pulsante.
+      // Se la musica aspettava un gesto, il primo tocco la sblocca soltanto (guardia di 1 s):
+      // per questo si riprova una seconda volta prima di dire che non cambia.
+      const musica = pageB.locator('[data-test="room-music"]');
+      const etichetta = async () => (await musica.getAttribute('aria-label').catch(() => '')) || '';
+      const prima = await etichetta();
+      check(await musica.isVisible().catch(() => false) && /musica|music/i.test(prima),
+        "nella stanza c'è il pulsante della musica", prima);
+      let cambiata = false;
+      for (let i = 0; i < 2 && !cambiata; i++) {
+        await pageB.waitForTimeout(1100);
+        await musica.click().catch(() => {});
+        await pageB.waitForTimeout(300);
+        const dopo = await etichetta();
+        cambiata = dopo !== prima && !/Tocca|Tap/.test(dopo);
+      }
+      check(cambiata, 'il pulsante della musica nella stanza silenzia / riattiva', await etichetta());
+      const clamp = await schedaB.locator('[data-test="ritual-desc"]')
+        .evaluate((el) => getComputedStyle(el).webkitLineClamp).catch((e) => e.message);
+      check(String(clamp) === '3', 'sulla scheda la descrizione si ferma a 3 righe', clamp);
+
       await pageB.locator('[data-test="room-close"]').click();
       await stanza.waitFor({ state: 'detached', timeout: 5000 })
         .then(() => pass('«Chiudi» chiude la stanza'))

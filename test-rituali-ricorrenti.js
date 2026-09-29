@@ -57,13 +57,26 @@ async function crea(tag, extra) {
 (async () => {
   console.log('\n— Rituali ricorrenti sul database vero —');
   try {
-    // 1. Ora legale sul server vero: le 07:00 di Roma restano le 07:00 dopo il 25/10.
+    // 1. Ora legale sul server vero: le 07:00 di Roma restano le 07:00 dopo il cambio ora.
+    //    Date calcolate, non fisse: con date fisse (23–27/10/2026) dal 28/10 il rituale nasceva
+    //    già finito, e la pulizia di qualunque app aperta poteva cancellarlo prima della lettura.
+    //    Si prende la prossima fine dell'ora legale europea (ultima domenica di ottobre) ancora
+    //    abbastanza lontana, e i 5 giorni intorno: due prima (05:00Z) e tre da domenica (06:00Z).
     {
-      const r = await crea('a', { p_date: '2026-10-23', p_time: '05:00', p_ripeti_giorni: [1, 2, 3, 4, 5, 6, 7],
-                                  p_ripeti_fino: '2026-10-27', p_fuso: 'Europe/Rome' });
+      const ultimaDomenicaOttobre = (anno) => {
+        const d = new Date(Date.UTC(anno, 9, 31));
+        d.setUTCDate(31 - d.getUTCDay());
+        return d;
+      };
+      let anno = new Date().getUTCFullYear();
+      let domenica = ultimaDomenicaOttobre(anno);
+      // Il primo giorno è venerdì (domenica - 2): deve essere ancora futuro, con un giorno di margine.
+      if (domenica.getTime() - 2 * 86400000 <= Date.now() + 86400000) domenica = ultimaDomenicaOttobre(++anno);
+      const giornoDa = (n) => new Date(domenica.getTime() + n * 86400000).toISOString().slice(0, 10);
+      const r = await crea('a', { p_date: giornoDa(-2), p_time: '05:00', p_ripeti_giorni: [1, 2, 3, 4, 5, 6, 7],
+                                  p_ripeti_fino: giornoDa(2), p_fuso: 'Europe/Rome' });
       const occ = await rpc('get_ritual_occurrences', { p_ritual_id: r.id });
-      const attese = ['2026-10-23T05:00:00', '2026-10-24T05:00:00', '2026-10-25T06:00:00',
-                      '2026-10-26T06:00:00', '2026-10-27T06:00:00'];
+      const attese = [-2, -1, 0, 1, 2].map((n) => `${giornoDa(n)}T${n < 0 ? '05' : '06'}:00:00`);
       const viste = Array.isArray(occ.body) ? occ.body.map((s) => new Date(s).toISOString().slice(0, 19)) : occ.body;
       check(ok(occ) && JSON.stringify(viste) === JSON.stringify(attese),
         'get_ritual_occurrences: 5 appuntamenti, 07:00 di Roma anche dopo il cambio ora', occ.body);

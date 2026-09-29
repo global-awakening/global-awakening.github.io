@@ -4,7 +4,8 @@
  * Svegliata ogni minuto dal cron pg_cron (vedi 23_cron_push.sql).
  *
  * Si REGISTRA l'invio PRIMA di spedirlo, sfruttando la chiave primaria composta
- * (rituale, telefono, tipo) di `ritual_notifications_sent`: se l'INSERT va in conflitto,
+ * (rituale, appuntamento, telefono, tipo — l'appuntamento dalla 28_) di
+ * `ritual_notifications_sent`: se l'INSERT va in conflitto,
  * un'altra esecuzione ha già preso quella notifica e si salta.
  *
  * La prenotazione si libera SOLO quando abbiamo una risposta esplicita che dice «non

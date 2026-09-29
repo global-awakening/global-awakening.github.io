@@ -181,6 +181,20 @@ async function parteB(db, { c, s }) {
   check(!rilancio, '28_ si rilancia con una riga epoch accanto a una risolta', rilancio);
 }
 
+// 29_: la funzione degli appuntamenti è aperta alla chiave pubblica e accetta una riga inventata.
+// Senza tetto, un ciclo dal 1900 al 2100 faceva calcolare 73.050 giorni a ogni chiamata.
+async function parteC(db) {
+  const inventata = `ROW(1, 'x', 'x', 'x', NULL, 'x', 1, '1900-01-01', '07:00', 10, '[]'::jsonb, 0, now(), '[]'::jsonb,
+    ARRAY[1,2,3,4,5,6,7]::smallint[], DATE '2100-12-31', 'UTC', TIME '07:00', DATE '1900-01-01', NULL, NULL)::rituals`;
+  await db.query(`SET ROLE anon`);
+  const n = await db.query(`SELECT count(*)::int AS n FROM rituale_occorrenze(${inventata})`).then(r => r.rows[0].n, e => e.message);
+  const senzaDate = await db.query(`SELECT count(*)::int AS n FROM rituale_occorrenze(ROW(1, 'x', 'x', 'x', NULL, 'x', 1, '1900-01-01', '07:00', 10, '[]'::jsonb, 0, now(), '[]'::jsonb,
+    ARRAY[1]::smallint[], NULL, 'UTC', TIME '07:00', NULL, NULL, NULL)::rituals)`).then(r => r.rows[0].n, e => e.message);
+  await db.query(`RESET ROLE`);
+  check(typeof n === 'number' && n > 0 && n <= 367, '29_: anon con una riga 1900→2100 ottiene al massimo 367 appuntamenti', n);
+  check(senzaDate === 0, '29_: riga ricorrente senza date → nessun appuntamento', senzaDate);
+}
+
 (async () => {
   const db = await creaDbLocale();
   // Backfill su righe nate PRIMA della 28_ (PK a 3 colonne).
@@ -192,8 +206,11 @@ async function parteB(db, { c, s }) {
   await require('./scripts/pg-locale').applicaFile(vecchio, 'supabase/sql/28_rituali_ricorrenti.sql');
   const vocc = (await vecchio.query(`SELECT occorrenza FROM ritual_notifications_sent`)).rows[0].occorrenza;
   check(iso(vocc) === `${giorno(60)}T07:00:00.000Z`, "backfill: la riga precedente alla 28_ prende l'inizio del rituale", iso(vocc));
+  // Prima delle altre parti: parteB rilancia la 28_, che rimette la funzione senza tetto.
+  await parteC(db);
   const ctx = await parteA(db);
   await parteB(db, ctx);
+  check(!(await errore(require('./scripts/pg-locale').applicaFile(db, 'supabase/sql/29_tetto_occorrenze.sql'))), '29_ si rilancia senza errori (idempotente)');
   const { applicaFile } = require('./scripts/pg-locale');
   check(!(await errore(applicaFile(db, 'supabase/sql/28_rituali_ricorrenti.sql'))), '28_ si rilancia senza errori (idempotente)');
   console.log(`\n${passed} passati, ${failed} falliti`);
