@@ -127,7 +127,9 @@ async function parteB(db, { c, s }) {
   const ieri = new Date(Date.now() - 86400000 - 60000).toISOString();
   await db.query(`UPDATE rituals SET candles = '["vecchia"]', candles_occorrenza = $2 WHERE id = $1`, [c.id, ieri]);
   check((await vista(c.id)).candles.length === 0, 'vista: la candela di ieri non si vede oggi');
+  await db.query(`SELECT segna_presenza_rituale($1, 'nuova')`, [c.id]);  // dalla 30_ si accende solo da presenti
   await db.query(`SELECT * FROM toggle_ritual_candle($1, 'nuova')`, [c.id]);
+  await db.query(`DELETE FROM ritual_presence WHERE session_id = 'nuova'`);  // non conti fra le presenze provate sotto
   check(JSON.stringify((await vista(c.id)).candles) === '["nuova"]', 'toggle: azzera ieri e accende oggi');
   // Rituale singolo esistente (candles_occorrenza NULL): le candele degli altri restano. Dalla 30_
   // la candela si accende solo durante l'appuntamento: serve un singolo in corso (s è futuro).
@@ -135,6 +137,7 @@ async function parteB(db, { c, s }) {
   const sl = (await db.query(`SELECT * FROM create_ritual('Ospite','singlive','Singolo in corso','','consciousness',11,$1,$2,30,NULL)`,
     [t1.toISOString().slice(0, 10), t1.toISOString().slice(11, 16)])).rows[0];
   await db.query(`UPDATE rituals SET candles = '["a"]', candles_occorrenza = NULL WHERE id = $1`, [sl.id]);
+  await db.query(`SELECT segna_presenza_rituale($1, 'b')`, [sl.id]);  // dalla 30_ si accende solo da presenti
   await db.query(`SELECT * FROM toggle_ritual_candle($1, 'b')`, [sl.id]);
   check(JSON.stringify((await vista(sl.id)).candles) === '["a","b"]', 'singolo: la candela di un altro non si spegne');
 

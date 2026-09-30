@@ -2,6 +2,9 @@
 -- Rituali che si ripetono — 29/09/2026
 -- Spec: docs/superpowers/specs/2026-09-29-rituali-ricorrenti-design.md
 --
+-- ⚠️ Se si rilancia questa migration vanno rilanciate anche la 29_ e la 30_, in quest'ordine: la 28_
+-- rimette toggle_ritual_candle a due parametri (senza cancelli), leave_ritual e la vista senza i nomi.
+--
 -- Una sola riga per rituale, con la regola dentro. Gli appuntamenti non si copiano: li calcola
 -- rituale_occorrenze(), unica fonte. La vista rituali_correnti riscrive date/time con
 -- l'appuntamento corrente, così app, notifiche e pulizia continuano a ragionare su un istante

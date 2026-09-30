@@ -61,6 +61,7 @@ const okRejected = (r, m) => (r.status >= 400)
   console.log('— Input legittimi: devono essere ACCETTATI —');
   okAccepted(await rpc('join_ritual', { p_ritual_id: ritId, p_session_id: SID }), 'join valido');
   okAccepted(await rpc('send_ritual_energy', { p_ritual_id: ritId, p_amount: 10 }), 'energia valida (10)');
+  await rpc('segna_presenza_rituale', { p_ritual_id: ritId, p_session_id: SID });  // dalla 30_ si accende solo da presenti
   okAccepted(await rpc('toggle_ritual_candle', { p_ritual_id: ritId, p_session_id: SID }), 'candela valida');
 
   console.log('— Input illegittimi: devono essere RIFIUTATI —');

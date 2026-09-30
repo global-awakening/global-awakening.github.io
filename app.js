@@ -3458,16 +3458,25 @@ function GlobalAwakeningPlatform() {
     });
   };
   const toggleCandle = async ritualId => {
+    await supabase.rpc('segna_presenza_rituale', {
+      p_ritual_id: ritualId,
+      p_session_id: sessionId
+    });
     const {
       data,
       error
     } = await supabase.rpc('toggle_ritual_candle', {
       p_ritual_id: ritualId,
       p_session_id: sessionId,
-      p_nickname: nickname
+      p_nickname: nickname,
+      p_password_hash: passwordHash || ''
     });
     if (error && (error.message || '').includes('not_live')) {
       showErrorToast(t.rituals.candleNotLive);
+      return;
+    }
+    if (error && (error.message || '').includes('Auth failed')) {
+      showErrorToast(t.rituals.reloginNeeded);
       return;
     }
     if (error || !data || data.length === 0) {
@@ -3526,7 +3535,7 @@ function GlobalAwakeningPlatform() {
     setRitualeDaAprire(null);
   }, [ritualeDaAprire, rituals, showNicknamePrompt]);
   const candelaMiaStanza = !!stanza && (stanza.candles || []).includes(sessionId);
-  const nomiCandeleStanza = stanza ? Object.values(stanza.candles_nomi || {}).filter(n => n && !isBlocked(n)) : [];
+  const nomiCandeleStanza = stanza ? (stanza.candles || []).map(sid => (stanza.candles_nomi || {})[sid]).filter(n => n && !isBlocked(n)) : [];
   const stanzaLive = !!stanza && getRitualStatus(stanza) === 'live';
   React.useEffect(() => {
     setPresentiStanza(null);

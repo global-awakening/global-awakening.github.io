@@ -68,6 +68,9 @@ const nomiOf = (row) => (row && row[0] && row[0].candles_nomi) || null;
     }
 
     console.log('— Toggle —');
+    // Dalla 30_ si accende solo da presenti nella stanza (come fa l'app prima di accendere).
+    await rpc('segna_presenza_rituale', { p_ritual_id: ritId, p_session_id: SID1 });
+    await rpc('segna_presenza_rituale', { p_ritual_id: ritId, p_session_id: SID2 });
     let r = await rpc('toggle_ritual_candle', { p_ritual_id: ritId, p_session_id: SID1, p_nickname: NOME1 });
     let c = candlesOf(r);
     if (c && c.includes(SID1) && c.length === 1) pass('accendi -> candela presente, count 1');

@@ -3326,16 +3326,23 @@
           };
 
           // Il nome serve alla stanza per dire chi ha acceso la candela. Per un profilo registrato
-          // il database usa quello del profilo e ignora questo (30_candela_nella_stanza.sql).
+          // il database usa quello del profilo e ignora questo, ma chiede la credenziale
+          // (30_candela_nella_stanza.sql).
           const toggleCandle = async (ritualId) => {
+            // Il database accende solo a chi è nelle presenze della stanza (visto nell'ultimo
+            // minuto). La stanza si segna all'apertura, ma un tocco rapido può arrivare prima che
+            // quella chiamata sia finita: ci si segna qui, prima, e il flusso normale non si rompe.
+            await supabase.rpc('segna_presenza_rituale', { p_ritual_id: ritualId, p_session_id: sessionId });
             const { data, error } = await supabase.rpc('toggle_ritual_candle', {
               p_ritual_id: ritualId,
               p_session_id: sessionId,
-              p_nickname: nickname
+              p_nickname: nickname,
+              p_password_hash: passwordHash || ''
             });
             // not_live: l'appuntamento è finito mentre la stanza era aperta (o non è ancora
             // iniziato). Merita una frase sua, non un generico errore di connessione.
             if (error && (error.message || '').includes('not_live')) { showErrorToast(t.rituals.candleNotLive); return; }
+            if (error && (error.message || '').includes('Auth failed')) { showErrorToast(t.rituals.reloginNeeded); return; }
             if (error || !data || data.length === 0) { showErrorToast(); return; }
             await rileggiRituale(ritualId);
           };
@@ -3401,8 +3408,9 @@
           // La candela della stanza: accesa da me? e chi l'ha accesa in questo appuntamento.
           const candelaMiaStanza = !!stanza && (stanza.candles || []).includes(sessionId);
           // Prima che la 30_ sia applicata la vista non ha candles_nomi: niente nomi, niente errore.
+          // L'ordine è quello di accensione (l'array candles): un oggetto jsonb non lo conserva.
           const nomiCandeleStanza = stanza
-            ? Object.values(stanza.candles_nomi || {}).filter(n => n && !isBlocked(n))
+            ? (stanza.candles || []).map(sid => (stanza.candles_nomi || {})[sid]).filter(n => n && !isBlocked(n))
             : [];
 
           // Nella stanza ci si segna all'ingresso e ogni 30 secondi: il numero conta chi si è fatto
