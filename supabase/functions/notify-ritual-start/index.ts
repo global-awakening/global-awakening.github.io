@@ -24,7 +24,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0';
 import webpush from 'npm:web-push@3.6.7';
 import { classifica, istanteInizio } from './finestre.mjs';
-import { decidiDopoErrore } from './esito.mjs';
+// In _shared/ dal passo 0 degli inviti telepatia: la stessa decisione vale per le push d'invito.
+import { decidiDopoErrore } from '../_shared/esito.mjs';
 
 type Tipo = 'reminder' | 'start';
 

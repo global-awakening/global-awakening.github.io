@@ -7,7 +7,12 @@
  *
  * Esecuzione: node test-push-esito.js
  */
-const PERCORSO = './supabase/functions/notify-ritual-start/esito.mjs';
+// Dal passo 0 degli inviti telepatia (spec 2026-09-25 §4.2) il file sta in _shared/ e lo
+// importano sia notify-ritual-start sia notify-telepathy-invite: una copia sola, perché due
+// copie della logica che cancella gli abbonamenti divergerebbero.
+const PERCORSO = './supabase/functions/_shared/esito.mjs';
+const fs = require('fs');
+const path = require('path');
 
 let passati = 0, falliti = 0;
 const ok = (n) => { console.log('✅ ' + n); passati++; };
@@ -16,6 +21,15 @@ const atteso = (n, a, b) => (a === b ? ok(n) : ko(n, `atteso ${b}, ottenuto ${a}
 
 (async () => {
   const { decidiDopoErrore } = await import(PERCORSO);
+
+  // Nessuna seconda copia rimasta nelle cartelle delle funzioni.
+  const copie = fs.readdirSync(path.join(__dirname, 'supabase', 'functions'), { withFileTypes: true })
+    .filter((d) => d.isDirectory() && d.name !== '_shared')
+    .filter((d) => fs.existsSync(path.join(__dirname, 'supabase', 'functions', d.name, 'esito.mjs')))
+    .map((d) => d.name);
+  atteso('esito.mjs esiste solo in _shared', copie.join(','), '');
+  const indice = fs.readFileSync(path.join(__dirname, 'supabase/functions/notify-ritual-start/index.ts'), 'utf8');
+  atteso('notify-ritual-start importa da _shared', /from '\.\.\/_shared\/esito\.mjs'/.test(indice), true);
 
   // Gli unici due casi in cui il servizio push dichiara morto l'abbonamento.
   atteso('410 → cancella', decidiDopoErrore(410), 'cancella');
