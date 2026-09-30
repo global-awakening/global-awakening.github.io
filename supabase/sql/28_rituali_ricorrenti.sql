@@ -2,8 +2,11 @@
 -- Rituali che si ripetono — 29/09/2026
 -- Spec: docs/superpowers/specs/2026-09-29-rituali-ricorrenti-design.md
 --
--- ⚠️ Se si rilancia questa migration vanno rilanciate anche la 29_ e la 30_, in quest'ordine: la 28_
--- rimette toggle_ritual_candle a due parametri (senza cancelli), leave_ritual e la vista senza i nomi.
+-- ⚠️ Se si rilancia questa migration vanno rilanciate subito anche la 29_ e la 30_, in quest'ordine.
+-- Rilanciata da sola, la 28_ non sostituisce la toggle_ritual_candle della 30_ (quattro parametri):
+-- ne AGGIUNGE una seconda a due parametri, senza cancelli. Con due firme PostgREST non sa quale
+-- chiamare (ambiguità) e la candela va in errore per tutti finché non si rilanciano 29_ e 30_.
+-- Rimette anche leave_ritual e la vista rituali_correnti senza i nomi delle candele.
 --
 -- Una sola riga per rituale, con la regola dentro. Gli appuntamenti non si copiano: li calcola
 -- rituale_occorrenze(), unica fonte. La vista rituali_correnti riscrive date/time con

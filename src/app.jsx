@@ -286,6 +286,8 @@
               candleExtinguish: "Extinguish your candle",
               candlesLitBy: "Candles lit by",
               candleNotLive: "The candle can be lit during the ritual.",
+              candleNotPresent: "Enter the room to light the candle.",
+              candleTooMany: "The room is full of candles.",
               modalTitle: "Create Ritual",
               ritualName: "Ritual Name",
               description: "Description",
@@ -655,6 +657,8 @@
               candleExtinguish: "Spegni la tua candela",
               candlesLitBy: "Candele accese da",
               candleNotLive: "La candela si accende durante il rituale.",
+              candleNotPresent: "Entra nella stanza per accendere la candela.",
+              candleTooMany: "La stanza è piena di candele.",
               modalTitle: "Crea Rituale",
               ritualName: "Nome Rituale",
               description: "Descrizione",
@@ -3332,7 +3336,7 @@
             // Il database accende solo a chi è nelle presenze della stanza (visto nell'ultimo
             // minuto). La stanza si segna all'apertura, ma un tocco rapido può arrivare prima che
             // quella chiamata sia finita: ci si segna qui, prima, e il flusso normale non si rompe.
-            await supabase.rpc('segna_presenza_rituale', { p_ritual_id: ritualId, p_session_id: sessionId });
+            const presenza = await supabase.rpc('segna_presenza_rituale', { p_ritual_id: ritualId, p_session_id: sessionId });
             const { data, error } = await supabase.rpc('toggle_ritual_candle', {
               p_ritual_id: ritualId,
               p_session_id: sessionId,
@@ -3341,8 +3345,19 @@
             });
             // not_live: l'appuntamento è finito mentre la stanza era aperta (o non è ancora
             // iniziato). Merita una frase sua, non un generico errore di connessione.
-            if (error && (error.message || '').includes('not_live')) { showErrorToast(t.rituals.candleNotLive); return; }
-            if (error && (error.message || '').includes('Auth failed')) { showErrorToast(t.rituals.reloginNeeded); return; }
+            const motivo = (error && error.message) || '';
+            if (motivo.includes('not_live')) { showErrorToast(t.rituals.candleNotLive); return; }
+            if (motivo.includes('Auth failed')) { showErrorToast(t.rituals.reloginNeeded); return; }
+            if (motivo.includes('too_many_candles')) { showErrorToast(t.rituals.candleTooMany); return; }
+            // not_present: se la presenza appena chiesta è fallita, il motivo vero è quello (fuori
+            // orario, o la connessione); solo se è andata bene manca davvero l'ingresso nella stanza.
+            if (motivo.includes('not_present')) {
+              const motivoPresenza = (presenza && presenza.error && presenza.error.message) || '';
+              if (motivoPresenza.includes('not_live')) showErrorToast(t.rituals.candleNotLive);
+              else if (presenza && presenza.error) showErrorToast();
+              else showErrorToast(t.rituals.candleNotPresent);
+              return;
+            }
             if (error || !data || data.length === 0) { showErrorToast(); return; }
             await rileggiRituale(ritualId);
           };

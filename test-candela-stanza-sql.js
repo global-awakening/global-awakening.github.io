@@ -92,6 +92,25 @@ const vista = (db, id) => db.query(`SELECT * FROM rituali_correnti WHERE id = $1
   check(r.candles_nomi.lungo2 === 'y'.repeat(50), 'si pulisce prima di tagliare a 50', r.candles_nomi.lungo2);
   for (const sid of ['finto1', 'finto2', 'pulito', 'invisibile', 'lungo2']) await accendi(db, c.id, sid, null);
 
+  console.log('\n— 2e. nomi travestiti da un registrato —');
+  // Nel profilo: uno col nome di due parole, uno salvato con spazi attorno.
+  await db.query(`INSERT INTO profiles (session_id, nickname, email, password_hash) VALUES
+    ('reg3','Luna Nuova','l@test.com','hl'), ('reg4','  Cometa ','c@test.com','hc')`);
+  const travestiti = {
+    nbsp: 'Luna Nuova', ideografico: 'Luna　Nuova', doppio: 'Luna   Nuova', ogham: 'Luna Nuova',
+    wordjoiner: 'Au⁠rora', invisibili: 'Au⁡⁢⁣⁤rora', bom: '﻿Aurora',
+    morbido: 'Au­rora', cgj: 'Au͏rora', alm: 'Aurora؜', mvs: 'Au᠎rora',
+    hangul: 'ᅟᅠㅤﾠAurora', largo: 'Ａｕｒｏｒａ',
+    spaziprofilo: 'cometa', spaziprofilo2: ' Cometa　',
+  };
+  for (const [sid, nome] of Object.entries(travestiti)) {
+    r = await accendi(db, c.id, 't_' + sid, nome);
+    check(r.candles_nomi['t_' + sid] === 'Anonymous', `travestito (${sid}): Anonymous`, r.candles_nomi['t_' + sid]);
+  }
+  r = await accendi(db, c.id, 't_ok', 'Luna 　Piena');
+  check(r.candles_nomi.t_ok === 'Luna Piena', 'spazi Unicode diventano un solo spazio normale', r.candles_nomi.t_ok);
+  for (const sid of [...Object.keys(travestiti), 'ok']) await accendi(db, c.id, 't_' + sid, null);
+
   console.log('\n— 2c. la candela si accende solo da presenti —');
   const mAssente = await errore(accendi(db, c.id, 'assente', 'A', { presenza: false }));
   check(mAssente && mAssente.includes('not_present'), 'mai entrato nella stanza: not_present', mAssente);
@@ -156,6 +175,38 @@ const vista = (db, id) => db.query(`SELECT * FROM rituali_correnti WHERE id = $1
   check(r.candles.length === 499, 'col tetto raggiunto si può ancora spegnere', r.candles.length);
   r = await accendi(db, pieno.id, 'cinquecentouno', 'X');
   check(r.candles.length === 500 && r.candles.includes('cinquecentouno'), 'liberato un posto, si accende', r.candles.length);
+
+  console.log('\n— 2f. presenze piene: nessuno resta fuori —');
+  // 500 presenze finte (segna_presenza_rituale accetta qualunque session_id) riempiono il tetto
+  // della 28_: la presenza di chi arriva dopo non si scrive più. La candela non deve bloccarlo.
+  const affollato = await singolo(db, 'affollato', Date.now() - 60000);
+  const occA = (await db.query(`SELECT rituale_occorrenza_corrente(r) o FROM rituals r WHERE id = $1`, [affollato.id])).rows[0].o;
+  await db.query(`INSERT INTO ritual_presence (ritual_id, occorrenza, session_id)
+                  SELECT $1, $2, 'finta' || i FROM generate_series(1, 500) i`, [affollato.id, occA]);
+  const mVero = await errore(accendi(db, affollato.id, 'vero', 'Vero'));
+  const presenteVero = (await db.query(`SELECT 1 FROM ritual_presence WHERE ritual_id = $1 AND session_id = 'vero'`, [affollato.id])).rows.length;
+  check(presenteVero === 0, 'col tetto pieno la presenza del vero utente non si scrive (28_)', presenteVero);
+  check(!mVero, 'presenze piene: l\'utente vero accende comunque', mVero);
+  check((await vista(db, affollato.id)).candles_nomi.vero === 'Vero', 'e il suo nome si vede');
+  await db.query(`DELETE FROM ritual_presence WHERE ritual_id = $1 AND session_id = 'finta1'`, [affollato.id]);
+  const mSotto = await errore(accendi(db, affollato.id, 'fuori', 'F', { presenza: false }));
+  check(mSotto && mSotto.includes('not_present'), 'sotto il tetto il cancello torna: not_present', mSotto);
+
+  console.log('\n— 4. «in corso» uguale per presenza e candela —');
+  // Stessa risposta di segna_presenza_rituale (28_) per ogni durata, anche NULL (lo schema la
+  // vuole NOT NULL: qui si toglie il vincolo solo per provare che le due condizioni coincidono).
+  await db.query(`ALTER TABLE rituals ALTER COLUMN duration DROP NOT NULL`);
+  const esito = (p) => p.then(() => 'ok', e => (e.message.match(/not_live|not_present/) || [e.message])[0]);
+  for (const [nome, inizio, durata] of [['in corso', -60000, 30], ['appena finito', -120000, 1],
+                                         ['durata 0', -60000, 0], ['durata NULL', -60000, null]]) {
+    const rit = await singolo(db, 'dur_' + nome, Date.now() + inizio, 30);
+    await db.query(`UPDATE rituals SET duration = $2 WHERE id = $1`, [rit.id, durata]);
+    const ePres = await esito(db.query(`SELECT segna_presenza_rituale($1, 'dur')`, [rit.id]));
+    const eCand = await esito(db.query(`SELECT * FROM toggle_ritual_candle($1, 'dur', 'D', NULL)`, [rit.id]));
+    check(ePres === eCand, `${nome}: presenza e candela rispondono uguale`, { ePres, eCand });
+  }
+  await db.query(`DELETE FROM rituals WHERE creator_id LIKE 'dur_%'`);
+  await db.query(`ALTER TABLE rituals ALTER COLUMN duration SET NOT NULL`);
 
   console.log('\n— 3. cancellare l\'account toglie candele e nomi —');
   // Le tabelle che delete_my_account (22_, ridefinita nella 30_) tocca e lo schema locale non ha.

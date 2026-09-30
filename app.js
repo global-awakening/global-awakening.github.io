@@ -491,6 +491,8 @@ const translations = {
       candleExtinguish: "Extinguish your candle",
       candlesLitBy: "Candles lit by",
       candleNotLive: "The candle can be lit during the ritual.",
+      candleNotPresent: "Enter the room to light the candle.",
+      candleTooMany: "The room is full of candles.",
       modalTitle: "Create Ritual",
       ritualName: "Ritual Name",
       description: "Description",
@@ -890,6 +892,8 @@ const translations = {
       candleExtinguish: "Spegni la tua candela",
       candlesLitBy: "Candele accese da",
       candleNotLive: "La candela si accende durante il rituale.",
+      candleNotPresent: "Entra nella stanza per accendere la candela.",
+      candleTooMany: "La stanza è piena di candele.",
       modalTitle: "Crea Rituale",
       ritualName: "Nome Rituale",
       description: "Descrizione",
@@ -3458,7 +3462,7 @@ function GlobalAwakeningPlatform() {
     });
   };
   const toggleCandle = async ritualId => {
-    await supabase.rpc('segna_presenza_rituale', {
+    const presenza = await supabase.rpc('segna_presenza_rituale', {
       p_ritual_id: ritualId,
       p_session_id: sessionId
     });
@@ -3471,12 +3475,22 @@ function GlobalAwakeningPlatform() {
       p_nickname: nickname,
       p_password_hash: passwordHash || ''
     });
-    if (error && (error.message || '').includes('not_live')) {
+    const motivo = error && error.message || '';
+    if (motivo.includes('not_live')) {
       showErrorToast(t.rituals.candleNotLive);
       return;
     }
-    if (error && (error.message || '').includes('Auth failed')) {
+    if (motivo.includes('Auth failed')) {
       showErrorToast(t.rituals.reloginNeeded);
+      return;
+    }
+    if (motivo.includes('too_many_candles')) {
+      showErrorToast(t.rituals.candleTooMany);
+      return;
+    }
+    if (motivo.includes('not_present')) {
+      const motivoPresenza = presenza && presenza.error && presenza.error.message || '';
+      if (motivoPresenza.includes('not_live')) showErrorToast(t.rituals.candleNotLive);else if (presenza && presenza.error) showErrorToast();else showErrorToast(t.rituals.candleNotPresent);
       return;
     }
     if (error || !data || data.length === 0) {

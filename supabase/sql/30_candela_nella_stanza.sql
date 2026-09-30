@@ -1,6 +1,7 @@
 -- ============================================================================
 -- La candela si accende nella stanza, e si vede chi l'ha accesa — 29/09/2026
--- Segue: 28_rituali_ricorrenti.sql, 29_tetto_occorrenze.sql (non ne tocca le funzioni)
+-- Segue: 28_rituali_ricorrenti.sql, 29_tetto_occorrenze.sql. Ridefinisce due funzioni della 28_,
+-- toggle_ritual_candle e leave_ritual, e la vista rituali_correnti.
 --
 -- Perché: la candela era un pulsante sulla scheda, accendibile giorni prima o dopo il rituale,
 -- e restava un numero anonimo. Accendere una candela ha senso mentre si prega insieme: si
@@ -17,10 +18,22 @@
 --   · ospite: il session_id resta l'unica prova, come per leave_ritual (rischio accettato, spec
 --     28_ §4). I session_id sono pubblici (array candles), quindi chi li legge può ancora
 --     accendere o spegnere la candela di un ALTRO OSPITE, e due ospiti possono darsi lo stesso
---     nome. Non può però usare il nome di un registrato: un nome uguale (maiuscole a parte) al
---     nickname di un altro profilo diventa 'Anonymous'.
+--     nome. Non può però usare il nome di un registrato: un nome che, ripulito, è uguale (maiuscole e
+--     spazi attorno a parte) al nickname di un altro profilo diventa 'Anonymous'.
 --   · in più: si accende solo chi è nelle presenze dell'appuntamento corrente (visto negli ultimi
 --     60 s, 28_) — «not_present» —, e al massimo 500 candele per appuntamento — «too_many_candles».
+--     Eccezione: se le presenze dell'appuntamento sono già 500 (il tetto della 28_), la presenza non
+--     si chiede più. segna_presenza_rituale è aperta e accetta qualunque session_id: senza questa
+--     eccezione 500 presenze finte darebbero «not_present» a tutti gli utenti veri. Si degrada alla
+--     candela senza cancello, non si blocca nessuno.
+--
+-- Rischi noti, accettati:
+--   · candele finte: chi inventa session_id da ospite può segnarsi presente e accendere fino al
+--     tetto di 500, riempiendo la stanza di candele e nomi. Stessa classe del rischio già accettato
+--     nella 28_ §4 (l'ospite è provato solo dal session_id); il tetto limita quanto testo si mostra.
+--   · omoglifi: il nome viene ripulito (NFKC, invisibili, spazi Unicode), ma una lettera di un altro
+--     alfabeto uguale a vista (es. 'А' cirillica al posto di 'A') passa il confronto coi profili e
+--     può ancora sembrare il nome di un registrato.
 --
 -- App vecchie in cache: chiamano con due parametri per nome e trovano la nuova funzione grazie
 -- ai default. Per un ospite nella stanza funziona come prima; per un registrato risponde «Auth
@@ -28,8 +41,10 @@
 -- era lasciare aperta l'impersonazione. Dalla scheda, fuori dalla stanza, l'app vecchia riceve
 -- «not_present»: la candela si accende solo nella stanza.
 --
--- ⚠️ Se si rilancia la 28_ vanno rilanciate anche la 29_ e la 30_, in quest'ordine: la 28_ rimette
--- toggle_ritual_candle a due parametri (senza cancelli), leave_ritual e la vista senza i nomi.
+-- ⚠️ Se si rilancia la 28_ vanno rilanciate subito anche la 29_ e la 30_, in quest'ordine. La 28_
+-- non toglie la firma a quattro parametri di questa migration: ne AGGIUNGE una seconda a due
+-- parametri (senza cancelli), PostgREST non sa più quale chiamare e la candela va in errore per
+-- tutti finché la 30_ non ritoglie quella in più. Rimette anche leave_ritual e la vista senza nomi.
 --
 -- Ridefinisce anche delete_my_account (base: 22_, l'ultima che la tocca) perché chi cancella
 -- l'account porti via le sue candele e i suoi nomi.
@@ -59,8 +74,9 @@ BEGIN
   SELECT * INTO v FROM rituals WHERE id = p_ritual_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'ritual_not_found'; END IF;
   v_occ := rituale_occorrenza_corrente(v);
-  -- Stessa finestra della stanza e delle presenze (segna_presenza_rituale, 28_).
-  IF v_occ IS NULL OR now() < v_occ OR now() >= v_occ + make_interval(mins => coalesce(v.duration, 0)) THEN
+  -- Stessa finestra della stanza e delle presenze: condizione identica, carattere per carattere, a
+  -- quella di segna_presenza_rituale (28_), anche con duration NULL (lì non scatta not_live).
+  IF v_occ IS NULL OR now() < v_occ OR now() >= v_occ + make_interval(mins => v.duration) THEN
     RAISE EXCEPTION 'not_live';
   END IF;
   -- Registrato: stesso cancello di leave_ritual. Senza la sua credenziale nessuno accende o
@@ -75,9 +91,13 @@ BEGIN
    WHERE id = p_ritual_id AND candles_occorrenza IS NOT NULL AND candles_occorrenza IS DISTINCT FROM v_occ;
   SELECT candles INTO v_candles FROM rituals WHERE id = p_ritual_id;
   v_accende := NOT (v_candles @> to_jsonb(array[p_session_id]));
-  -- Spegnere la propria candela si può sempre; accenderla solo da dentro la stanza.
+  -- Spegnere la propria candela si può sempre; accenderla solo da dentro la stanza. Ma se le
+  -- presenze dell'appuntamento hanno già raggiunto il tetto di segna_presenza_rituale (500, 28_),
+  -- la presenza di chi arriva non si scrive più: chiederla bloccherebbe tutti gli utenti veri
+  -- (bastano 500 presenze finte). In quel caso il cancello si toglie invece di chiudere la porta.
   IF v_accende THEN
-    IF NOT EXISTS (SELECT 1 FROM ritual_presence
+    IF (SELECT count(*) FROM ritual_presence WHERE ritual_id = p_ritual_id AND occorrenza = v_occ) < 500
+       AND NOT EXISTS (SELECT 1 FROM ritual_presence
                     WHERE ritual_id = p_ritual_id AND occorrenza = v_occ AND session_id = p_session_id
                       AND visto_il > now() - interval '60 seconds') THEN
       RAISE EXCEPTION 'not_present';
@@ -86,15 +106,23 @@ BEGIN
     IF jsonb_array_length(v_candles) >= 500 THEN RAISE EXCEPTION 'too_many_candles'; END IF;
   END IF;
   -- Il nome. Registrato: quello del profilo, qualunque cosa dica l'app. Ospite: quello mandato,
-  -- ripulito da caratteri di controllo, a larghezza zero e di direzione del testo (un nome
-  -- «invisibile» o che si scrive al contrario), poi al massimo 50 caratteri; se non resta niente,
-  -- o se è il nome di un altro profilo, 'Anonymous' come per il creatore in create_ritual.
+  -- ripulito perché non si travesta da un altro: prima NFKC (le lettere «larghe» come Ａ diventano
+  -- A, molti spazi speciali diventano spazi), poi via caratteri di controllo, a larghezza zero, di
+  -- direzione del testo e i riempitivi invisibili (trattino morbido U+00AD, CGJ U+034F, ALM U+061C,
+  -- riempitivi hangul U+115F/U+1160/U+3164/U+FFA0, MVS U+180E, U+2060–U+2064, BOM U+FEFF), poi
+  -- ogni spazio Unicode rimasto diventa uno spazio normale e gli spazi di fila uno solo; infine al
+  -- massimo 50 caratteri. Se non resta niente, o se è il nome di un altro profilo (maiuscole e
+  -- spazi attorno a parte), 'Anonymous' come per il creatore in create_ritual.
   SELECT nullif(btrim(nickname), '') INTO v_nome FROM profiles WHERE session_id = p_session_id;
   IF v_nome IS NULL THEN
-    v_nome := nullif(left(btrim(regexp_replace(coalesce(p_nickname, ''),
-                '[[:cntrl:]​-‏‪-‮⁦-⁩]', '', 'g')), 50), '');
+    v_nome := regexp_replace(normalize(coalesce(p_nickname, ''), NFKC),
+                '[[:cntrl:]\u00AD\u034F\u061C\u115F\u1160\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\u3164\uFEFF\uFFA0]',
+                '', 'g');
+    v_nome := regexp_replace(v_nome, '[[:space:]\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+', ' ', 'g');
+    v_nome := nullif(btrim(left(btrim(v_nome), 50)), '');
     IF v_nome IS NOT NULL AND EXISTS (SELECT 1 FROM profiles
-                                        WHERE lower(nickname) = lower(v_nome) AND session_id <> p_session_id) THEN
+                                        WHERE lower(btrim(nickname)) = lower(btrim(v_nome))
+                                          AND session_id <> p_session_id) THEN
       v_nome := NULL;
     END IF;
   END IF;
