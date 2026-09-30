@@ -8,8 +8,9 @@
  * passa alla CLI come variabili d'ambiente. Nessun valore viene mai stampato a schermo.
  *
  * Uso:
- *   node scripts/deploy-push.js            # pubblica la funzione e carica i segreti
- *   node scripts/deploy-push.js --dry-run  # dice solo cosa farebbe
+ *   node scripts/deploy-push.js                             # pubblica tutte le funzioni e carica i segreti
+ *   node scripts/deploy-push.js --solo notify-ritual-start  # una sola funzione
+ *   node scripts/deploy-push.js --dry-run [--solo <nome>]   # dice solo cosa farebbe
  *
  * Il project ref viene letto da supabase/.temp/project-ref, come fa apply-sql.js.
  */
@@ -57,7 +58,30 @@ function esegui(descrizione, argomenti, env) {
   }
 }
 
+// Le funzioni che questo script sa pubblicare. `--solo <nome>` ne pubblica una sola: il passo 0
+// degli inviti telepatia ripubblica SOLO notify-ritual-start (è live, e va provata da sola prima
+// di tutto il resto), il passo 1 pubblica SOLO notify-telepathy-invite.
+const FUNZIONI = [
+  { nome: 'notify-ritual-start', descrizione: 'pubblico il motore delle notifiche dei rituali' },
+  { nome: 'alert-cron', descrizione: 'pubblico la sentinella sui guasti' },
+];
+
+function funzioniScelte(argv) {
+  const i = argv.indexOf('--solo');
+  if (i === -1) return FUNZIONI;
+  const nome = argv[i + 1];
+  const f = FUNZIONI.find((x) => x.nome === nome);
+  if (!f) {
+    console.error(`⛔  --solo vuole il nome di una funzione: ${FUNZIONI.map((x) => x.nome).join(', ')}`);
+    process.exit(2);
+  }
+  return [f];
+}
+
 function main() {
+  // Il nome sbagliato si scopre prima di leggere token e chiavi: è un errore di battitura, non
+  // di configurazione, e deve dirlo anche su un computer senza .env.local.
+  const scelte = funzioniScelte(process.argv);
   const prova = process.argv.includes('--dry-run');
   const env = leggiEnvLocale();
   const ref = projectRef();
@@ -73,7 +97,7 @@ function main() {
   }
 
   console.log(`Progetto Supabase: ${ref}`);
-  console.log('Funzioni da pubblicare: notify-ritual-start, alert-cron');
+  console.log(`Funzioni da pubblicare: ${scelte.map((f) => f.nome).join(', ')}`);
   console.log('Segreti da caricare: VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT');
 
   if (prova) {
@@ -83,8 +107,9 @@ function main() {
 
   const ambiente = { ...process.env, SUPABASE_ACCESS_TOKEN: env.SUPABASE_ACCESS_TOKEN };
 
-  esegui('pubblico il motore delle notifiche', ['functions', 'deploy', 'notify-ritual-start', '--project-ref', ref], ambiente);
-  esegui('pubblico la sentinella sui guasti',   ['functions', 'deploy', 'alert-cron', '--project-ref', ref], ambiente);
+  for (const f of scelte) {
+    esegui(f.descrizione, ['functions', 'deploy', f.nome, '--project-ref', ref], ambiente);
+  }
 
   esegui('carico i segreti VAPID', [
     'secrets', 'set',
