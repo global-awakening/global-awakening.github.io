@@ -9,7 +9,7 @@
  * Esecuzione: node test-rituali-validazione.js
  * NB: ROSSO finché 11_ non è applicato in Supabase SQL Editor (le vecchie
  *     funzioni accettano gli input illegittimi); VERDE dopo l'apply.
- * Auto-pulizia: purge del rituale del run via service_role key (test-helpers).
+ * Auto-pulizia: purge del rituale del run via la chiave di servizio (test-helpers).
  */
 const { purge } = require('./test-helpers');
 
@@ -46,10 +46,13 @@ const okRejected = (r, m) => (r.status >= 400)
 
 (async () => {
   console.log('— Setup —');
+  // In corso (partito un minuto fa, 30 minuti): dalla 30_ la candela si accende solo durante
+  // l'appuntamento, e «candela valida» su un rituale di ieri verrebbe rifiutata (not_live).
+  const tLive = new Date(Date.now() - 60000);
   const created = await rpc('create_ritual', {
     p_creator: CREATOR, p_creator_id: SID, p_name: `Validazione-${TS}`,
     p_description: 'test b5', p_type: 'consciousness', p_sacred_number: 11,
-    p_date: PAST_DATE, p_time: '12:00:00', p_duration: 5, p_password_hash: null,
+    p_date: tLive.toISOString().slice(0, 10), p_time: tLive.toISOString().slice(11, 19), p_duration: 30, p_password_hash: null,
   });
   const ritId = Array.isArray(created.body) && created.body[0] ? created.body[0].id : null;
   if (ritId == null) { fail(`setup: create_ritual fallito: ${created.status} ${JSON.stringify(created.body)}`); console.log(`\nRisultato: ${passed} passati, ${failed} falliti`); return; }
@@ -58,6 +61,7 @@ const okRejected = (r, m) => (r.status >= 400)
   console.log('— Input legittimi: devono essere ACCETTATI —');
   okAccepted(await rpc('join_ritual', { p_ritual_id: ritId, p_session_id: SID }), 'join valido');
   okAccepted(await rpc('send_ritual_energy', { p_ritual_id: ritId, p_amount: 10 }), 'energia valida (10)');
+  await rpc('segna_presenza_rituale', { p_ritual_id: ritId, p_session_id: SID });  // dalla 30_ si accende solo da presenti
   okAccepted(await rpc('toggle_ritual_candle', { p_ritual_id: ritId, p_session_id: SID }), 'candela valida');
 
   console.log('— Input illegittimi: devono essere RIFIUTATI —');
