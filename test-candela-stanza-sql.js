@@ -6,8 +6,10 @@
  * File a parte da test-rituali-ricorrenti-sql.js: quello prova la 28_/29_ e a metà rilancia la
  * 28_ (che rimette la candela senza cancello); qui serve un database con la 30_ sopra, dall'inizio
  * alla fine. Tutte le date sono relative ad adesso: il cancello dipende da now().
+ * Sopra la 30_ si carica la 31_ (delete_my_account toglie anche partecipazioni e presenze).
  */
 const { creaDbLocale, applicaFile } = require('./scripts/pg-locale');
+const F31 = 'supabase/sql/31_account_cancellato_rituali.sql';
 let passed = 0, failed = 0;
 const check = (c, m, x) => { if (c) { console.log(`  ✅ ${m}`); passed++; } else { console.log(`  ❌ ${m}${x !== undefined ? ' — ' + JSON.stringify(x) : ''}`); failed++; process.exitCode = 1; } };
 const errore = async (p) => { try { await p; return null; } catch (e) { return e.message; } };
@@ -34,6 +36,7 @@ const vista = (db, id) => db.query(`SELECT * FROM rituali_correnti WHERE id = $1
 
 (async () => {
   const db = await creaDbLocale();
+  await applicaFile(db, F31);
 
   console.log('\n— quando: solo durante l\'appuntamento —');
   const domani = await singolo(db, 'futuro', Date.now() + GIORNO);
@@ -223,7 +226,32 @@ const vista = (db, id) => db.query(`SELECT * FROM rituali_correnti WHERE id = $1
   // Un secondo rituale con candela e nome (scritti a mano: basta che ci siano).
   await db.query(`UPDATE rituals SET candles = candles || '["via1"]', candles_nomi = candles_nomi || '{"via1":"Partente"}' WHERE id = $1`, [s.id]);
   check((await vista(db, c.id)).candles_nomi.via1 === 'Partente', 'prima: candela e nome di chi se ne andrà');
+  // 31_: partecipa a due rituali (insieme ad altri) ed è nelle presenze di due rituali.
+  for (const [id, sid] of [[c.id, 'via1'], [s.id, 'via1'], [c.id, 'resta1'], [s.id, 'resta2']]) {
+    await db.query(`SELECT join_ritual($1, $2)`, [id, sid]);
+  }
+  const occS = (await db.query(`SELECT rituale_occorrenza_corrente(r) o FROM rituals r WHERE id = $1`, [s.id])).rows[0].o;
+  await db.query(`INSERT INTO ritual_presence (ritual_id, occorrenza, session_id) VALUES ($1, $2, 'via1'), ($1, $2, 'resta2')
+                  ON CONFLICT DO NOTHING`, [s.id, occS]);
+  const partPrima = (await db.query(`SELECT id, participants FROM rituals WHERE id IN ($1, $2) ORDER BY id`, [c.id, s.id])).rows;
+  const presPrima = (await db.query(`SELECT ritual_id, occorrenza, session_id FROM ritual_presence WHERE session_id <> 'via1' ORDER BY 1, 2, 3`)).rows;
+  check(partPrima.every(x => x.participants.includes('via1')), 'prima: partecipa a entrambi i rituali', partPrima);
+  check((await db.query(`SELECT count(*)::int n FROM ritual_presence WHERE session_id = 'via1'`)).rows[0].n === 2, 'prima: è in due presenze');
+  // Un rituale con participants NULL (la colonna non è NOT NULL): la cancellazione non deve romperlo.
+  const nullo = await singolo(db, 'nullo', Date.now() + GIORNO);
+  await db.query(`UPDATE rituals SET participants = NULL WHERE id = $1`, [nullo.id]);
   await db.query(`SELECT delete_my_account('Partente', 'hp')`);
+  const partDopo = (await db.query(`SELECT id FROM rituals WHERE participants @> '["via1"]'`)).rows;
+  check(partDopo.length === 0, 'dopo delete_my_account non partecipa più a nessun rituale', partDopo);
+  const presDopo = (await db.query(`SELECT count(*)::int n FROM ritual_presence WHERE session_id = 'via1'`)).rows[0].n;
+  check(presDopo === 0, 'dopo delete_my_account non è più in nessuna presenza', presDopo);
+  const partAltri = (await db.query(`SELECT id, participants FROM rituals WHERE id IN ($1, $2) ORDER BY id`, [c.id, s.id])).rows;
+  const attesi = partPrima.map(x => ({ id: x.id, participants: x.participants.filter(p => p !== 'via1') }));
+  check(JSON.stringify(partAltri) === JSON.stringify(attesi), 'gli altri partecipanti restano, nello stesso ordine', { partAltri, attesi });
+  check(partAltri[0].participants.includes('resta1') && partAltri[1].participants.includes('resta2'), 'resta1 e resta2 ancora partecipanti', partAltri);
+  const presAltri = (await db.query(`SELECT ritual_id, occorrenza, session_id FROM ritual_presence WHERE session_id <> 'via1' ORDER BY 1, 2, 3`)).rows;
+  check(JSON.stringify(presAltri) === JSON.stringify(presPrima) && presAltri.length > 0, 'le presenze degli altri restano intatte', { prima: presPrima.length, dopo: presAltri.length });
+  check((await db.query(`SELECT participants FROM rituals WHERE id = $1`, [nullo.id])).rows[0].participants === null, 'participants NULL resta NULL (nessun errore)');
   const restanti = (await db.query(`SELECT id FROM rituals WHERE candles @> '["via1"]' OR candles_nomi ? 'via1'`)).rows;
   check(restanti.length === 0, 'dopo delete_my_account nessun rituale ha la sua candela o il suo nome', restanti);
   const vc = await vista(db, c.id), vs = await vista(db, s.id);
@@ -232,6 +260,7 @@ const vista = (db, id) => db.query(`SELECT * FROM rituali_correnti WHERE id = $1
 
   console.log('\n— rilancio —');
   check(!(await errore(applicaFile(db, 'supabase/sql/30_candela_nella_stanza.sql'))), '30_ si rilancia (idempotente)');
+  check(!(await errore(applicaFile(db, F31))), '31_ si rilancia (idempotente)');
   const inOrdine = await errore((async () => {
     for (const f of ['28_rituali_ricorrenti', '29_tetto_occorrenze', '30_candela_nella_stanza']) await applicaFile(db, `supabase/sql/${f}.sql`);
   })());
