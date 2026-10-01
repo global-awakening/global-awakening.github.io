@@ -69,4 +69,102 @@ async function creaDbLocale({ con28 = true, con29 = con28, con30 = con29 } = {})
   return db;
 }
 
-module.exports = { creaDbLocale, applicaFile, RUOLO_SERVIZIO };
+// Lo schema della telepatia e delle tabelle che delete_my_account/export_my_account toccano,
+// ricopiato dal catalogo del database vero (letto il 30/09/2026, Task 1 del piano inviti).
+// Solo per creaDbTelepatia: creaDbLocale resta com'era, perché test-candela-stanza-sql.js crea
+// da sé alcune di queste tabelle e non deve trovarle già lì.
+const SCHEMA_TELEPATIA = `
+  ALTER TABLE profiles
+    ADD COLUMN IF NOT EXISTS bio text, ADD COLUMN IF NOT EXISTS country text,
+    ADD COLUMN IF NOT EXISTS show_telepathy_score boolean DEFAULT true;
+  ALTER TABLE push_subscriptions
+    ADD COLUMN IF NOT EXISTS endpoint text UNIQUE, ADD COLUMN IF NOT EXISTS p256dh text,
+    ADD COLUMN IF NOT EXISTS auth text, ADD COLUMN IF NOT EXISTS locale text NOT NULL DEFAULT 'en',
+    ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
+    ADD COLUMN IF NOT EXISTS last_seen_at timestamptz NOT NULL DEFAULT now(),
+    ADD COLUMN IF NOT EXISTS failure_count integer NOT NULL DEFAULT 0;
+  CREATE TABLE online_users (id text PRIMARY KEY, nickname text NOT NULL, lat float8, lng float8, last_seen timestamptz DEFAULT now());
+  CREATE TABLE telepathy_queue (id text PRIMARY KEY, nickname text, timestamp bigint);
+  CREATE TABLE telepathy_matches (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user1_id text, user1_nickname text, user1_role text,
+    user2_id text, user2_nickname text, user2_role text,
+    level text DEFAULT 'shapes', round_count integer DEFAULT 0, sender_symbol text, receiver_guess text,
+    level_change_choice_sender text, level_change_choice_receiver text,
+    score_sender integer DEFAULT 0, score_receiver integer DEFAULT 0,
+    created_at timestamptz DEFAULT now(), ended_at timestamptz, ended_by text);
+  CREATE UNIQUE INDEX telepathy_matches_pair_unique
+    ON telepathy_matches (least(user1_id, user2_id), greatest(user1_id, user2_id));
+  CREATE TABLE telepathy_invites (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(), created_at timestamptz DEFAULT now(),
+    from_id text NOT NULL, from_name text NOT NULL, to_id text NOT NULL, to_name text NOT NULL,
+    status text DEFAULT 'pending');
+  ALTER TABLE telepathy_invites ENABLE ROW LEVEL SECURITY;
+  -- auth.uid() finto: NULL, come per l'app che usa la chiave pubblica (nessun utente Supabase Auth).
+  -- creaDbLocale non ha uno schema auth, e le policy qui sotto lo richiedono per esistere.
+  CREATE SCHEMA IF NOT EXISTS auth;
+  CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS 'SELECT NULL::uuid';
+  -- Le 8 policy di oggi, come nel catalogo (cat8-cat12, pol5-pol7). Le quattro per public con
+  -- auth.uid() sono inerti per l'app (auth.uid() è null con la chiave pubblica); le quattro per
+  -- anon con true sono quelle che oggi lasciano leggere e scrivere chiunque.
+  CREATE POLICY "Destinatario può aggiornare lo status" ON telepathy_invites FOR UPDATE TO public USING ((auth.uid())::text = to_id);
+  CREATE POLICY "Destinatario vede i propri inviti" ON telepathy_invites FOR SELECT TO public USING ((auth.uid())::text = to_id);
+  CREATE POLICY "Mittente può cancellare il proprio invito" ON telepathy_invites FOR DELETE TO public USING ((auth.uid())::text = from_id);
+  CREATE POLICY "Utenti autenticati possono creare inviti" ON telepathy_invites FOR INSERT TO public WITH CHECK ((auth.uid())::text = from_id);
+  CREATE POLICY "anon can delete telepathy_invites" ON telepathy_invites FOR DELETE TO anon USING (true);
+  CREATE POLICY "anon can insert telepathy_invites" ON telepathy_invites FOR INSERT TO anon WITH CHECK (true);
+  CREATE POLICY "anon can select telepathy_invites" ON telepathy_invites FOR SELECT TO anon USING (true);
+  CREATE POLICY "anon can update telepathy_invites" ON telepathy_invites FOR UPDATE TO anon USING (true) WITH CHECK (true);
+  GRANT ALL ON telepathy_invites TO anon, authenticated;
+  GRANT ALL ON telepathy_matches, online_users, telepathy_queue TO anon, authenticated;
+  CREATE TABLE user_blocks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    blocker_nickname text NOT NULL, blocked_nickname text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (blocker_nickname, blocked_nickname));
+  CREATE TABLE telepathy_scores (user_id text PRIMARY KEY, nickname text, sessions_count integer DEFAULT 0,
+    matches_count integer DEFAULT 0, rounds_count integer DEFAULT 0, updated_at timestamptz DEFAULT now());
+  CREATE TABLE notifications (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_nickname text NOT NULL,
+    type text NOT NULL, message text NOT NULL,
+    read boolean DEFAULT false, created_at timestamptz DEFAULT now());
+  GRANT ALL ON notifications TO anon, authenticated;
+  CREATE TABLE consciousness_posts (author_nickname text); CREATE TABLE consciousness_comments (author_nickname text);
+  CREATE TABLE magic_links (email text); CREATE TABLE password_resets (email text);
+  CREATE TABLE content_reports (reporter_nickname text);
+
+  -- pg_net finto: registra le chiamate invece di farle. Stessa firma di net.http_post.
+  CREATE SCHEMA net;
+  CREATE TABLE net.chiamate (id bigserial PRIMARY KEY, url text, body jsonb, headers jsonb, at timestamptz DEFAULT now());
+  CREATE FUNCTION net.http_post(url text, body jsonb DEFAULT '{}'::jsonb, params jsonb DEFAULT '{}'::jsonb,
+                                headers jsonb DEFAULT '{}'::jsonb, timeout_milliseconds integer DEFAULT 5000)
+    RETURNS bigint LANGUAGE sql AS $f$
+      INSERT INTO net.chiamate (url, body, headers) VALUES (url, body, headers) RETURNING id $f$;
+
+  -- pg_cron finto: il minimo che serve alla 32a per ridefinire il job.
+  CREATE SCHEMA cron;
+  CREATE TABLE cron.job (jobid bigserial PRIMARY KEY, jobname text UNIQUE, schedule text, command text, active boolean DEFAULT true);
+  CREATE FUNCTION cron.schedule(job_name text, schedule text, command text) RETURNS bigint LANGUAGE sql AS $f$
+    INSERT INTO cron.job (jobname, schedule, command) VALUES (job_name, schedule, command)
+    ON CONFLICT (jobname) DO UPDATE SET schedule = EXCLUDED.schedule, command = EXCLUDED.command
+    RETURNING jobid $f$;
+  CREATE FUNCTION cron.unschedule(job_id bigint) RETURNS boolean LANGUAGE sql AS $f$
+    DELETE FROM cron.job WHERE jobid = job_id RETURNING true $f$;
+  -- Il job della 23_, com'è oggi (una sola chiamata).
+  SELECT cron.schedule('notify-ritual-start', '* * * * *',
+    $j$ SELECT net.http_post(url := 'https://vxzxdkcluyrcftsnxxza.supabase.co/functions/v1/notify-ritual-start', body := '{}'::jsonb); $j$);
+`;
+
+const F31 = 'supabase/sql/31_account_cancellato_rituali.sql';
+const F32A = 'supabase/sql/32a_inviti_telepatia_offline.sql';
+const F32B = 'supabase/sql/32b_chiudi_inviti_diretti.sql';
+
+// Per gli inviti telepatia: catena dei rituali fino alla 30_, schema della telepatia, 31_
+// (l'ultima delete_my_account su main), poi le migration nuove se richieste.
+async function creaDbTelepatia({ con32a = true, con32b = false } = {}) {
+  const db = await creaDbLocale();
+  await db.exec(SCHEMA_TELEPATIA);
+  await applicaFile(db, F31);
+  if (con32a) await applicaFile(db, F32A);
+  if (con32a && con32b) await applicaFile(db, F32B);
+  return db;
+}
+
+module.exports = { creaDbLocale, creaDbTelepatia, applicaFile, RUOLO_SERVIZIO, F31, F32A, F32B };

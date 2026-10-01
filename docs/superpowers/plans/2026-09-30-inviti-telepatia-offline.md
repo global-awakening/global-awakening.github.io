@@ -836,33 +836,44 @@ const SCHEMA_TELEPATIA = `
     ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
     ADD COLUMN IF NOT EXISTS last_seen_at timestamptz NOT NULL DEFAULT now(),
     ADD COLUMN IF NOT EXISTS failure_count integer NOT NULL DEFAULT 0;
-  CREATE TABLE online_users (id text PRIMARY KEY, nickname text, lat float8, lng float8, last_seen timestamptz DEFAULT now());
+  CREATE TABLE online_users (id text PRIMARY KEY, nickname text NOT NULL, lat float8, lng float8, last_seen timestamptz DEFAULT now());
   CREATE TABLE telepathy_queue (id text PRIMARY KEY, nickname text, timestamp bigint);
   CREATE TABLE telepathy_matches (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     user1_id text, user1_nickname text, user1_role text,
     user2_id text, user2_nickname text, user2_role text,
-    level text, round_count integer DEFAULT 0, sender_symbol text,
+    level text DEFAULT 'shapes', round_count integer DEFAULT 0, sender_symbol text, receiver_guess text,
+    level_change_choice_sender text, level_change_choice_receiver text,
+    score_sender integer DEFAULT 0, score_receiver integer DEFAULT 0,
     created_at timestamptz DEFAULT now(), ended_at timestamptz, ended_by text);
   CREATE UNIQUE INDEX telepathy_matches_pair_unique
     ON telepathy_matches (least(user1_id, user2_id), greatest(user1_id, user2_id));
   CREATE TABLE telepathy_invites (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(), created_at timestamptz DEFAULT now(),
-    from_id text, from_name text, to_id text, to_name text, status text DEFAULT 'pending');
+    from_id text NOT NULL, from_name text NOT NULL, to_id text NOT NULL, to_name text NOT NULL,
+    status text DEFAULT 'pending');
   ALTER TABLE telepathy_invites ENABLE ROW LEVEL SECURITY;
-  -- Le policy «aperte» di oggi (spec §3): chiunque con la chiave pubblica legge e scrive.
-  CREATE POLICY "Allow all" ON telepathy_invites FOR ALL TO public USING (true) WITH CHECK (true);
-  CREATE POLICY "Enable all for users" ON telepathy_invites FOR ALL TO public USING (true) WITH CHECK (true);
-  CREATE POLICY "anon can insert" ON telepathy_invites FOR INSERT TO anon WITH CHECK (true);
-  CREATE POLICY "anon can select" ON telepathy_invites FOR SELECT TO anon USING (true);
-  CREATE POLICY "anon can delete" ON telepathy_invites FOR DELETE TO anon USING (true);
+  -- Le 8 policy di oggi, come nel catalogo (cat8-cat12, pol5-pol7). Le quattro per public con
+  -- auth.uid() sono inerti per l'app (auth.uid() è null con la chiave pubblica); le quattro per
+  -- anon con true sono quelle che oggi lasciano leggere e scrivere chiunque.
+  -- Se lo schema auth / auth.uid() non esiste già in creaDbLocale, crearlo qui (stub che rende NULL).
+  CREATE POLICY "Destinatario può aggiornare lo status" ON telepathy_invites FOR UPDATE TO public USING ((auth.uid())::text = to_id);
+  CREATE POLICY "Destinatario vede i propri inviti" ON telepathy_invites FOR SELECT TO public USING ((auth.uid())::text = to_id);
+  CREATE POLICY "Mittente può cancellare il proprio invito" ON telepathy_invites FOR DELETE TO public USING ((auth.uid())::text = from_id);
+  CREATE POLICY "Utenti autenticati possono creare inviti" ON telepathy_invites FOR INSERT TO public WITH CHECK ((auth.uid())::text = from_id);
+  CREATE POLICY "anon can delete telepathy_invites" ON telepathy_invites FOR DELETE TO anon USING (true);
+  CREATE POLICY "anon can insert telepathy_invites" ON telepathy_invites FOR INSERT TO anon WITH CHECK (true);
+  CREATE POLICY "anon can select telepathy_invites" ON telepathy_invites FOR SELECT TO anon USING (true);
+  CREATE POLICY "anon can update telepathy_invites" ON telepathy_invites FOR UPDATE TO anon USING (true) WITH CHECK (true);
   GRANT ALL ON telepathy_invites TO anon, authenticated;
   GRANT ALL ON telepathy_matches, online_users, telepathy_queue TO anon, authenticated;
-  CREATE TABLE user_blocks (blocker_nickname text NOT NULL, blocked_nickname text NOT NULL,
-    created_at timestamptz DEFAULT now(), PRIMARY KEY (blocker_nickname, blocked_nickname));
+  CREATE TABLE user_blocks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    blocker_nickname text NOT NULL, blocked_nickname text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (blocker_nickname, blocked_nickname));
   CREATE TABLE telepathy_scores (user_id text PRIMARY KEY, nickname text, sessions_count integer DEFAULT 0,
     matches_count integer DEFAULT 0, rounds_count integer DEFAULT 0, updated_at timestamptz DEFAULT now());
-  CREATE TABLE notifications (id bigserial PRIMARY KEY, user_nickname text, type text, message text,
+  CREATE TABLE notifications (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_nickname text NOT NULL,
+    type text NOT NULL, message text NOT NULL,
     read boolean DEFAULT false, created_at timestamptz DEFAULT now());
   GRANT ALL ON notifications TO anon, authenticated;
   CREATE TABLE consciousness_posts (author_nickname text); CREATE TABLE consciousness_comments (author_nickname text);
@@ -5030,7 +5041,10 @@ Si comincia **almeno un giorno dopo** il merge della PR 3. Il ramo nasce da `mai
 ```js
 // ════ G. 32b (Task 26) ═════════════════════════════════════════════════════
 // Le policy di telepathy_invites com'erano prima della 32b (catalogo, Task 1: cat8…cat12).
-const POLICY_DAL_CATALOGO = ['Allow all', 'Enable all for users', 'anon can delete', 'anon can insert', 'anon can select'];
+const POLICY_DAL_CATALOGO = ['Destinatario può aggiornare lo status', 'Destinatario vede i propri inviti',
+  'Mittente può cancellare il proprio invito', 'Utenti autenticati possono creare inviti',
+  'anon can delete telepathy_invites', 'anon can insert telepathy_invites',
+  'anon can select telepathy_invites', 'anon can update telepathy_invites'];
 
 sezione('G1. la 32b chiude l\'accesso diretto', async () => {
   const db = await creaDbTelepatia({ con32a: true, con32b: false });
@@ -5119,18 +5133,24 @@ COMMIT;
 -- Le RPC della 32a continuano a funzionare anche con l'accesso diretto riaperto.
 -- ============================================================================
 BEGIN;
-DROP POLICY IF EXISTS "Allow all" ON public.telepathy_invites;
-CREATE POLICY "Allow all" ON public.telepathy_invites FOR ALL TO public USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "Enable all for users" ON public.telepathy_invites;
-CREATE POLICY "Enable all for users" ON public.telepathy_invites FOR ALL TO public USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "anon can insert" ON public.telepathy_invites;
-CREATE POLICY "anon can insert" ON public.telepathy_invites FOR INSERT TO anon WITH CHECK (true);
-DROP POLICY IF EXISTS "anon can select" ON public.telepathy_invites;
-CREATE POLICY "anon can select" ON public.telepathy_invites FOR SELECT TO anon USING (true);
-DROP POLICY IF EXISTS "anon can delete" ON public.telepathy_invites;
-CREATE POLICY "anon can delete" ON public.telepathy_invites FOR DELETE TO anon USING (true);
--- I privilegi di cat13 (se cat13 elenca tutti e sette i privilegi per anon e authenticated, ALL è
--- equivalente; altrimenti elencare quelli del catalogo).
+DROP POLICY IF EXISTS "Destinatario può aggiornare lo status" ON public.telepathy_invites;
+CREATE POLICY "Destinatario può aggiornare lo status" ON public.telepathy_invites FOR UPDATE TO public USING ((auth.uid())::text = to_id);
+DROP POLICY IF EXISTS "Destinatario vede i propri inviti" ON public.telepathy_invites;
+CREATE POLICY "Destinatario vede i propri inviti" ON public.telepathy_invites FOR SELECT TO public USING ((auth.uid())::text = to_id);
+DROP POLICY IF EXISTS "Mittente può cancellare il proprio invito" ON public.telepathy_invites;
+CREATE POLICY "Mittente può cancellare il proprio invito" ON public.telepathy_invites FOR DELETE TO public USING ((auth.uid())::text = from_id);
+DROP POLICY IF EXISTS "Utenti autenticati possono creare inviti" ON public.telepathy_invites;
+CREATE POLICY "Utenti autenticati possono creare inviti" ON public.telepathy_invites FOR INSERT TO public WITH CHECK ((auth.uid())::text = from_id);
+DROP POLICY IF EXISTS "anon can delete telepathy_invites" ON public.telepathy_invites;
+CREATE POLICY "anon can delete telepathy_invites" ON public.telepathy_invites FOR DELETE TO anon USING (true);
+DROP POLICY IF EXISTS "anon can insert telepathy_invites" ON public.telepathy_invites;
+CREATE POLICY "anon can insert telepathy_invites" ON public.telepathy_invites FOR INSERT TO anon WITH CHECK (true);
+DROP POLICY IF EXISTS "anon can select telepathy_invites" ON public.telepathy_invites;
+CREATE POLICY "anon can select telepathy_invites" ON public.telepathy_invites FOR SELECT TO anon USING (true);
+DROP POLICY IF EXISTS "anon can update telepathy_invites" ON public.telepathy_invites;
+CREATE POLICY "anon can update telepathy_invites" ON public.telepathy_invites FOR UPDATE TO anon USING (true) WITH CHECK (true);
+-- I privilegi di cat13: tutti e sette (DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE,
+-- UPDATE) per anon e authenticated, quindi ALL è equivalente.
 GRANT ALL ON public.telepathy_invites TO anon, authenticated;
 NOTIFY pgrst, 'reload schema';
 COMMIT;
