@@ -532,6 +532,179 @@ END $$;
 REVOKE ALL ON FUNCTION public.send_telepathy_invite(text, text, text, uuid, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.send_telepathy_invite(text, text, text, uuid, text) TO anon, authenticated;
 
+-- ════ E. Risposta, annullo, letture, blocco ══════════════════════════════════
+
+-- Solo il destinatario, solo se pending e non scaduto; il passaggio di stato è un UPDATE
+-- atomico. Accettare: il match lo crea l'app PRIMA (insert diretto, fuori scope rifarlo) e qui
+-- si controlla che sia quello della coppia giusta. Stessa persona su due telefoni: il secondo
+-- «Accetta» trova accepted e riceve gia_accettato; il match del secondo telefono di norma non
+-- nasce nemmeno (vincolo di coppia), e se esiste è quello dell'invito: la RPC non lo tocca.
+CREATE OR REPLACE FUNCTION public.respond_telepathy_invite(p_invite_id uuid, p_session_id text, p_password_hash text,
+                                                           p_accept boolean, p_match_id uuid DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v telepathy_invites%ROWTYPE; v_stato text;
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  IF p_invite_id IS NULL OR p_accept IS NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'dati_non_validi'); END IF;
+  SELECT * INTO v FROM telepathy_invites WHERE id = p_invite_id AND to_id = p_session_id;
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovato'); END IF;
+  IF v.status = 'pending' AND v.expires_at <= now() THEN
+    UPDATE telepathy_invites SET status = 'expired', responded_at = now() WHERE id = v.id AND status = 'pending';
+    v.status := 'expired';
+  END IF;
+  IF v.status <> 'pending' THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', telepatia_motivo_stato(v.status));
+  END IF;
+
+  IF p_accept THEN
+    IF p_match_id IS NULL OR NOT EXISTS (
+         SELECT 1 FROM telepathy_matches m
+          WHERE m.id = p_match_id AND m.ended_at IS NULL AND m.user1_id = v.from_id AND m.user2_id = v.to_id) THEN
+      RETURN jsonb_build_object('ok', false, 'motivo', 'match_non_valido');
+    END IF;
+    -- Nessuno si ritrova in due sessioni.
+    IF telepatia_in_training(p_session_id, p_match_id) OR telepatia_in_training(v.from_id, p_match_id) THEN
+      RETURN jsonb_build_object('ok', false, 'motivo', 'in_match');
+    END IF;
+    UPDATE telepathy_invites SET status = 'accepted', match_id = p_match_id, responded_at = now()
+     WHERE id = v.id AND status = 'pending' AND expires_at > now();
+    IF NOT FOUND THEN
+      -- Un altro telefono ha risposto un istante prima, o la scadenza è arrivata adesso.
+      SELECT status INTO v_stato FROM telepathy_invites WHERE id = v.id;
+      RETURN jsonb_build_object('ok', false, 'motivo', telepatia_motivo_stato(coalesce(v_stato, 'expired')));
+    END IF;
+    -- Chi sta per giocare non può restare invitante di qualcun altro.
+    UPDATE telepathy_invites SET status = 'cancelled', responded_at = now()
+     WHERE from_id = p_session_id AND status = 'pending';
+    -- Anche per gli inviti da 45 s: chi ha invitato può aver posato il telefono.
+    PERFORM telepatia_chiama_motore(jsonb_build_object('invito', v.id, 'tipo', 'accettato'));
+    v_stato := 'accepted';
+  ELSE
+    UPDATE telepathy_invites SET status = 'declined', responded_at = now()
+     WHERE id = v.id AND status = 'pending' AND expires_at > now();
+    IF NOT FOUND THEN
+      SELECT status INTO v_stato FROM telepathy_invites WHERE id = v.id;
+      RETURN jsonb_build_object('ok', false, 'motivo', telepatia_motivo_stato(coalesce(v_stato, 'expired')));
+    END IF;
+    INSERT INTO notifications (user_nickname, type, message)
+    VALUES (v.from_name, 'telepathy_declined', v.to_name || ' ha rifiutato il tuo invito al training telepatico');
+    -- Per un invito da 45 s chi ha invitato è online e lo vede nell'app.
+    IF telepatia_era_da_dieci(v.created_at, v.expires_at) THEN
+      PERFORM telepatia_chiama_motore(jsonb_build_object('invito', v.id, 'tipo', 'rifiutato'));
+    END IF;
+    v_stato := 'declined';
+  END IF;
+  RETURN jsonb_build_object('ok', true, 'status', v_stato, 'responded_at', now(), 'adesso', now());
+END $$;
+
+-- Solo il mittente, solo se pending. Nessuna push.
+CREATE OR REPLACE FUNCTION public.cancel_telepathy_invite(p_invite_id uuid, p_session_id text, p_password_hash text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  UPDATE telepathy_invites SET status = 'cancelled', responded_at = now()
+   WHERE id = p_invite_id AND from_id = p_session_id AND status = 'pending';
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovato'); END IF;
+  RETURN jsonb_build_object('ok', true);
+END $$;
+
+-- La lettura degli inviti al posto delle SELECT dirette. Il session_id dell'altra persona torna
+-- in UN caso solo: from_id dell'invito pending a me indirizzato (serve per creare il match e per
+-- l'attesa; chi invita è per forza online, quindi già in online_users). Chi invita non riceve
+-- mai il to_id: l'id del partner lo prende dal match quando ci entra. In arrivo anche
+-- responded_at e match_id (spec §4.1 punto 7).
+CREATE OR REPLACE FUNCTION public.get_my_telepathy_invites(p_session_id text, p_password_hash text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_in jsonb; v_out jsonb;
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  -- La risposta non mente anche se il cron è in ritardo.
+  UPDATE telepathy_invites SET status = 'expired', responded_at = now()
+   WHERE status = 'pending' AND expires_at <= now() AND (from_id = p_session_id OR to_id = p_session_id);
+  SELECT jsonb_build_object('id', i.id, 'nome', i.from_name, 'from_id', i.from_id, 'status', i.status,
+                            'expires_at', i.expires_at, 'created_at', i.created_at, 'responded_at', i.responded_at,
+                            'match_id', i.match_id, 'push_saltata', i.push_saltata)
+    INTO v_in
+    FROM telepathy_invites i
+   WHERE i.to_id = p_session_id AND i.status = 'pending' AND i.expires_at > now()
+     AND NOT telepatia_bloccati(i.from_id, i.from_name, i.to_id, i.to_name)
+   ORDER BY i.created_at DESC LIMIT 1;
+  SELECT jsonb_build_object('id', o.id, 'nome', o.to_name, 'status', o.status, 'expires_at', o.expires_at,
+                            'created_at', o.created_at, 'responded_at', o.responded_at, 'match_id', o.match_id,
+                            'push_saltata', o.push_saltata)
+    INTO v_out
+    FROM telepathy_invites o
+   WHERE o.from_id = p_session_id AND o.created_at > now() - interval '24 hours'
+   ORDER BY o.created_at DESC LIMIT 1;
+  RETURN jsonb_build_object('ok', true, 'adesso', now(), 'in_arrivo', v_in, 'in_uscita', v_out);
+END $$;
+
+-- Lo stato di UN invito mio, per chi arriva dalla notifica (?invito=<id>). Distingue scaduto,
+-- rifiutato, annullato, accettato (con match_id e se il match è ancora vivo) e aperto.
+CREATE OR REPLACE FUNCTION public.get_telepathy_invite(p_invite_id uuid, p_session_id text, p_password_hash text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v telepathy_invites%ROWTYPE; v_ruolo text;
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  SELECT * INTO v FROM telepathy_invites WHERE id = p_invite_id AND (from_id = p_session_id OR to_id = p_session_id);
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovato', 'adesso', now()); END IF;
+  v_ruolo := CASE WHEN v.to_id = p_session_id THEN 'destinatario' ELSE 'mittente' END;
+  IF v_ruolo = 'destinatario' AND telepatia_bloccati(v.from_id, v.from_name, v.to_id, v.to_name) THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovato', 'adesso', now());
+  END IF;
+  IF v.status = 'pending' AND v.expires_at <= now() THEN
+    UPDATE telepathy_invites SET status = 'expired', responded_at = now() WHERE id = v.id AND status = 'pending';
+    v.status := 'expired';
+  END IF;
+  RETURN jsonb_build_object('ok', true, 'adesso', now(), 'invito', jsonb_build_object(
+    'id', v.id, 'ruolo', v_ruolo,
+    'nome', CASE WHEN v_ruolo = 'destinatario' THEN v.from_name ELSE v.to_name END,
+    'status', v.status, 'expires_at', v.expires_at, 'created_at', v.created_at,
+    'responded_at', v.responded_at, 'match_id', v.match_id, 'push_saltata', v.push_saltata,
+    'match_attivo', EXISTS (SELECT 1 FROM telepathy_matches m WHERE m.id = v.match_id AND m.ended_at IS NULL),
+    'from_id', CASE WHEN v_ruolo = 'destinatario' AND v.status = 'pending' THEN v.from_id END));
+END $$;
+
+-- «Non voglio più inviti da questa persona», per ospiti e iscritti. Uno solo dei tre modi di
+-- indicare la persona. Con l'invito vale solo per chi l'ha ricevuto.
+CREATE OR REPLACE FUNCTION public.block_telepathy_inviter(p_session_id text, p_password_hash text,
+                                                          p_invite_id uuid DEFAULT NULL, p_disponibilita_id uuid DEFAULT NULL,
+                                                          p_session_online text DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_sid text; v_nome text;
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  IF (p_invite_id IS NOT NULL)::int + (p_disponibilita_id IS NOT NULL)::int + (p_session_online IS NOT NULL)::int <> 1 THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'dati_non_validi');
+  END IF;
+  IF p_invite_id IS NOT NULL THEN
+    SELECT from_id, from_name INTO v_sid, v_nome FROM telepathy_invites WHERE id = p_invite_id AND to_id = p_session_id;
+  ELSE
+    SELECT o_sid, o_nome INTO v_sid, v_nome FROM telepatia_risolvi(p_disponibilita_id, p_session_online);
+  END IF;
+  IF v_sid IS NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovato'); END IF;
+  IF v_sid = p_session_id THEN RETURN jsonb_build_object('ok', false, 'motivo', 'dati_non_validi'); END IF;
+  INSERT INTO telepathy_invite_blocks (blocker_session, blocked_session) VALUES (p_session_id, v_sid)
+  ON CONFLICT DO NOTHING;
+  -- Gli inviti aperti fra i due si chiudono, senza push e senza notifiche.
+  UPDATE telepathy_invites SET status = 'declined', responded_at = now()
+   WHERE status = 'pending' AND from_id = v_sid AND to_id = p_session_id;
+  UPDATE telepathy_invites SET status = 'cancelled', responded_at = now()
+   WHERE status = 'pending' AND from_id = p_session_id AND to_id = v_sid;
+  RETURN jsonb_build_object('ok', true, 'nome', v_nome);
+END $$;
+
+REVOKE ALL ON FUNCTION public.respond_telepathy_invite(uuid, text, text, boolean, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.cancel_telepathy_invite(uuid, text, text)                 FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_my_telepathy_invites(text, text)                      FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_telepathy_invite(uuid, text, text)                    FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.block_telepathy_inviter(text, text, uuid, uuid, text)     FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.respond_telepathy_invite(uuid, text, text, boolean, uuid) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.cancel_telepathy_invite(uuid, text, text)                 TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_my_telepathy_invites(text, text)                      TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_telepathy_invite(uuid, text, text)                    TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.block_telepathy_inviter(text, text, uuid, uuid, text)     TO anon, authenticated;
+
 NOTIFY pgrst, 'reload schema';
 
 COMMIT;

@@ -500,6 +500,180 @@ sezione('D5. due invii nello stesso istante (23505 tradotto)', async (db) => {
   await db.query(`SELECT set_config('test.conflitto', '', false)`);
 });
 
+// ════ E. Risposta, annullo, letture, blocco (Task 11) ══════════════════════
+const rispondi = (db, id, sid, accetta, match = null, pw = null) => chiama(db, 'respond_telepathy_invite',
+  { p_invite_id: id, p_session_id: sid, p_password_hash: pw, p_accept: accetta, p_match_id: match });
+const nuovoMatch = async (db, u1, u2) => (await uno(db, `INSERT INTO telepathy_matches (user1_id, user2_id, da_invito) VALUES ($1, $2, true) RETURNING id`, [u1, u2])).id;
+
+sezione('E1. accettare', async (db) => {
+  await disp(db, 'ric', 'Ric');
+  const { id: idInv } = await invia(db, 'inv', 'Inv', { disp: await idDisp(db, 'ric') });
+  let x = await rispondi(db, idInv, 'terzo', false);
+  check(x.ok === false && x.motivo === 'non_trovato', 'solo il destinatario risponde', x);
+  x = await rispondi(db, idInv, 'ric', true, null);
+  check(x.ok === false && x.motivo === 'match_non_valido', 'accettare senza match: match_non_valido', x);
+  x = await rispondi(db, idInv, 'ric', true, await nuovoMatch(db, 'inv', 'altro'));
+  check(x.ok === false && x.motivo === 'match_non_valido', 'match di un\'altra coppia: match_non_valido', x);
+  const giusto = await nuovoMatch(db, 'inv', 'ric');
+  await disp(db, 'terza', 'Terza');
+  const uscita = await invia(db, 'ric', 'Ric', { disp: await idDisp(db, 'terza') });
+  const n0 = await chiamateMotore(db);
+  x = await rispondi(db, idInv, 'ric', true, giusto);
+  check(x.ok === true && x.status === 'accepted', 'accettare con il match giusto', x);
+  const salvato = await uno(db, `SELECT match_id, responded_at FROM telepathy_invites WHERE id = $1`, [idInv]);
+  check(salvato.match_id === giusto && salvato.responded_at !== null, 'match_id e responded_at salvati', salvato);
+  check((await uno(db, `SELECT status FROM telepathy_invites WHERE id = $1`, [uscita.id])).status === 'cancelled',
+    'l\'invito in uscita di chi accetta è annullato sul server');
+  const ultima = await uno(db, `SELECT body FROM net.chiamate ORDER BY id DESC LIMIT 1`);
+  check(await chiamateMotore(db) === n0 + 1 && ultima.body.tipo === 'accettato' && ultima.body.invito === idInv,
+    'push «accettato» chiesta, con il corpo che legge leggiRichiesta', ultima);
+  x = await rispondi(db, idInv, 'ric', true, giusto);
+  check(x.ok === false && x.motivo === 'gia_accettato', 'una volta sola: la seconda accettazione (altro telefono) è rifiutata', x);
+  check(!!(await uno(db, `SELECT 1 AS x FROM telepathy_matches WHERE id = $1`, [giusto])) && await chiamateMotore(db) === n0 + 1,
+    'la seconda accettazione non tocca il match e non chiede altre push');
+  x = await rispondi(db, idInv, 'ric', false);
+  check(x.ok === false && x.motivo === 'gia_accettato', 'dopo l\'accettazione non si può più rifiutare', x);
+});
+
+sezione('E2. rifiutare, scadenza, in_match', async (db) => {
+  await disp(db, 'r2', 'R2');
+  let r = await invia(db, 'i2', 'I2', { disp: await idDisp(db, 'r2') });
+  let n0 = await chiamateMotore(db);
+  let x = await rispondi(db, r.id, 'r2', false);
+  check(x.ok === true && x.status === 'declined', 'rifiutare', x);
+  const ult = await uno(db, `SELECT body FROM net.chiamate ORDER BY id DESC LIMIT 1`);
+  check(await chiamateMotore(db) === n0 + 1 && ult.body.tipo === 'rifiutato' && ult.body.invito === r.id,
+    'invito da 10 minuti rifiutato: push «rifiutato» chiesta, col corpo giusto', ult);
+  const nt = await uno(db, `SELECT message FROM notifications WHERE user_nickname = 'I2' AND type = 'telepathy_declined'`);
+  check(!!nt && nt.message === 'R2 ha rifiutato il tuo invito al training telepatico', 'la notifica di rifiuto la scrive la RPC', nt);
+  await online(db, 'r3', 'R3');
+  r = await invia(db, 'i3', 'I3', { online: 'r3' });
+  n0 = await chiamateMotore(db);
+  x = await rispondi(db, r.id, 'r3', false);
+  check(x.ok === true && await chiamateMotore(db) === n0, 'invito da 45 s rifiutato: nessuna push (chi invita è online)', x);
+  await online(db, 'r4', 'R4');
+  r = await invia(db, 'i4', 'I4', { online: 'r4' });
+  await db.query(`UPDATE telepathy_invites SET expires_at = now() - interval '1 second' WHERE id = $1`, [r.id]);
+  x = await rispondi(db, r.id, 'r4', true, await nuovoMatch(db, 'i4', 'r4'));
+  check(x.ok === false && x.motivo === 'scaduto', 'dopo la scadenza: scaduto', x);
+  await online(db, 'r5', 'R5');
+  r = await invia(db, 'i5', 'I5', { online: 'r5' });
+  const mm = await nuovoMatch(db, 'i5', 'r5');
+  await giocato(db, 'r5', 'zzz');
+  x = await rispondi(db, r.id, 'r5', true, mm);
+  check(x.ok === false && x.motivo === 'in_match', 'chi accetta è già in un altro training: in_match', x);
+});
+
+sezione('E3. annullo e letture', async (db) => {
+  const leggi = (sid) => chiama(db, 'get_my_telepathy_invites', { p_session_id: sid, p_password_hash: null });
+  const unoSolo = (id, sid) => chiama(db, 'get_telepathy_invite', { p_invite_id: id, p_session_id: sid, p_password_hash: null });
+  const annulla = (id, sid) => chiama(db, 'cancel_telepathy_invite', { p_invite_id: id, p_session_id: sid, p_password_hash: null });
+  await disp(db, 'b', 'B');
+  const r = await invia(db, 'a', 'A', { disp: await idDisp(db, 'b') });
+  let x = await annulla(r.id, 'b');
+  check(x.ok === false && x.motivo === 'non_trovato', 'annulla solo il mittente', x);
+  const perB = await leggi('b');
+  check(!!perB.in_arrivo && perB.in_arrivo.from_id === 'a' && perB.in_arrivo.nome === 'A', 'il destinatario riceve from_id dell\'invito pending', perB.in_arrivo);
+  check('responded_at' in perB.in_arrivo && 'match_id' in perB.in_arrivo && perB.in_arrivo.responded_at === null && perB.in_arrivo.match_id === null,
+    'in_arrivo porta anche responded_at e match_id (C10, spec §4.1.7)', perB.in_arrivo);
+  const perA = await leggi('a');
+  check(!!perA.in_uscita && perA.in_uscita.nome === 'B' && !('to_id' in perA.in_uscita) && !JSON.stringify(perA).includes('"b"'),
+    'il mittente non riceve mai il to_id', perA);
+  check(typeof perA.adesso === 'string' && !Number.isNaN(Date.parse(perA.adesso)), 'torna l\'ora del server', perA.adesso);
+  x = await unoSolo(r.id, 'c');
+  check(x.ok === false && x.motivo === 'non_trovato', 'get_telepathy_invite di un invito non mio: non trovato', x);
+  x = await unoSolo(r.id, 'b');
+  check(x.ok === true && x.invito.ruolo === 'destinatario' && x.invito.from_id === 'a', 'dal destinatario, pending: from_id presente', x);
+  x = await unoSolo(r.id, 'a');
+  check(x.ok === true && x.invito.ruolo === 'mittente' && x.invito.nome === 'B' && !JSON.stringify(x).includes('"b"') && x.invito.from_id == null,
+    'dal mittente: ruolo mittente, nome del destinatario, nessun to_id', x);
+  x = await annulla(r.id, 'a');
+  check(x.ok === true, 'il mittente annulla', x);
+  x = await annulla(r.id, 'a');
+  check(x.ok === false && x.motivo === 'non_trovato', 'annullare due volte: non_trovato', x);
+  x = await unoSolo(r.id, 'b');
+  check(x.invito.status === 'cancelled' && x.invito.from_id == null, 'annullato: niente più from_id', x.invito);
+  const r2 = await invia(db, 'a', 'A', { disp: await idDisp(db, 'b') });
+  await db.query(`UPDATE telepathy_invites SET expires_at = now() - interval '1 second' WHERE id = $1`, [r2.id]);
+  await leggi('a');
+  check((await uno(db, `SELECT status FROM telepathy_invites WHERE id = $1`, [r2.id])).status === 'expired', 'get_my segna expired gli scaduti');
+  // Accettato: match vivo, poi chiuso.
+  await disp(db, 'd', 'D');
+  const r3 = await invia(db, 'c2', 'C2', { disp: await idDisp(db, 'd') });
+  const m = await nuovoMatch(db, 'c2', 'd');
+  await rispondi(db, r3.id, 'd', true, m);
+  x = await unoSolo(r3.id, 'c2');
+  check(x.invito.status === 'accepted' && x.invito.match_id === m && x.invito.match_attivo === true, 'accettato: match_id e match_attivo', x.invito);
+  await db.query(`UPDATE telepathy_matches SET ended_at = now() WHERE id = $1`, [m]);
+  x = await unoSolo(r3.id, 'c2');
+  check(x.invito.match_attivo === false, 'match chiuso: match_attivo false', x.invito);
+});
+
+sezione('E4. «Non voglio più inviti da questa persona»', async (db) => {
+  const blocca = (sid, a) => chiama(db, 'block_telepathy_inviter', { p_session_id: sid, p_password_hash: null,
+    p_invite_id: a.invito || null, p_disponibilita_id: a.disp || null, p_session_online: a.online || null });
+  const bloccoC = (da, a) => uno(db, `SELECT 1 AS x FROM telepathy_invite_blocks WHERE blocker_session = $1 AND blocked_session = $2`, [da, a]);
+  await disp(db, 'vit', 'Vit');
+  const r = await invia(db, 'dis', 'Dis', { disp: await idDisp(db, 'vit') });
+  let x = await blocca('dis', { invito: r.id });
+  check(x.ok === false && x.motivo === 'non_trovato', 'con l\'invito non blocca il mittente', x);
+  x = await blocca('terzo', { invito: r.id });
+  check(x.ok === false && x.motivo === 'non_trovato', 'né un terzo', x);
+  const n0 = await chiamateMotore(db);
+  x = await blocca('vit', { invito: r.id });
+  check(x.ok === true, 'il destinatario blocca dall\'invito', x);
+  const st = await uno(db, `SELECT status FROM telepathy_invites WHERE id = $1`, [r.id]);
+  check(st.status === 'declined' && await chiamateMotore(db) === n0, 'l\'invito aperto si chiude come rifiutato, senza push', st);
+  await disp(db, 'dis', 'Dis');
+  const lv = await righe(db, `SELECT nickname FROM get_invitable_users('vit', NULL, 'Vit')`);
+  const ld = await righe(db, `SELECT nickname FROM get_invitable_users('dis', NULL, 'Dis')`);
+  check(!lv.some((u) => u.nickname === 'Dis') && !ld.some((u) => u.nickname === 'Vit'), 'da lì non si vedono più, nei due sensi', { lv, ld });
+  const r3 = await invia(db, 'dis', 'Dis', { disp: await idDisp(db, 'vit') });
+  check(r3.ok === false && r3.motivo === 'non_disponibile', 'e non si possono invitare', r3);
+  await disp(db, 'z1', 'Z1');
+  x = await blocca('osp1', { disp: await idDisp(db, 'z1') });
+  check(x.ok === true && !!(await bloccoC('osp1', 'z1')), 'blocco con l\'id opaco, da ospite', x);
+  await online(db, 'z2', 'Z2');
+  x = await blocca('osp1', { online: 'z2' });
+  check(x.ok === true && !!(await bloccoC('osp1', 'z2')), 'blocco con il session_id di chi è online', x);
+  await online(db, 'z3', 'Z3', 31);
+  x = await blocca('osp1', { online: 'z3' });
+  check(x.ok === false && x.motivo === 'non_trovato', 'online da più di 30 s: non trovato', x);
+  x = await blocca('osp1', {});
+  check(x.ok === false && x.motivo === 'dati_non_validi', 'nessun parametro: dati_non_validi', x);
+});
+
+// Ruling C7: ogni RPC con identità respinge la credenziale sbagliata di un iscritto, senza cambiare nulla.
+sezione('E5. credenziale sbagliata: Auth failed e nessuna modifica', async (db) => {
+  const sbagliata = async (p) => { const m = await errore(p); return !!m && m.includes('Auth failed'); };
+  const stato = async (id) => (await uno(db, `SELECT status FROM telepathy_invites WHERE id = $1`, [id])).status;
+  // Elena, iscritta, è la destinataria di un invito.
+  await iscritto(db, 'regE', 'Elena', 'hE');
+  await abbonamento(db, 'regE');
+  await chiama(db, 'set_telepathy_availability', { p_session_id: 'regE', p_password_hash: 'hE', p_nickname: null, p_enabled: true });
+  const dall = await invia(db, 'mitt', 'Mitt', { disp: await idDisp(db, 'regE') });
+  check(dall.ok === true, 'invito di prova verso un\'iscritta', dall);
+  const mt = await nuovoMatch(db, 'mitt', 'regE');
+  check(await sbagliata(rispondi(db, dall.id, 'regE', true, mt, 'xx')), 'respond (accetta): credenziale sbagliata, Auth failed');
+  check(await sbagliata(rispondi(db, dall.id, 'regE', false, null, 'xx')), 'respond (rifiuta): credenziale sbagliata, Auth failed');
+  check(await stato(dall.id) === 'pending', 'respond: l\'invito resta pending e nessuna push chiesta', await stato(dall.id));
+  check(await sbagliata(chiama(db, 'get_my_telepathy_invites', { p_session_id: 'regE', p_password_hash: 'xx' })), 'get_my_telepathy_invites: Auth failed');
+  check(await sbagliata(chiama(db, 'get_telepathy_invite', { p_invite_id: dall.id, p_session_id: 'regE', p_password_hash: 'xx' })), 'get_telepathy_invite: Auth failed');
+  check(await sbagliata(chiama(db, 'block_telepathy_inviter', { p_session_id: 'regE', p_password_hash: 'xx', p_invite_id: dall.id })), 'block_telepathy_inviter: Auth failed');
+  check(!(await uno(db, `SELECT 1 AS x FROM telepathy_invite_blocks WHERE blocker_session = 'regE'`)) && await stato(dall.id) === 'pending',
+    'block: nessun blocco scritto, invito invariato');
+  // Annullo: Franca, iscritta, è la mittente.
+  await iscritto(db, 'regF', 'Franca', 'hF');
+  await disp(db, 'dest2', 'Dest2');
+  const dalF = await chiama(db, 'send_telepathy_invite', { p_session_id: 'regF', p_password_hash: 'hF', p_nickname: null,
+    p_disponibilita_id: await idDisp(db, 'dest2'), p_session_online: null });
+  check(dalF.ok === true, 'invito di prova da un\'iscritta', dalF);
+  check(await sbagliata(chiama(db, 'cancel_telepathy_invite', { p_invite_id: dalF.id, p_session_id: 'regF', p_password_hash: 'xx' })), 'cancel: Auth failed');
+  check(await stato(dalF.id) === 'pending', 'cancel: l\'invito resta pending');
+  const ok = await chiama(db, 'cancel_telepathy_invite', { p_invite_id: dalF.id, p_session_id: 'regF', p_password_hash: 'hF' });
+  check(ok.ok === true && await stato(dalF.id) === 'cancelled', 'con la credenziale giusta l\'annullo funziona', ok);
+});
+
 // ── esecuzione ──
 (async () => {
   for (const [nome, fn, opzioni] of sezioni) {
