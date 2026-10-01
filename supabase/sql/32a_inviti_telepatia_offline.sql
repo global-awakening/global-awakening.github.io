@@ -19,8 +19,14 @@
 --    delete_my_account senza il blocco «NUOVO (32)».
 -- ⚠️ Se si rilancia la 23_, rilanciare subito dopo anche la 32a: la 23_ rimette il job con una
 --    sola chiamata, e le push «scaduto» smettono di partire senza nessun errore.
--- Ritorno indietro: 32a_ritorno.sql (indici unici, CHECK, trigger di guardia) + rilancio della
--- 23_ (il job). Tabelle, colonne e RPC nuove restano: senza l'app nuova sono inerti.
+-- ⚠️ Se si rilancia la 24_ (o la 06_), rilanciare subito dopo anche la 32a: rimette la
+--    export_my_account senza le voci «NUOVO (32)», in silenzio (l'export smette di contenere
+--    inviti, disponibilità e blocchi, senza nessun errore).
+-- ⚠️ Lo stesso se si rilancia la 17_, la 18_ o la 22_ (o la 06_; per la 30_/31_ vedi sopra):
+--    rimettono la delete_my_account senza il blocco «NUOVO (32)», in silenzio.
+-- Ritorno indietro: 32a_ritorno.sql (indici unici, CHECK, NOT NULL su status, trigger di
+-- guardia) + rilancio della 23_ (il job). Tabelle, colonne e RPC nuove restano: senza l'app
+-- nuova sono inerti.
 --
 -- Idempotente, in una transazione. Nessun \r nel blob git (git show HEAD:<file> | grep -c $'\r' → 0).
 -- ============================================================================
@@ -126,6 +132,10 @@ END $$;
 ALTER TABLE telepathy_invites DROP CONSTRAINT IF EXISTS telepathy_invites_stato_valido;
 ALTER TABLE telepathy_invites ADD CONSTRAINT telepathy_invites_stato_valido
   CHECK (status IN ('pending', 'accepted', 'declined', 'cancelled', 'expired'));
+-- Il CHECK da solo lascia passare NULL (un CHECK NULL non è falso). La normalizzazione qui sopra
+-- ha già portato a expired ogni status NULL, quindi la colonna può diventare obbligatoria. Le app
+-- vecchie scrivono sempre uno stato esplicito ('pending' all'invio). Rilanciarlo non costa niente.
+ALTER TABLE telepathy_invites ALTER COLUMN status SET NOT NULL;
 
 -- Un invito aperto per mittente e uno per destinatario. now() non può stare nel predicato: le
 -- RPC segnano expired gli scaduti delle persone coinvolte prima di scrivere.
@@ -144,6 +154,12 @@ CREATE INDEX IF NOT EXISTS telepathy_invites_match        ON telepathy_invites (
 -- fra un anno e blocca qualcuno con «gia_invitato». Chi scrive si riconosce da current_user:
 -- dentro le RPC SECURITY DEFINER è il proprietario delle funzioni; una scrittura diretta da
 -- PostgREST è anon o authenticated. Non è SECURITY DEFINER, per lo stesso motivo.
+-- Lo stato, da una scrittura diretta, si sposta solo come lo spostano le app vecchie: da pending
+-- ad accepted o declined (src/app.jsx: acceptInvite e declineInvite). Ogni altro passaggio
+-- (portare un invito altrui a expired o cancelled, che farebbe partire una push «scaduto» al
+-- mittente; riaprire a pending un invito chiuso; cambiare uno stato già chiuso) è rifiutato con
+-- un errore: la spec §6 vuole che durante la tenuta la finestra non possa far partire push.
+-- Le app vecchie non guardano l'errore dell'update, quindi non si rompono.
 CREATE OR REPLACE FUNCTION public.telepathy_invites_guardia()
 RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 BEGIN
@@ -164,6 +180,11 @@ BEGIN
     NEW.match_id     := NULL;
     NEW.responded_at := NULL;
   ELSE
+    IF NEW.status IS DISTINCT FROM OLD.status
+       AND NOT (OLD.status = 'pending' AND coalesce(NEW.status IN ('accepted', 'declined'), false)) THEN
+      RAISE EXCEPTION 'telepathy_invites: con una scrittura diretta lo stato passa solo da pending ad accepted o declined (qui da % a %)',
+        OLD.status, coalesce(NEW.status, 'NULL') USING ERRCODE = 'check_violation';
+    END IF;
     -- Un update diretto cambia solo lo stato: tutto il resto torna com'era.
     NEW.id           := OLD.id;
     NEW.created_at   := OLD.created_at;

@@ -56,3 +56,16 @@ export function decidiPush(tipo, inv, adessoMs, destinatarioDisponibile) {
   }
   return null;
 }
+
+/**
+ * La prenotazione su telepathy_invite_pushes è stata rifiutata: è «niente da fare» o un guasto?
+ * 23505: la push è già prenotata (doppione). 23503 (chiave esterna): l'invito o l'abbonamento sono
+ * spariti fra la lettura e la prenotazione — succede davvero, non solo nei test: delete_my_account,
+ * le app vecchie che cancellano gli inviti durante la tenuta, la pulizia quotidiana, o
+ * notify-ritual-start che toglie nello stesso istante un abbonamento morto. Una riga sparita vuol
+ * dire che non c'è niente da mandare (spec §4.2: 200 quando non c'è niente da fare); trattarla da
+ * guasto darebbe un 500 e quindi l'email della sentinella per niente. Ogni altro codice è guasto.
+ */
+export function prenotazioneSaltata(codice) {
+  return codice === '23505' || codice === '23503';
+}

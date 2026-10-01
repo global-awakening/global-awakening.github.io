@@ -14,7 +14,7 @@ const ko = (n, d) => { console.error('❌ ' + n + ' — ' + d); falliti++; };
 const atteso = (n, a, b) => (a === b ? ok(n) : ko(n, `atteso ${JSON.stringify(b)}, ottenuto ${JSON.stringify(a)}`));
 
 (async () => {
-  const { leggiRichiesta, decidiPush, eraDaDieciMinuti } = await import(PERCORSO);
+  const { leggiRichiesta, decidiPush, eraDaDieciMinuti, prenotazioneSaltata } = await import(PERCORSO);
   const ID = '3f0c2b1e-8a4d-4c6e-9b7a-1d2e3f4a5b6c';
   const adesso = Date.now();
   const iso = (ms) => new Date(adesso + ms).toISOString();
@@ -73,6 +73,15 @@ const atteso = (n, a, b) => (a === b ? ok(n) : ko(n, `atteso ${JSON.stringify(b)
   atteso('scaduto da 10 minuti: al mittente', d && `${d.a}/${d.kind}/${d.ttl}`, 'mittente/scaduto/3600');
   atteso('scaduto da 45 s: niente', decidiPush('scaduto', invito({ status: 'expired', created_at: iso(-100000), expires_at: iso(-55000) }), adesso), null);
   atteso('nessun invito: niente', decidiPush('invito', null, adesso, true), null);
+
+  // --- prenotazione rifiutata dal database ----------------------------------
+  // 23505: già prenotata (doppione). 23503: l'invito o l'abbonamento sono spariti nel frattempo
+  // (account cancellato, app vecchie che cancellano, abbonamento morto tolto da notify-ritual-start).
+  // In entrambi i casi non c'è niente da fare: saltata, non guasto (niente 500, niente email).
+  atteso('prenotazione 23505: saltata', prenotazioneSaltata('23505'), true);
+  atteso('prenotazione 23503 (riga sparita): saltata', prenotazioneSaltata('23503'), true);
+  atteso('prenotazione con altro codice: guasto', prenotazioneSaltata('42501'), false);
+  atteso('prenotazione senza codice: guasto', prenotazioneSaltata(undefined), false);
 
   console.log(`\n${passati} passati, ${falliti} falliti`);
   process.exit(falliti === 0 ? 0 : 1);

@@ -125,6 +125,61 @@ sezione('A3. guardia sulle scritture dirette', async (db) => {
   check(priv.con_push === true && priv.via_diretta === false && priv.s >= 599, 'scrittura privilegiata (RPC, servizio): le colonne restano quelle scritte', priv);
 });
 
+// Revisione finale (M1 e status NULL): da una scrittura diretta lo stato si sposta solo come lo
+// spostano le app vecchie, da pending ad accepted o declined. Ogni altro passaggio farebbe
+// partire una push al mittente (expired → «scaduto») o riaprirebbe un invito chiuso.
+sezione('A5. guardia: passaggi di stato ammessi alle scritture dirette', async (db) => {
+  let n = 0;
+  // Scrittura privilegiata (come le RPC): ogni invito con il suo mittente e destinatario.
+  const nuovo = async (status) => {
+    n++;
+    return (await uno(db, `INSERT INTO telepathy_invites (from_id, from_name, to_id, to_name, status)
+      VALUES ($1, 'M', $2, 'D', $3) RETURNING id`, [`m${n}`, `d${n}`, status])).id;
+  };
+  const stato = async (id) => (await uno(db, `SELECT status FROM telepathy_invites WHERE id = $1`, [id])).status;
+  const anonStato = (id, s) => errore(comeAnon(db, () => db.query(`UPDATE telepathy_invites SET status = $2 WHERE id = $1`, [id, s])));
+
+  const col = await uno(db, `SELECT is_nullable FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'telepathy_invites' AND column_name = 'status'`);
+  check(col.is_nullable === 'NO', 'status è NOT NULL dopo la 32a', col);
+  let id = await nuovo('pending');
+  let m = await anonStato(id, null);
+  check(!!m && (await stato(id)) === 'pending', 'anon: UPDATE status = NULL rifiutato, l\'invito resta pending', m);
+  m = await errore(db.query(`UPDATE telepathy_invites SET status = NULL WHERE id = $1`, [id]));
+  check(!!m && /null/i.test(m), 'anche dalle RPC status = NULL è rifiutato (NOT NULL)', m);
+
+  id = await nuovo('pending');
+  m = await anonStato(id, 'accepted');
+  check(!m && (await stato(id)) === 'accepted', 'anon: pending → accepted ammesso (app vecchia che accetta)', m);
+  id = await nuovo('pending');
+  m = await anonStato(id, 'declined');
+  check(!m && (await stato(id)) === 'declined', 'anon: pending → declined ammesso (app vecchia che rifiuta)', m);
+
+  const vietati = [['pending', 'expired'], ['pending', 'cancelled'], ['declined', 'pending'], ['expired', 'pending'],
+    ['accepted', 'pending'], ['accepted', 'declined'], ['declined', 'accepted'], ['expired', 'accepted'], ['declined', 'expired'],
+    ['cancelled', 'declined']];
+  for (const [da, a] of vietati) {
+    id = await nuovo(da);
+    m = await anonStato(id, a);
+    check(!!m && /solo da pending ad accepted o declined/.test(m) && (await stato(id)) === da,
+      `anon: ${da} → ${a} rifiutato con un errore chiaro, lo stato resta ${da}`, m);
+  }
+  check((await chiamateMotore(db)) === 0, 'nessuna push chiesta alla Edge Function da questi update');
+
+  // Gli update che non toccano lo stato restano come prima: nessun errore, nessun effetto.
+  id = await nuovo('declined');
+  m = await errore(comeAnon(db, () => db.query(`UPDATE telepathy_invites SET to_name = 'Altro', status = 'declined' WHERE id = $1`, [id])));
+  const r = await uno(db, `SELECT status, to_name FROM telepathy_invites WHERE id = $1`, [id]);
+  check(!m && r.status === 'declined' && r.to_name === 'D', 'anon: update senza cambio di stato su un invito chiuso, ignorato come prima', { m, r });
+
+  // La strada privilegiata non ha la regola: le RPC e la migration scrivono ogni passaggio.
+  id = await nuovo('pending');
+  m = await errore(db.query(`UPDATE telepathy_invites SET status = 'expired' WHERE id = $1`, [id]));
+  check(!m && (await stato(id)) === 'expired', 'privilegiato: pending → expired ammesso', m);
+  m = await errore(db.query(`UPDATE telepathy_invites SET status = 'cancelled' WHERE id = $1`, [id]));
+  check(!m && (await stato(id)) === 'cancelled', 'privilegiato: expired → cancelled ammesso', m);
+});
+
 sezione('A4. tabelle nuove chiuse ad anon', async (db) => {
   for (const t of ['telepathy_availability', 'telepathy_invite_blocks', 'telepathy_invite_pushes']) {
     const m = await errore(comeAnon(db, () => db.query(`SELECT * FROM ${t}`)));
@@ -789,6 +844,9 @@ sezione('F4. rilancio e ritorno indietro', async (db) => {
   check((await uno(db, `SELECT count(*)::int n FROM cron.job WHERE jobname = 'notify-ritual-start'`)).n === 1, 'rilancio: sempre un solo job');
   check(!(await errore(applicaFile(db, 'supabase/sql/32a_ritorno.sql'))), '32a_ritorno si applica');
   check(!(await errore(applicaFile(db, 'supabase/sql/32a_ritorno.sql'))), '32a_ritorno si applica anche due volte (idempotente)');
+  const nullable = async () => (await uno(db, `SELECT is_nullable FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'telepathy_invites' AND column_name = 'status'`)).is_nullable;
+  check((await nullable()) === 'YES', 'il ritorno toglie anche il NOT NULL su status (forma di prima della 32a)');
   await comeAnon(db, () => db.query(`INSERT INTO telepathy_invites (from_id, from_name, to_id, to_name) VALUES ('old', 'Old', 'dup', 'Dup'), ('old2', 'Old2', 'dup', 'Dup')`));
   check((await uno(db, `SELECT count(*)::int n FROM telepathy_invites WHERE to_id = 'dup' AND status = 'pending'`)).n === 2,
     'dopo il ritorno le app vecchie scrivono come prima della 32a (anche due pending per destinatario)');
@@ -797,6 +855,7 @@ sezione('F4. rilancio e ritorno indietro', async (db) => {
     'dopo il rilancio resta un solo pending per destinatario (il più recente)');
   const idx = await righe(db, `SELECT indexname FROM pg_indexes WHERE tablename = 'telepathy_invites' AND indexname LIKE 'telepathy_invites_un_pending_%'`);
   check(idx.length === 2, 'gli indici unici sono tornati', idx);
+  check((await nullable()) === 'NO', 'dopo il rilancio status è di nuovo NOT NULL');
 });
 
 // Pendenza del Task 7: il rilancio dopo il ritorno non è una «prima applicazione».

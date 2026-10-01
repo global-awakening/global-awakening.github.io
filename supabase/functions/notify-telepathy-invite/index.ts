@@ -22,7 +22,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.116.0';
 import webpush from 'npm:web-push@3.6.7';
 import { decidiDopoErrore } from '../_shared/esito.mjs';
-import { leggiRichiesta, decidiPush } from './decisioni.mjs';
+import { leggiRichiesta, decidiPush, prenotazioneSaltata } from './decisioni.mjs';
 
 const COLONNE = 'id, from_id, from_name, to_id, to_name, status, created_at, expires_at, match_id, con_push';
 
@@ -89,7 +89,10 @@ Deno.serve(async (req) => {
         .from('telepathy_invite_pushes')
         .insert({ invite_id: invito.id, subscription_id: ab.id, kind: decisione.kind });
       if (eDedup) {
-        if ((eDedup as { code?: string }).code === '23505') saltate++;
+        // 23505 doppione, 23503 invito o abbonamento spariti nel frattempo (account cancellato,
+        // app vecchie che cancellano, abbonamento morto tolto da notify-ritual-start): niente da
+        // fare, non un guasto. Vedi prenotazioneSaltata in decisioni.mjs.
+        if (prenotazioneSaltata((eDedup as { code?: string }).code)) saltate++;
         else guasti.push(`prenotazione ${invito.id}: ${eDedup.message}`);
         continue;
       }

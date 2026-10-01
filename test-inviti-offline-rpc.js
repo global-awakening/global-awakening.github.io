@@ -14,7 +14,7 @@
  * l'abbonamento finto viene comunque cancellato dalla pulizia.
  * Pulizia nel finally, con filtri sui soli due session_id / nickname di questo lancio.
  */
-const { getServiceKey, purge } = require('./test-helpers');
+const { getServiceKey, purge, serviceFetch } = require('./test-helpers');
 
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
 const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
@@ -27,6 +27,13 @@ const check = (c, m, x) => {
   if (c) { console.log('  ✅ ' + m); passati++; }
   else { console.log('  ❌ ' + m + (x !== undefined ? ' — ' + JSON.stringify(x) : '')); falliti++; process.exitCode = 1; }
 };
+
+// Con la chiave di servizio: le prenotazioni e i residui non sono leggibili dall'app.
+async function righe(percorso) {
+  const r = await serviceFetch(percorso, { method: 'GET' });
+  return r.status === 200 && Array.isArray(r.body) ? r.body : null;
+}
+const aspetta = (ms) => new Promise((fatto) => setTimeout(fatto, ms));
 
 async function rpc(fn, corpo) {
   const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
@@ -75,6 +82,22 @@ const abbona = (p) => rpc('register_push_subscription', { p_session_id: p.sid,
     check(secondi > 590 && secondi <= 600, 'B offline: 10 minuti dall\'ora del server', secondi);
     if (!invito) return;
 
+    // La push parte con pg_net DOPO il commit, in modo asincrono: prima di andare avanti (e prima
+    // della pulizia) si aspetta che la Edge Function abbia prenotato la push d'invito. È anche
+    // l'unica prova che la funzione sia stata raggiunta. Se B rifiutasse prima, la funzione
+    // troverebbe l'invito chiuso e non prenoterebbe niente. Ripiego: se il servizio push avesse
+    // dichiarato morto l'abbonamento finto (404/410), la funzione lo cancella e la prenotazione
+    // sparisce con lui a cascata; anche quello prova che la funzione è stata raggiunta.
+    let raggiunta = null;
+    for (let i = 0; i < 20 && !raggiunta; i++) {
+      const pren = await righe(`telepathy_invite_pushes?invite_id=eq.${invito}&kind=eq.invito&select=invite_id`);
+      if (pren && pren.length > 0) { raggiunta = 'prenotazione'; break; }
+      const ab = await righe(`push_subscriptions?session_id=eq.${B.sid}&select=id,failure_count`);
+      if (ab && (ab.length === 0 || ab.some((x) => (x.failure_count ?? 0) > 0))) { raggiunta = 'abbonamento toccato'; break; }
+      await aspetta(500);
+    }
+    check(raggiunta !== null, 'la Edge Function è stata raggiunta e ha prenotato la push d\'invito (≤10 s)', raggiunta);
+
     r = await rpc('send_telepathy_invite', { ...tu(A), p_nickname: A.nick, p_disponibilita_id: riga.id, p_session_online: null });
     check(r.j && r.j.ok === false && r.j.motivo === 'invito_in_corso', 'un secondo invito di A: invito_in_corso', r.j);
 
@@ -118,6 +141,26 @@ const abbona = (p) => rpc('register_push_subscription', { p_session_id: p.sid,
       `push_subscriptions?session_id=in.(${A.sid},${B.sid})`,
       `notifications?user_nickname=in.(${A.nick},${B.nick})`,
     ], { label: 'inviti-rpc' });
+
+    // Residui: le stesse righe, contate dopo la pulizia con gli stessi filtri. Se ne resta anche
+    // una il test fallisce: sul database vero non si lasciano tracce. Le prenotazioni seguono gli
+    // inviti e gli abbonamenti a cascata.
+    const residui = [
+      `telepathy_invites?or=(from_id.in.(${A.sid},${B.sid}),to_id.in.(${A.sid},${B.sid}))&select=id`,
+      `telepathy_availability?session_id=in.(${A.sid},${B.sid})&select=session_id`,
+      `telepathy_invite_blocks?blocker_session=in.(${A.sid},${B.sid})&select=blocker_session`,
+      `push_subscriptions?session_id=in.(${A.sid},${B.sid})&select=id`,
+      `notifications?user_nickname=in.(${A.nick},${B.nick})&select=id`,
+    ];
+    let restano = 0;
+    for (const p of residui) {
+      const r = await righe(p);
+      if (r === null) { check(false, 'conteggio dei residui non riuscito', p); continue; }
+      restano += r.length;
+    }
+    check(restano === 0, 'dopo la pulizia non resta nessuna riga di prova', restano);
+    // Qui e non dopo il finally: anche quando il test si ferma prima (return nel try), il
+    // riepilogo si stampa.
+    console.log(`\n${passati} passati, ${falliti} falliti`);
   }
-  console.log(`\n${passati} passati, ${falliti} falliti`);
 })();
