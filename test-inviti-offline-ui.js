@@ -175,6 +175,109 @@ scenario('rientro_all_avvio', async (browser) => {
   ok('A riapre l\'app entro 3 minuti ed entra da sola/o nel match accettato');
 });
 
+// ════ Task 20: chi riceve ══════════════════════════════════════════════════
+scenario('attesa_di_chi_accetta', async (browser) => {
+  const A = await entra(browser, 'A4');
+  const B = await entra(browser, 'B4');
+  await aTelepatia(A);
+  await rigaOnline(A, B).waitFor({ timeout: 20000 });
+  await rigaOnline(A, B).locator('button').click();
+  const inv = await attendi(() => pendingDa(A));
+  // runBeforeUnload (ruling m1): la chiusura vera, con beforeunload, come sul telefono.
+  await A.page.close({ runBeforeUnload: true });
+  await servizio(`online_users?id=eq.${q(A.sid)}`, { method: 'DELETE' });
+  await B.page.locator('.invite-toast [data-test="btn-accetta"]').click({ timeout: 15000 });
+  await B.page.locator('[data-test="attesa-invitante"]').waitFor({ timeout: 10000 });
+  ok('chi accetta vede «In attesa che … entri»');
+  await pausa(95000);   // oltre i 35 s di checkPartnerLeft e i 90 s del timeout A3
+  check(await B.page.locator('[data-test="attesa-invitante"]').isVisible(), 'dopo 95 s è ancora in attesa (spenti i controlli dei 35 s e dei 90 s)');
+  await sposta('telepathy_invites', `id=eq.${inv.id}`, { responded_at: faSecondi(181) });
+  await B.page.locator('[data-test="avviso-inviti"]').filter({ hasText: A.nick }).waitFor({ timeout: 10000 });
+  const m = (await leggi('telepathy_matches', `user2_id=eq.${q(B.sid)}&select=ended_at`))[0];
+  check(!m || !!m.ended_at, 'a 3 minuti dall\'accettazione (ora del server) il match si chiude e si torna alla lobby', m);
+});
+
+scenario('rifiuto_e_due_schede', async (browser) => {
+  const A = await entra(browser, 'A5');
+  const B = await entra(browser, 'B5');
+  const B2 = await B.ctx.newPage();   // la stessa persona su una seconda scheda
+  await B2.goto(APP_URL);
+  await aTelepatia(A);
+  await rigaOnline(A, B).waitFor({ timeout: 20000 });
+  await rigaOnline(A, B).locator('button').click();
+  await B.page.locator('.invite-toast').waitFor({ timeout: 15000 });
+  await B2.locator('.invite-toast').waitFor({ timeout: 15000 });
+  await B.page.locator('.invite-toast [data-test="btn-accetta"]').click();
+  await B2.locator('.invite-toast [data-test="btn-accetta"]').click({ timeout: 5000 }).catch(() => {});
+  const secondo = await attendi(async () => (await B2.locator('[data-test="avviso-inviti"]').count()) > 0
+    || (await B2.locator('.invite-toast').count()) === 0, 10000);
+  check(!!secondo, 'la seconda scheda non entra in un secondo training: messaggio o banner sparito', null);
+  const aperti = await leggi('telepathy_matches', `user2_id=eq.${q(B.sid)}&ended_at=is.null&select=id`);
+  check(aperti.length === 1, 'resta un match solo (quello della seconda scheda si cancella)', aperti);
+  await B.page.locator('[data-test="partner-nome"]').waitFor({ timeout: 10000 }).catch(() => {});
+  const C = await entra(browser, 'C5');
+  await aTelepatia(C);
+  const D = await entra(browser, 'D5');
+  await rigaOnline(C, D).waitFor({ timeout: 20000 });
+  await rigaOnline(C, D).locator('button').click();
+  await D.page.locator('.invite-toast [data-test="btn-rifiuta"]').click({ timeout: 15000 });
+  await C.page.locator('[data-test="avviso-inviti"]').filter({ hasText: /non può ora|can't right now/ }).waitFor({ timeout: 10000 });
+  ok('D rifiuta: C legge «… non può ora»');
+});
+
+scenario('campanella_e_training', async (browser) => {
+  const A = await entra(browser, 'A6');
+  const B = await entra(browser, 'B6');
+  await aTelepatia(A);
+  await rigaOnline(A, B).waitFor({ timeout: 20000 });
+  await rigaOnline(A, B).locator('button').click();
+  const inv = await attendi(() => pendingDa(A));
+  await sposta('telepathy_invites', `id=eq.${inv.id}`, { expires_at: faSecondi(1) });
+  await B.page.locator('.invite-toast').waitFor({ state: 'detached', timeout: 15000 });
+  ok('scaduto sul server, il banner di chi riceve sparisce (niente più soglia dei 120 s)');
+  // Un invito mentre si gioca: lo scrive il test col ruolo di servizio (il server, giustamente,
+  // rifiuta di invitare chi è in un training).
+  const C = await entra(browser, 'C6');
+  await aTelepatia(C);
+  await rigaOnline(C, B).waitFor({ timeout: 20000 });
+  await rigaOnline(C, B).locator('button').click();
+  await B.page.locator('.invite-toast [data-test="btn-accetta"]').click({ timeout: 15000 });
+  await B.page.locator('[data-test="partner-nome"]').waitFor({ timeout: 15000 });
+  await servizio('telepathy_invites', { method: 'POST', body: JSON.stringify({
+    from_id: A.sid, from_name: A.nick, to_id: B.sid, to_name: B.nick, status: 'pending',
+    expires_at: new Date(Date.now() + 600000).toISOString() }) });
+  await B.page.locator('[data-test="invito-durante-training"]').waitFor({ timeout: 15000 });
+  check(await B.page.locator('[data-test="invito-durante-training"] [data-test="btn-accetta"]').count() === 0,
+    'durante un training l\'invito mostra solo «Rifiuta»');
+  check(await B.page.locator('[data-test="partner-nome"]').isVisible(), 'e il training continua');
+});
+
+// Ruling m9 (prove poco costose): la campanella segue il server e chi invita legge «scaduto».
+// «Annullato» non ha una prova UI qui: chi riceve vede solo sparire il banner, e il messaggio
+// compare solo se tocca «Accetta» nei ≤4 s fra il ritiro e il giro successivo (corsa).
+scenario('campanella_e_scaduto', async (browser) => {
+  const A = await entra(browser, 'A8');
+  const B = await entra(browser, 'B8');
+  await aTelepatia(A);
+  await rigaOnline(A, B).waitFor({ timeout: 20000 });
+  await rigaOnline(A, B).locator('button').click();
+  const inv = await attendi(() => pendingDa(A));
+  await B.page.locator('.invite-toast').waitFor({ timeout: 15000 });
+  // Il banner d'invito sta sopra la campanella (stesso angolo): il clic si consegna all'elemento.
+  await B.page.locator('button[aria-label="Notifications"], button[aria-label="Notifiche"]').first().dispatchEvent('click');
+  const riga = B.page.locator('[data-test="notifica"]').filter({ hasText: A.nick });
+  await riga.waitFor({ timeout: 20000 });
+  check(await riga.locator('button').filter({ hasText: 'Vai' }).count() === 1, 'invito aperto sul server: la campanella mostra «Vai»');
+  await sposta('telepathy_invites', `id=eq.${inv.id}`, { expires_at: faSecondi(1) });
+  await A.page.locator('[data-test="avviso-inviti"]').filter({ hasText: /scaduto|expired/ }).waitFor({ timeout: 10000 });
+  ok('chi invita legge «L\'invito è scaduto»');
+  await riga.locator('button').filter({ hasText: 'OK' }).waitFor({ timeout: 15000 });
+  check(/scaduto|expired/i.test(await riga.innerText()), 'scaduto sul server: la stessa notifica diventa «Scaduto» con «OK» (niente soglia dei 120 s)', await riga.innerText());
+  await riga.locator('button').filter({ hasText: 'OK' }).dispatchEvent('click');
+  await pausa(1000);
+  check(await B.page.locator('.invite-toast').count() === 0, 'toccarla la chiude soltanto: nessun banner d\'invito');
+});
+
 // ── esecuzione ──
 (async () => {
   if (!KEY) { console.log('⛔ serve SUPABASE_SERVICE_KEY in .env.test (spostare i tempi e ripulire): non parto.'); process.exit(2); }

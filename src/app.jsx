@@ -1374,6 +1374,40 @@
             if (error) return { ok: false, motivo: IH ? IH.chiaveDaErrore(error) : 'errore' };
             return data;
           };
+          // L'invito in arrivo lo dice solo il server (ce n'è al massimo uno): loop delle presenze,
+          // campanella e push arrivate in primo piano passano tutti da qui. Con un errore (rete,
+          // Auth failed) il banner resta com'è: un errore non vale «l'invito non c'è più».
+          const aggiornaInviti = async () => {
+            const r = await rpcInviti('get_my_telepathy_invites', {});
+            if (!r || !r.ok) return null;
+            if (IH) setScartoOrologio(IH.scarto(r.adesso, Date.now()));
+            const a = r.in_arrivo;
+            // I blocchi li filtra già il server; isBlocked copre la lista locale appena cambiata.
+            setIncomingInvite(a && !isBlocked(a.nome)
+              ? { from_id: a.from_id, from_name: a.nome, invite_id: a.id, expires_at: a.expires_at } : null);
+            return r;
+          };
+          React.useEffect(() => { if (giroInviti) aggiornaInviti(); }, [giroInviti]);
+          // Il service worker avvisa quando una push d'invito arriva con l'app in primo piano (e
+          // non la mostra): si rilegge subito. Un messaggio perso lo recupera il giro delle
+          // presenze (4 s). «apri-invito» (tocco sulla notifica con l'app già aperta): per ora si
+          // rilegge e si conferma, così il service worker non ricarica la pagina in mezzo a un
+          // training; aprire l'invito giusto (e azione=blocca) è del Task 21, che estende questo
+          // gestore invece di aggiungerne un secondo.
+          React.useEffect(() => {
+            if (!('serviceWorker' in navigator)) return;
+            const ascolta = (ev) => {
+              const d = ev.data || {};
+              if (d.tipo === 'apri-invito') {
+                setGiroInviti((x) => x + 1);
+                if (ev.ports && ev.ports[0]) ev.ports[0].postMessage({ ok: true });
+                return;
+              }
+              if (['invito', 'accettato', 'rifiutato', 'scaduto'].includes(d.tipo)) setGiroInviti((x) => x + 1);
+            };
+            navigator.serviceWorker.addEventListener('message', ascolta);
+            return () => navigator.serviceWorker.removeEventListener('message', ascolta);
+          }, []);
           // I conti alla rovescia ticchettano solo quando c'è qualcosa da contare.
           React.useEffect(() => {
             if (!invitoInUscita && !attesaInvitante) return;
@@ -1509,22 +1543,9 @@
                   }));
                   setOnlineUsersForTelepathy(usersWithStatus.filter(u => u.nickname !== nickname && !isBlocked(u.nickname)));
 
-                  // Controlla inviti in arrivo
-                  const { data: invites } = await supabase.from('telepathy_invites')
-                    .select('*').eq('to_id', sessionId).eq('status', 'pending');
-                  // SP1: un invito da un utente bloccato non viene mostrato.
-                  const visibili = (invites || []).filter(i => !isBlocked(i.from_name));
-                  if (visibili.length > 0) {
-                    const inv = visibili[0];
-                    setIncomingInvite({ from_id: inv.from_id, from_name: inv.from_name, invite_id: inv.id });
-                  } else {
-                    setIncomingInvite(null);
-                  }
-
-                  // Pulizia inviti vecchi (> 2 minuti)
-                  await supabase.from('telepathy_invites').delete()
-                    .eq('to_id', sessionId)
-                    .lt('created_at', new Date(Date.now() - 120000).toISOString());
+                  // Invito in arrivo: dal server (niente più SELECT diretta né pulizia dei 2 minuti:
+                  // la scadenza la decide expires_at, e un invito da 10 minuti resta valido).
+                  await aggiornaInviti();
                 }
               } catch (err) {
                 console.warn('Presence update failed:', err);
@@ -2348,8 +2369,9 @@
                 setWaitingForPartner(false);
                 return;
               }
-              // Controlla last_seen del partner
-              if (partner?.id) {
+              // Controlla last_seen del partner. Non mentre chi ha accettato aspetta chi ha invitato:
+              // quello è offline per definizione e l'attesa finirebbe dopo 35 s (spec §4.4).
+              if (partner?.id && !attesaInvitanteRef.current) {
                 const { data: pu } = await supabase.from('online_users').select('last_seen').eq('id', partner.id);
                 if (pu && pu.length > 0) {
                   const stale = Date.now() - new Date(pu[0].last_seen).getTime() > 35000;
@@ -2638,12 +2660,13 @@
           // l'effetto si ri-arma; 90s di attesa continua senza progressi → leaveSession
           // (che, con A1, fa uscire dalla sessione anche il partner via flag/rilevamento).
           useEffect(() => {
-            const waitingOnPartner = !!matchId && !sessionEnded && !partnerDisconnected && !showResult
+            // Nell'attesa di chi ha invitato (fino a 3 minuti) il timeout A3 non parte.
+            const waitingOnPartner = !!matchId && !attesaInvitante && !sessionEnded && !partnerDisconnected && !showResult
               && (waitingForPartner || (showLevelBanner && !amIChooser) || (effectiveRole === 'receiver' && !senderHasSent));
             if (!waitingOnPartner) return;
             const timer = setTimeout(() => { leaveSession(); }, 90000);
             return () => clearTimeout(timer);
-          }, [matchId, sessionEnded, partnerDisconnected, showResult, waitingForPartner, showLevelBanner, amIChooser, effectiveRole, senderHasSent, roundCount, sessionMatches]);
+          }, [matchId, sessionEnded, partnerDisconnected, showResult, waitingForPartner, showLevelBanner, amIChooser, effectiveRole, senderHasSent, roundCount, sessionMatches, attesaInvitante]);
 
           // Una sola strada per ogni invito, anche verso chi è online: send_telepathy_invite
           // controlla identità, blocchi nei due sensi, tetti e disponibilità, scrive l'invito e la
@@ -2679,57 +2702,82 @@
 
           const acceptInvite = async () => {
             if (!incomingInvite) return;
-            // Guard: non sovrascrivere una sessione ATTIVA. Ma se la precedente e' conclusa
-            // (sessionEnded) o il partner si e' disconnesso, NON bloccare: bug 2 — dalla
-            // schermata "sessione conclusa" l'Accept non funzionava perche' `partner` era
-            // ancora valorizzato mentre sessionEnded === true.
-            if ((matchId || partner) && !sessionEnded && !partnerDisconnected) {
-              console.warn('acceptInvite: gia\' in sessione attiva, ignoro invito');
-              return;
-            }
-            // Sessione precedente conclusa/abbandonata: reset completo prima di entrare nella
-            // nuova (cancella match/queue/inviti vecchi e azzera lo stato residuo). Non tocca
-            // incomingInvite (resetTelepathy cancella solo gli inviti in uscita from_id=sessionId).
+            // Durante un training non si accetta (il server risponderebbe in_match): la UI mostra
+            // solo «Rifiuta». Dalla schermata «sessione conclusa» (sessionEnded) o con il partner
+            // uscito si può: bug 2, `partner` resta valorizzato anche a sessione finita.
+            if ((matchId || partner) && !sessionEnded && !partnerDisconnected) return;
+            // Sessione precedente conclusa/abbandonata: reset completo prima di entrare nella nuova.
             if (matchId || partner) resetTelepathy();
             // Anticipare setSearchingPartner(false) per evitare che findPartner crei un altro match
             // in parallelo durante l'await dell'INSERT (race con random matching).
             setSearchingPartner(false);
-            // Rimuove eventuali match GIA' CONCLUSI per questa coppia prima di inserire il nuovo.
-            // Un match con ended_at puo' sopravvivere alla fine sessione (delete ritardata ~6s /
-            // cleanup periodico) e farebbe fallire l'INSERT sotto per il vincolo
-            // telepathy_matches_pair_unique (409). findPartner ripulisce gia' i residui; acceptInvite
-            // no → invitare di nuovo la stessa persona subito dopo una sessione risultava rotto.
-            // NB: filtro lato-client (select + delete per id): il client Supabase custom (app.html)
-            // implementa solo .eq/.neq/.lt, NON .not → una .not('ended_at','is',null) avrebbe lanciato
-            // TypeError interrompendo l'intero acceptInvite (nessun INSERT, nessuna sessione).
-            const inviterId = incomingInvite.from_id;
+            const invito = incomingInvite;
+            // Residui conclusi della stessa coppia: farebbero fallire l'insert sul vincolo
+            // telepathy_matches_pair_unique (409). Filtro lato client (select + delete per id):
+            // il client fatto a mano conosce solo .eq/.neq/.lt, NON .not.
             const { data: staleAccept } = await supabase.from('telepathy_matches').select('*');
             for (const m of (staleAccept || [])) {
-              const isPair = (m.user1_id === inviterId && m.user2_id === sessionId) || (m.user1_id === sessionId && m.user2_id === inviterId);
+              const isPair = (m.user1_id === invito.from_id && m.user2_id === sessionId) || (m.user1_id === sessionId && m.user2_id === invito.from_id);
               if (isPair && m.ended_at) await supabase.from('telepathy_matches').delete().eq('id', m.id);
             }
             const myRole = Math.random() > 0.5 ? 'sender' : 'receiver';
             const theirRole = myRole === 'sender' ? 'receiver' : 'sender';
+            // Prima il match (come oggi, fuori scope rifarlo), segnato da_invito: così, se l'app si
+            // chiude prima della risposta, findPartner riconosce l'orfano e non ci risucchia nessuno.
             const { data: matchData, error: matchError } = await supabase.from('telepathy_matches').insert({
-              user1_id: incomingInvite.from_id,
-              user1_nickname: incomingInvite.from_name,
+              user1_id: invito.from_id,
+              user1_nickname: invito.from_name,
               user1_role: theirRole,
               user2_id: sessionId,
               user2_nickname: nickname || 'Anonymous',
               user2_role: myRole,
               level: 'lvl3', // ogni sessione parte dal livello più facile (3 card)
-              round_count: 0
+              round_count: 0,
+              da_invito: true
             });
             if (matchError || !matchData || matchData.length === 0) {
-              console.warn('Failed to create match:', matchError);
+              // Di solito: la stessa persona ha appena accettato da un altro telefono o un'altra
+              // scheda, e il match della coppia esiste già (vincolo pair_unique). Si chiede al
+              // server com'è l'invito, per dire il motivo vero («già accettato»).
+              const stato = await rpcInviti('get_telepathy_invite', { p_invite_id: invito.invite_id });
+              let motivo = 'match_non_valido';
+              if (stato && stato.ok && stato.invito && stato.invito.status !== 'pending' && IH) motivo = IH.motivoDaStato(stato.invito.status);
+              else if (stato && stato.ok === false && (stato.motivo === 'errore' || stato.motivo === 'auth_fallita')) motivo = stato.motivo;
+              setIncomingInvite(null);
+              setAvvisoInviti(testoInviti(motivo, { nome: invito.from_name }));
               return;
             }
-            await supabase.from('telepathy_invites').update({ status: 'accepted' }).eq('id', incomingInvite.invite_id);
-            // L'insert con Prefer: return=representation ritorna direttamente il record creato.
-            setMatchId(matchData[0].id);
-            setPartner({ id: incomingInvite.from_id, nickname: incomingInvite.from_name });
+            const nuovo = matchData[0];
+            // Poi la risposta: controlla scadenza, coppia, training in corso, e chi ha già risposto.
+            let r = await rpcInviti('respond_telepathy_invite', { p_invite_id: invito.invite_id, p_accept: true, p_match_id: nuovo.id });
+            if (r && r.ok === false && r.motivo === 'errore') {
+              // Errore di rete: la risposta può essere arrivata al server anche se non a noi.
+              // Prima di cancellare il match si chiede com'è andata (un errore non vale «rifiutato»).
+              const stato = await rpcInviti('get_telepathy_invite', { p_invite_id: invito.invite_id });
+              if (stato && stato.ok && stato.invito && stato.invito.status === 'accepted' && stato.invito.match_id === nuovo.id) {
+                r = { ok: true, status: 'accepted', responded_at: stato.invito.responded_at, adesso: stato.adesso };
+              }
+            }
+            if (!r || !r.ok) {
+              // Rifiutato dal server (scaduto, annullato, già accettato da un altro telefono,
+              // in_match): il match appena creato non deve restare a nessuno.
+              await supabase.from('telepathy_matches').delete().eq('id', nuovo.id);
+              setIncomingInvite(null);
+              setAvvisoInviti(testoInviti((r && r.motivo) || 'errore', { nome: invito.from_name }));
+              return;
+            }
+            if (IH && r.adesso) setScartoOrologio(IH.scarto(r.adesso, Date.now()));
+            // Il mio invito in uscita, se c'era, l'ha annullato il server accettando (ruling m4):
+            // lo si toglie anche qui, senza annullarlo di nuovo (il ref subito, come in resetTelepathy).
+            invitoInUscitaRef.current = null;
+            setInvitoInUscita(null);
+            setDirectInviteTarget(null);
+            setMatchId(nuovo.id);
+            setPartner({ id: invito.from_id, nickname: invito.from_name });
             setRole(myRole);
             setIncomingInvite(null);
+            // Chi ha invitato può essere offline: si aspetta fino a 3 minuti da responded_at.
+            setAttesaInvitante({ invitoId: invito.invite_id, respondedAt: r.responded_at, nome: invito.from_name });
             setSessionEnded(false);
             setPartnerDisconnected(false);
             setShowResult(false);
@@ -2743,16 +2791,54 @@
             setActiveTab('telepathy');
           };
 
+          // Rifiutare: stato e notifica al mittente li scrive la RPC (e la push, per un invito da 10 minuti).
           const declineInvite = async () => {
-            if (!incomingInvite) return;
-            await supabase.from('telepathy_invites').update({ status: 'declined' }).eq('id', incomingInvite.invite_id);
-            await supabase.from('notifications').insert({
-              user_nickname: incomingInvite.from_name,
-              type: 'telepathy_declined',
-              message: `${nickname} ha rifiutato il tuo invito al training telepatico`
-            });
+            const invito = incomingInvite;
+            if (!invito) return;
             setIncomingInvite(null);
+            const r = await rpcInviti('respond_telepathy_invite', { p_invite_id: invito.invite_id, p_accept: false, p_match_id: null });
+            if (r && r.ok === false && r.motivo !== 'scaduto') setAvvisoInviti(testoInviti(r.motivo, { nome: invito.from_name }));
           };
+
+          // Chi ha accettato aspetta chi ha invitato (spesso offline, arriva dalla notifica) al
+          // massimo 3 minuti da responded_at, riletto dal server a ogni giro: una riapertura non
+          // riparte da zero e un test può spostarlo. L'attesa finisce appena l'altro compare in
+          // online_users (30 s) oppure il match risulta giocato (ruling M2: l'arrivo di chi ha
+          // invitato è un update del match; così un orologio sfasato non chiude un training vero).
+          // Poi tornano i controlli normali. Un errore di rete non chiude niente: si riprova.
+          const rispostoIlRef = React.useRef(null);
+          useEffect(() => {
+            if (!attesaInvitante || !matchId || !partner) return;
+            rispostoIlRef.current = attesaInvitante.respondedAt;
+            let fermo = false;
+            let inCorso = false;
+            const giro = async () => {
+              if (inCorso) return;
+              inCorso = true;
+              try {
+                const { data: pu } = await supabase.from('online_users').select('last_seen').eq('id', partner.id);
+                if (fermo) return;
+                if (pu && pu.length > 0 && Date.now() - new Date(pu[0].last_seen).getTime() < 30000) { setAttesaInvitante(null); return; }
+                const { data: mm, error: errM } = await supabase.from('telepathy_matches').select('giocato').eq('id', matchId);
+                if (fermo) return;
+                if (!errM && Array.isArray(mm) && mm.length > 0 && mm[0].giocato === true) { setAttesaInvitante(null); return; }
+                const r = await rpcInviti('get_telepathy_invite', { p_invite_id: attesaInvitante.invitoId });
+                if (fermo) return;
+                const scarto = r && r.adesso && IH ? IH.scarto(r.adesso, Date.now()) : scartoOrologio;
+                if (r && r.ok && r.invito && r.invito.responded_at) rispostoIlRef.current = r.invito.responded_at;
+                if (IH && IH.attesaFinita(rispostoIlRef.current, scarto, Date.now())) {
+                  fermo = true;
+                  try { await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: sessionId }); } catch (_) {}
+                  const nome = attesaInvitante.nome;
+                  resetTelepathy();
+                  setAvvisoInviti(testoInviti('non_arrivato', { nome }));
+                }
+              } finally { inCorso = false; }
+            };
+            giro();
+            const intervallo = setInterval(giro, 2000);
+            return () => { fermo = true; clearInterval(intervallo); };
+          }, [attesaInvitante && attesaInvitante.invitoId, matchId, partner]);
 
           const playAgainSamePartner = async () => {
             const savedPartner = partner;
@@ -3038,11 +3124,13 @@
             );
             setNotifItems(prev => prev.filter(n => n.id !== notif.id));
             setShowNotifPanel(false);
-            // Inviti telepatici scaduti (>2min): il record DB e' gia' stato cancellato dal cleanup,
-            // navigare al tab telepatia non aprirebbe nessuna modal — meglio solo dismetterla.
-            const isExpiredInvite = notif.type === 'telepathy_invite' && notif.created_at &&
-              (Date.now() - new Date(notif.created_at).getTime() > 120000);
-            if (isExpiredInvite) return;
+            // Una notifica d'invito è «viva» solo se il server ha un invito aperto per me:
+            // altrimenti toccarla la chiude soltanto (spec §4.4, niente più soglia dei 120 s).
+            // La lettura aggiorna anche il banner, senza aspettare il giro delle presenze.
+            if (notif.type === 'telepathy_invite') {
+              const r = await aggiornaInviti();
+              if (!r || !r.in_arrivo) return;
+            }
             if (notif.type === 'private_message') {
               // Forza reload immediato dei messaggi privati prima di aprire il profilo,
               // così la conversazione non appare vuota anche se il poll (8s) non è ancora scattato.
@@ -3065,16 +3153,6 @@
               const senderMatch = notif.message.match(/^(.+) ti ha inviato/);
               if (senderMatch) openProfile(senderMatch[1]);
             } else {
-              if (notif.type === 'telepathy_invite') {
-                // Fetch immediato dell'invito senza aspettare il prossimo ciclo di updatePresence
-                const { data: invites } = await supabase.from('telepathy_invites')
-                  .select('*').eq('to_id', sessionId).eq('status', 'pending');
-                const visibili = (invites || []).filter(i => !isBlocked(i.from_name));
-                if (visibili.length > 0) {
-                  const inv = visibili[0];
-                  setIncomingInvite({ from_id: inv.from_id, from_name: inv.from_name, invite_id: inv.id });
-                }
-              }
               setActiveTab(tabTarget);
             }
           };
@@ -4160,11 +4238,12 @@
                                 {notifItems.map(n => {
                                   const tabTarget = n.type === 'telepathy_invite' ? 'telepathy' : n.type === 'comment' ? 'consciousness' : n.type === 'private_message' ? null : 'rituals';
                                   const icon = n.type === 'comment' || n.type === 'ritual_comment' ? '💬' : n.type === 'ritual_join' ? '🌟' : n.type === 'private_message' ? '✉️' : n.type === 'telepathy_declined' ? '❌' : '🧠';
-                                  const isExpiredInvite = n.type === 'telepathy_invite' && n.created_at &&
-                                    (Date.now() - new Date(n.created_at).getTime() > 120000);
+                                  // Viva solo se il server ha un invito aperto per me (ce n'è al massimo uno).
+                                  const isExpiredInvite = n.type === 'telepathy_invite' && !incomingInvite;
                                   return (
                                   <div
                                     key={n.id}
+                                    data-test="notifica"
                                     onClick={isExpiredInvite ? () => markOneNotifRead(n, tabTarget) : undefined}
                                     style={{
                                     padding: '0.5rem 0.25rem',
@@ -5763,9 +5842,39 @@ ${ritual.description || ''}` })}
                     </div>
                   </div>
                   <div style={{display: 'flex', gap: '0.5rem'}}>
-                    <button onClick={acceptInvite} className="btn-primary" style={{flex: 1, fontSize: '0.85rem', padding: '0.4rem 0.6rem'}}>{t.telepathy.acceptBtn}</button>
-                    <button onClick={declineInvite} className="btn-secondary" style={{flex: 1, fontSize: '0.85rem', padding: '0.4rem 0.6rem'}}>{t.telepathy.declineBtn}</button>
+                    <button data-test="btn-accetta" onClick={acceptInvite} className="btn-primary" style={{flex: 1, fontSize: '0.85rem', padding: '0.4rem 0.6rem'}}>{t.telepathy.acceptBtn}</button>
+                    <button data-test="btn-rifiuta" onClick={declineInvite} className="btn-secondary" style={{flex: 1, fontSize: '0.85rem', padding: '0.4rem 0.6rem'}}>{t.telepathy.declineBtn}</button>
                   </div>
+                </div>
+              )}
+              {/* Un invito durante un training (es. notifica toccata mentre si gioca): il training
+                  continua e si può solo rifiutare. Classe diversa da invite-toast di proposito:
+                  i test contano .invite-toast per il banner con «Accetta». */}
+              {incomingInvite && partner && !sessionEnded && !partnerDisconnected && (
+                <div data-test="invito-durante-training" className="invite-toast-training" style={{
+                  position: 'fixed', top: '1rem', right: '1rem', width: 'min(320px, calc(100vw - 2rem))',
+                  background: 'rgba(30,27,75,0.95)', border: '1px solid rgba(167,139,250,0.5)', borderRadius: '0.85rem',
+                  padding: '0.75rem 1rem', zIndex: 9999
+                }}>
+                  <p className="text-white" style={{fontSize: '0.85rem', margin: '0 0 0.5rem 0'}}>
+                    {testoInviti('invito_durante_training', { nome: incomingInvite.from_name })}
+                  </p>
+                  <button data-test="btn-rifiuta" onClick={declineInvite} className="btn-secondary" style={{fontSize: '0.8rem', padding: '0.3rem 0.75rem'}}>
+                    {testoInviti('rifiuta')}
+                  </button>
+                </div>
+              )}
+              {attesaInvitante && partner && !sessionEnded && (
+                <div data-test="attesa-invitante" role="status" style={{
+                  position: 'fixed', top: '1rem', left: '50%', transform: 'translateX(-50%)',
+                  width: 'min(360px, calc(100vw - 2rem))', background: 'rgba(30,27,75,0.95)',
+                  border: '1px solid rgba(167,139,250,0.5)', borderRadius: '0.85rem', padding: '0.75rem 1rem', zIndex: 9998, textAlign: 'center'
+                }}>
+                  <p className="text-white" style={{fontSize: '0.9rem', margin: 0}}>
+                    {testoInviti('attesa_invitante', { nome: attesaInvitante.nome, tempo: IH && !isNaN(Date.parse(attesaInvitante.respondedAt)) ? IH.mmss(
+                      // una data storta non deve far cadere il render (toISOString lancia su NaN)
+                      IH.secondiRimasti(new Date(Date.parse(attesaInvitante.respondedAt) + 180000).toISOString(), scartoOrologio, adessoLocale)) : '' })}
+                  </p>
                 </div>
               )}
 
