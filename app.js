@@ -1872,12 +1872,16 @@ function GlobalAwakeningPlatform() {
     if (!searchingPartner) return;
     const findPartner = async () => {
       await supabase.from('telepathy_queue').delete().lt('timestamp', Date.now() - 60000);
-      await supabase.from('telepathy_matches').delete().lt('created_at', new Date(Date.now() - 300000).toISOString());
+      const adesso = Date.now();
+      await supabase.from('telepathy_matches').delete().lt('ended_at', new Date(adesso - 60000).toISOString());
+      await supabase.from('telepathy_matches').delete().lt('ultima_attivita', new Date(adesso - 600000).toISOString());
+      await supabase.from('telepathy_matches').delete().eq('giocato', false).lt('created_at', new Date(adesso - 300000).toISOString());
+      const vivo = m => !m.ended_at && !(m.da_invito && !m.giocato);
       const {
         data: matches
       } = await supabase.from('telepathy_matches').select('*');
       if (matches) {
-        const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
+        const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && vivo(m));
         if (myMatch) {
           const amUser1 = myMatch.user1_id === sessionId;
           const altroNick = amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname;
@@ -1912,7 +1916,7 @@ function GlobalAwakeningPlatform() {
         const {
           data: precheck
         } = await supabase.from('telepathy_matches').select('*');
-        const existingForMe = (precheck || []).find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
+        const existingForMe = (precheck || []).find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && vivo(m));
         if (existingForMe) {
           const amUser1 = existingForMe.user1_id === sessionId;
           setPartner({
@@ -1925,7 +1929,7 @@ function GlobalAwakeningPlatform() {
           await supabase.from('telepathy_queue').delete().eq('id', sessionId);
           return;
         }
-        const existingForThem = (precheck || []).find(m => (m.user1_id === available.id || m.user2_id === available.id) && !m.ended_at);
+        const existingForThem = (precheck || []).find(m => (m.user1_id === available.id || m.user2_id === available.id) && vivo(m));
         if (existingForThem) {
           return;
         }
@@ -5808,6 +5812,7 @@ ${ritual.description || ''}`
     }
   }, t.telepathy.propose))))), React.createElement("button", {
     onClick: startSearching,
+    "data-test": "btn-casuale",
     className: "btn-primary w-full",
     style: {
       fontSize: '1.125rem'

@@ -91,6 +91,7 @@ async function pulizia() {
   await purge(SUPABASE_URL, [
     `telepathy_invites?from_id=in.${inS}`, `telepathy_invites?to_id=in.${inS}`,
     `telepathy_matches?user1_id=in.${inS}`, `telepathy_matches?user2_id=in.${inS}`,
+    `telepathy_matches?user1_id=in.${q(`("${LUNGO_UID[0]}")`)}`,   // il «lungo» di match_lunghi_e_orfani, anche se lo scenario cade a metà
     `telepathy_availability?session_id=in.${inS}`,
     `telepathy_invite_blocks?blocker_session=in.${inS}`, `telepathy_invite_blocks?blocked_session=in.${inS}`,
     `push_subscriptions?session_id=in.${inS}`, `online_users?id=in.${inS}`, `telepathy_queue?id=in.${inS}`,
@@ -504,6 +505,34 @@ scenario('notifiche_rituali_e_inviti', async (browser) => {
   await pausa(2000);
   const abb = await leggi('push_subscriptions', `session_id=eq.${q(S.sid)}&select=endpoint`);
   check(abb.length === 0 && !(await acceso(S)), 'con ga_push_spento il rinnovo non riabbona: spento, e lo dice', abb.length);
+});
+
+// ════ Task 23: findPartner ═════════════════════════════════════════════════
+// Identificatori di prova (m13): user id «lungo1_<TS>» e nickname «GAInv_…_<TS>» non sono sessioni di
+// nessun utente vero, quindi un'app (nuova o vecchia) non li riconosce come propri; l'unico rischio
+// residuo è il delete per created_at delle app vecchie, che colpirebbe qualunque riga.
+const LUNGO_UID = [`lungo1_${TS}`, `lungo2_${TS}`];
+scenario('match_lunghi_e_orfani', async (browser) => {
+  const X = await entra(browser, 'X10');
+  const nuovo = async (campi) => (await servizio('telepathy_matches', { method: 'POST', body: JSON.stringify({ level: 'lvl3', ...campi }) }))[0];
+  const lungo = await nuovo({ user1_id: LUNGO_UID[0], user1_nickname: nick('L1'), user2_id: LUNGO_UID[1], user2_nickname: nick('L2'), round_count: 3 });
+  const orfano = await nuovo({ user1_id: X.sid, user1_nickname: X.nick, user2_id: `orfano_${TS}`, user2_nickname: nick('O'), round_count: 0, da_invito: true, created_at: faSecondi(360) });
+  const giovane = await nuovo({ user1_id: X.sid, user1_nickname: X.nick, user2_id: `giovane_${TS}`, user2_nickname: nick('G'), round_count: 0, da_invito: true, created_at: faSecondi(60) });
+  await aTelepatia(X);
+  // Invecchio il «lungo» solo ora (finestra minima per le app vecchie): nato 6 minuti fa, giocato adesso.
+  await sposta('telepathy_matches', `id=eq.${lungo.id}`, { created_at: faSecondi(360), round_count: 4 });
+  await X.page.locator('[data-test="btn-casuale"]').click();
+  await pausa(8000);   // qualche giro di findPartner
+  check((await leggi('telepathy_matches', `id=eq.${lungo.id}&select=id`)).length === 1, 'un training nato 6 minuti fa ma giocato adesso non si cancella');
+  check((await leggi('telepathy_matches', `id=eq.${orfano.id}&select=id`)).length === 0, "un orfano d'invito mai giocato, di 6 minuti fa, sì");
+  check((await X.page.locator('[data-test="partner-nome"]').filter({ hasText: nick('G') }).count()) === 0, "un orfano d'invito recente non risucchia chi cerca un partner");
+  const Y = await entra(browser, 'Y10');
+  await aTelepatia(Y);
+  await Y.page.locator('[data-test="btn-casuale"]').click();
+  await X.page.locator('[data-test="partner-nome"]').filter({ hasText: Y.nick }).waitFor({ timeout: 30000 });
+  await Y.page.locator('[data-test="partner-nome"]').filter({ hasText: X.nick }).waitFor({ timeout: 30000 });
+  ok("l'abbinamento casuale funziona ancora: il match appena nato, mai giocato, non da invito, prende entrambi");
+  await servizio(`telepathy_matches?id=in.(${lungo.id},${giovane.id})`, { method: 'DELETE' });
 });
 
 // ── esecuzione ──

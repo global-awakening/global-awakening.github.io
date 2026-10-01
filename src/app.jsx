@@ -1635,14 +1635,26 @@
             const findPartner = async () => {
               // Clean old entries
               await supabase.from('telepathy_queue').delete().lt('timestamp', Date.now() - 60000);
-              await supabase.from('telepathy_matches').delete().lt('created_at', new Date(Date.now() - 300000).toISOString());
+              // Non più «tutto ciò che è nato da 5 minuti», che cancellava anche i training lunghi
+              // (spec §4.4, secondo e terzo giro). Tre delete separati: il client fatto a mano
+              // conosce solo .eq/.neq/.lt. Chiusi da più di un minuto (resta il tempo per la
+              // schermata finale), fermi da 10, orfani mai giocati nati da più di 5 (chi accetta
+              // aspetta al massimo 3).
+              const adesso = Date.now();
+              await supabase.from('telepathy_matches').delete().lt('ended_at', new Date(adesso - 60000).toISOString());
+              await supabase.from('telepathy_matches').delete().lt('ultima_attivita', new Date(adesso - 600000).toISOString());
+              await supabase.from('telepathy_matches').delete().eq('giocato', false).lt('created_at', new Date(adesso - 300000).toISOString());
+              // «Vivo» per l'abbinamento: non chiuso e non un orfano d'invito mai giocato. I match
+              // casuali appena nati restano vivi: è così che chi è in coda scopre il match creato
+              // dall'altro, prima che nessuno abbia giocato.
+              const vivo = (m) => !m.ended_at && !(m.da_invito && !m.giocato);
 
               // 1. Check if someone already matched with me
               const { data: matches } = await supabase.from('telepathy_matches').select('*');
               if (matches) {
                 // Solo match ATTIVI (ended_at null): un match concluso residuo non deve far
                 // "rientrare" in una sessione finita invece di cercare un nuovo partner.
-                const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
+                const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && vivo(m));
                 if (myMatch) {
                   const amUser1 = myMatch.user1_id === sessionId;
                   // SP1: mai una sessione con chi ho bloccato. Il match si chiude, se no
@@ -1679,7 +1691,7 @@
                 // per chiudere completamente la race. Questo client-side dedup la mitiga.
                 const { data: precheck } = await supabase.from('telepathy_matches').select('*');
                 // Solo match ATTIVI: un match concluso residuo non conta come "gia' matchato".
-                const existingForMe = (precheck || []).find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
+                const existingForMe = (precheck || []).find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && vivo(m));
                 if (existingForMe) {
                   const amUser1 = existingForMe.user1_id === sessionId;
                   setPartner({ id: amUser1 ? existingForMe.user2_id : existingForMe.user1_id, nickname: amUser1 ? existingForMe.user2_nickname : existingForMe.user1_nickname });
@@ -1689,7 +1701,7 @@
                   await supabase.from('telepathy_queue').delete().eq('id', sessionId);
                   return;
                 }
-                const existingForThem = (precheck || []).find(m => (m.user1_id === available.id || m.user2_id === available.id) && !m.ended_at);
+                const existingForThem = (precheck || []).find(m => (m.user1_id === available.id || m.user2_id === available.id) && vivo(m));
                 if (existingForThem) {
                   // available e' in un match ATTIVO con qualcun altro: prossimo tick rifara' lookup
                   // (un match concluso residuo di 'available' non deve escluderlo dal matchmaking)
@@ -5084,7 +5096,7 @@ ${ritual.description || ''}` })}
                         )}
 
                         {/* Abbinamento random */}
-                        <button onClick={startSearching} className="btn-primary w-full" style={{fontSize: '1.125rem'}}>
+                        <button onClick={startSearching} data-test="btn-casuale" className="btn-primary w-full" style={{fontSize: '1.125rem'}}>
                           {t.telepathy.randomMatch}
                         </button>
 
