@@ -346,6 +346,113 @@ REVOKE ALL ON FUNCTION public.telepatia_risolvi(uuid, text)                    F
 REVOKE ALL ON FUNCTION public.telepatia_motivo_stato(text)                     FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.telepatia_chiama_motore(jsonb)                   FROM PUBLIC, anon, authenticated;
 
+-- ════ C. Interruttore, lista «Disponibili su invito», scheda ═════════════════
+
+-- Solo da un gesto della persona (l'interruttore). Accendere vuole un abbonamento push: senza,
+-- comparire in lista sarebbe una promessa falsa. Spegnere cancella la riga.
+CREATE OR REPLACE FUNCTION public.set_telepathy_availability(p_session_id text, p_password_hash text,
+                                                             p_nickname text, p_enabled boolean)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  IF p_enabled IS NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'dati_non_validi', 'acceso', false); END IF;
+  IF NOT p_enabled THEN
+    DELETE FROM telepathy_availability WHERE session_id = p_session_id;
+    RETURN jsonb_build_object('ok', true, 'acceso', false);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM push_subscriptions WHERE session_id = p_session_id) THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'nessun_abbonamento', 'acceso', false);
+  END IF;
+  INSERT INTO telepathy_availability (session_id, nickname)
+  VALUES (p_session_id, nome_pubblico(p_session_id, p_nickname))
+  ON CONFLICT (session_id) DO UPDATE SET nickname = EXCLUDED.nickname, rinnovata_il = now();
+  RETURN jsonb_build_object('ok', true, 'acceso', true);
+END $$;
+
+-- A ogni apertura dell'app. Rinnova SOLO una riga che esiste (non la crea mai) e dice com'è
+-- l'interruttore per il server: un altro telefono che l'ha spento vince sul rinnovo di questo.
+-- Dopo 14 giorni senza aperture la persona era fuori lista: questo la rimette (spec §2.2).
+CREATE OR REPLACE FUNCTION public.renew_telepathy_availability(p_session_id text, p_password_hash text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  UPDATE telepathy_availability SET rinnovata_il = now() WHERE session_id = p_session_id;
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', true, 'stato', 'spento'); END IF;
+  IF NOT EXISTS (SELECT 1 FROM push_subscriptions WHERE session_id = p_session_id) THEN
+    RETURN jsonb_build_object('ok', true, 'stato', 'senza_abbonamento');
+  END IF;
+  RETURN jsonb_build_object('ok', true, 'stato', 'acceso');
+END $$;
+
+-- La lista. Solo l'identificativo opaco e il nome: mai il session_id. Chi è online sta già
+-- nella lista Online, quindi qui non compare (la deduplica la fa il server). p_nickname è il
+-- nome di chi chiama per i blocchi per nome: passa da nome_pubblico, come nell'invio (spec
+-- §4.1 punto 7, «Il nome di chi chiama, per i blocchi»).
+CREATE OR REPLACE FUNCTION public.get_invitable_users(p_session_id text, p_password_hash text, p_nickname text DEFAULT NULL)
+RETURNS TABLE (id uuid, nickname text) LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+#variable_conflict use_column
+DECLARE v_me text;
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  v_me := nome_pubblico(p_session_id, p_nickname);
+  RETURN QUERY
+    SELECT a.id, x.nome
+      FROM telepathy_availability a
+      CROSS JOIN LATERAL (SELECT nome_pubblico(a.session_id, a.nickname) AS nome) x
+     WHERE a.session_id <> p_session_id
+       AND a.rinnovata_il > now() - interval '14 days'
+       AND EXISTS (SELECT 1 FROM push_subscriptions s WHERE s.session_id = a.session_id)
+       AND NOT telepatia_online(a.session_id)
+       AND NOT telepatia_in_training(a.session_id)
+       AND NOT telepatia_bloccati(p_session_id, v_me, a.session_id, x.nome)
+     ORDER BY x.nome
+     LIMIT 200;
+END $$;
+
+-- La scheda: nome, paese, bio, prove e indovinate. Mai user_id (per un iscritto è l'email),
+-- mai session_id. Punteggio nascosto se il profilo lo nasconde. Blocchi: «non trovato», come
+-- una persona che non c'è (non si rivela il blocco).
+CREATE OR REPLACE FUNCTION public.get_invite_card(p_session_id text, p_password_hash text, p_nickname text DEFAULT NULL,
+                                                  p_disponibilita_id uuid DEFAULT NULL, p_session_online text DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_sid text; v_nome text; v_email text; v_paese text; v_bio text; v_mostra boolean;
+        v_prove integer; v_indovinate integer;
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  IF (p_disponibilita_id IS NULL) = (p_session_online IS NULL) THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'dati_non_validi');
+  END IF;
+  SELECT o_sid, o_nome INTO v_sid, v_nome FROM telepatia_risolvi(p_disponibilita_id, p_session_online);
+  IF v_sid IS NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovato'); END IF;
+  IF v_sid = p_session_id THEN RETURN jsonb_build_object('ok', false, 'motivo', 'dati_non_validi'); END IF;
+  -- Dalla lista «Disponibili su invito» la scheda esiste solo per chi è davvero in lista.
+  IF p_disponibilita_id IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM telepathy_availability a
+        WHERE a.id = p_disponibilita_id AND a.rinnovata_il > now() - interval '14 days'
+          AND EXISTS (SELECT 1 FROM push_subscriptions s WHERE s.session_id = a.session_id)) THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovato');
+  END IF;
+  IF telepatia_bloccati(p_session_id, nome_pubblico(p_session_id, p_nickname), v_sid, v_nome) THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovato');
+  END IF;
+  SELECT email, country, bio, show_telepathy_score INTO v_email, v_paese, v_bio, v_mostra
+    FROM profiles WHERE session_id = v_sid;
+  SELECT rounds_count, matches_count INTO v_prove, v_indovinate
+    FROM telepathy_scores WHERE user_id = coalesce(v_email, v_sid);
+  IF v_mostra IS FALSE THEN v_prove := NULL; v_indovinate := NULL; END IF;
+  RETURN jsonb_build_object('ok', true, 'scheda', jsonb_build_object(
+    'nickname', v_nome, 'country', v_paese, 'bio', v_bio, 'prove', v_prove, 'indovinate', v_indovinate));
+END $$;
+
+REVOKE ALL ON FUNCTION public.set_telepathy_availability(text, text, text, boolean) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.renew_telepathy_availability(text, text)              FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_invitable_users(text, text, text)                 FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_invite_card(text, text, text, uuid, text)         FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.set_telepathy_availability(text, text, text, boolean) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.renew_telepathy_availability(text, text)              TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_invitable_users(text, text, text)                 TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_invite_card(text, text, text, uuid, text)         TO anon, authenticated;
+
 NOTIFY pgrst, 'reload schema';
 
 COMMIT;

@@ -265,6 +265,103 @@ sezione('B6. disponibile, risolvi, motivo, soglia', async (db) => {
   check(r.o_sid === null, 'risolvi: identificativo sconosciuto: niente', r);
 });
 
+// ════ C. Interruttore, lista, scheda (Task 9) ══════════════════════════════
+sezione('C1. interruttore', async (db) => {
+  const set = (sid, nick, on, pw = null) => chiama(db, 'set_telepathy_availability', { p_session_id: sid, p_password_hash: pw, p_nickname: nick, p_enabled: on });
+  const renew = (sid) => chiama(db, 'renew_telepathy_availability', { p_session_id: sid, p_password_hash: null });
+  const riga = (sid) => uno(db, `SELECT nickname FROM telepathy_availability WHERE session_id = $1`, [sid]);
+  let r = await set('d1', 'Dora', true);
+  check(r.ok === false && r.motivo === 'nessun_abbonamento' && r.acceso === false, 'accendere senza abbonamento: nessun_abbonamento', r);
+  await abbonamento(db, 'd1');
+  r = await set('d1', ' Dora ', true);
+  check(r.ok === true && r.acceso === true, 'con un abbonamento si accende', r);
+  check((await riga('d1')).nickname === 'Dora', 'il nome salvato è quello ripulito');
+  check((await renew('d1')).stato === 'acceso', 'renew con riga e abbonamento: acceso');
+  await db.query(`DELETE FROM push_subscriptions WHERE session_id = 'd1'`);
+  check((await renew('d1')).stato === 'senza_abbonamento', 'renew senza abbonamento: senza_abbonamento');
+  r = await set('d1', 'Dora', false);
+  check(r.ok === true && r.acceso === false && !(await riga('d1')), 'spegnere cancella la riga', r);
+  r = await renew('d1');
+  check(r.stato === 'spento' && !(await riga('d1')), 'renew senza riga: spento, e non la crea', r);
+  await iscritto(db, 'reg1', 'Aurora', 'h1');
+  await abbonamento(db, 'reg1');
+  const m = await errore(set('reg1', 'X', true));
+  check(!!m && m.includes('Auth failed'), 'iscritto senza credenziale: Auth failed', m);
+  r = await set('reg1', 'Impostore', true, 'h1');
+  check(r.acceso === true && (await riga('reg1')).nickname === 'Aurora', 'iscritto: il nome viene dal profilo', r);
+});
+
+sezione('C2. lista «Disponibili su invito»', async (db) => {
+  for (const [sid, nick] of [['io', 'Io'], ['ok1', 'Ok'], ['bl1', 'Bloccato'], ['bl2', 'MiBlocca'], ['vecchio', 'Vecchio'], ['onl', 'Online'], ['train', 'Allena']]) {
+    await disp(db, sid, nick);
+  }
+  await db.query(`INSERT INTO user_blocks (blocker_nickname, blocked_nickname) VALUES ('Io', 'Bloccato')`);
+  await db.query(`INSERT INTO telepathy_invite_blocks (blocker_session, blocked_session) VALUES ('bl2', 'io')`);
+  await db.query(`INSERT INTO telepathy_availability (session_id, nickname) VALUES ('nosub', 'SenzaAbbonamento')`);
+  await db.query(`UPDATE telepathy_availability SET rinnovata_il = now() - interval '20 days' WHERE session_id = 'vecchio'`);
+  await online(db, 'onl', 'Online');
+  await giocato(db, 'train', 'zz');
+  const lista = await righe(db, `SELECT * FROM get_invitable_users('io', NULL, 'Io')`);
+  check(JSON.stringify(lista.map((x) => x.nickname)) === '["Ok"]',
+    'la lista esclude me, blocchi nei due sensi, senza abbonamento, 14 giorni, online, in training', lista.map((x) => x.nickname));
+  check(Object.keys(lista[0]).sort().join(',') === 'id,nickname', 'la lista restituisce solo id opaco e nickname', Object.keys(lista[0]));
+  check(lista[0].id !== 'ok1' && /^[0-9a-f-]{36}$/.test(lista[0].id), 'l\'id è quello opaco, non il session_id', lista[0].id);
+  await chiama(db, 'renew_telepathy_availability', { p_session_id: 'vecchio', p_password_hash: null });
+  const lista2 = await righe(db, `SELECT nickname FROM get_invitable_users('io', NULL, 'Io') ORDER BY nickname`);
+  check(JSON.stringify(lista2.map((x) => x.nickname)) === '["Ok","Vecchio"]', 'dopo 20 giorni la riapertura lo rimette in lista da sola', lista2);
+  const lista3 = await righe(db, `SELECT nickname FROM get_invitable_users('io', NULL, ' Io ')`);
+  check(!lista3.some((x) => x.nickname === 'Bloccato'), 'blocco per nome: il nome mandato dall\'app passa da nome_pubblico', lista3);
+});
+
+sezione('C3. scheda', async (db) => {
+  const scheda = (disp_, onl) => chiama(db, 'get_invite_card', { ...G('io', 'Io'), p_disponibilita_id: disp_, p_session_online: onl });
+  await iscritto(db, 'reg2', 'Stella', 'hs');
+  await db.query(`UPDATE profiles SET country = 'IT', bio = 'Ciao', show_telepathy_score = true WHERE session_id = 'reg2'`);
+  await db.query(`INSERT INTO telepathy_scores (user_id, nickname, rounds_count, matches_count) VALUES ('stella@test.com', 'Stella', 40, 12)`);
+  await abbonamento(db, 'reg2');
+  await chiama(db, 'set_telepathy_availability', { p_session_id: 'reg2', p_password_hash: 'hs', p_nickname: null, p_enabled: true });
+  const idStella = await idDisp(db, 'reg2');
+  let c = await scheda(idStella, null);
+  check(c.ok === true && c.scheda.nickname === 'Stella' && c.scheda.country === 'IT' && c.scheda.bio === 'Ciao', 'scheda di un iscritto: nome, paese, bio', c);
+  check(c.scheda.prove === 40 && c.scheda.indovinate === 12, 'scheda: prove e indovinate', c.scheda);
+  const testo = JSON.stringify(c);
+  check(!testo.includes('reg2') && !testo.includes('@test.com') && !('user_id' in c.scheda) && !('session_id' in c.scheda),
+    'scheda: niente session_id, user_id, email', testo);
+  await db.query(`UPDATE profiles SET show_telepathy_score = false WHERE session_id = 'reg2'`);
+  c = await scheda(idStella, null);
+  check(c.scheda.prove === null && c.scheda.indovinate === null, 'punteggio nascosto: prove e indovinate null', c.scheda);
+  await online(db, 'osp', 'Ospitina');
+  await db.query(`INSERT INTO telepathy_scores (user_id, nickname, rounds_count, matches_count) VALUES ('osp', 'Ospitina', 7, 2)`);
+  c = await scheda(null, 'osp');
+  check(c.ok === true && c.scheda.nickname === 'Ospitina' && c.scheda.prove === 7 && c.scheda.bio === null, 'scheda di un ospite dalla lista Online', c);
+  await db.query(`UPDATE online_users SET last_seen = now() - interval '31 seconds' WHERE id = 'osp'`);
+  c = await scheda(null, 'osp');
+  check(c.ok === false && c.motivo === 'non_trovato', 'p_session_online non visto da 31 s: non trovato', c);
+  c = await scheda('22222222-2222-2222-2222-222222222222', null);
+  check(c.ok === false && c.motivo === 'non_trovato', 'id opaco inesistente: non trovato', c);
+  c = await scheda(idStella, 'osp');
+  check(c.ok === false && c.motivo === 'dati_non_validi', 'entrambi i parametri: dati_non_validi', c);
+  await db.query(`INSERT INTO user_blocks (blocker_nickname, blocked_nickname) VALUES ('Stella', 'Io')`);
+  c = await scheda(idStella, null);
+  check(c.ok === false && c.motivo === 'non_trovato', 'chi mi ha bloccato: la scheda risulta non trovata', c);
+});
+
+sezione('C4. credenziale sbagliata: Auth failed (C7)', async (db) => {
+  await iscritto(db, 'reg9', 'Nove', 'h9');
+  await abbonamento(db, 'reg9');
+  const m = (fn, extra = {}) => errore(chiama(db, fn, { p_session_id: 'reg9', p_password_hash: 'sbagliato', ...extra }));
+  for (const [fn, extra] of [
+    ['set_telepathy_availability', { p_nickname: 'X', p_enabled: true }],
+    ['renew_telepathy_availability', {}],
+    ['get_invitable_users', { p_nickname: 'X' }],
+    ['get_invite_card', { p_nickname: 'X', p_disponibilita_id: null, p_session_online: 'qualcuno' }],
+  ]) {
+    const e = await m(fn, extra);
+    check(!!e && e.includes('Auth failed'), `${fn}: hash sbagliato per un iscritto: Auth failed`, e);
+  }
+  check(!(await uno(db, `SELECT 1 x FROM telepathy_availability WHERE session_id = 'reg9'`)), 'e nessuna riga creata');
+});
+
 // ── esecuzione ──
 (async () => {
   for (const [nome, fn, opzioni] of sezioni) {
