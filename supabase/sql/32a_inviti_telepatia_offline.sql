@@ -453,6 +453,85 @@ GRANT EXECUTE ON FUNCTION public.renew_telepathy_availability(text, text)       
 GRANT EXECUTE ON FUNCTION public.get_invitable_users(text, text, text)                 TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.get_invite_card(text, text, text, uuid, text)         TO anon, authenticated;
 
+-- ════ D. L'invio ═════════════════════════════════════════════════════════════
+-- Una sola strada per tutti gli inviti, anche verso chi è online (p_session_online): un solo
+-- insieme di controlli. L'altra persona si indica con DUE parametri distinti, uno solo
+-- valorizzato: il server deve sapere per quale strada si arriva.
+CREATE OR REPLACE FUNCTION public.send_telepathy_invite(p_session_id text, p_password_hash text, p_nickname text,
+                                                        p_disponibilita_id uuid DEFAULT NULL, p_session_online text DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_me text; v_sid text; v_nome text; v_online boolean;
+  v_con_push boolean := false; v_saltata boolean := false;
+  v_id uuid; v_creato timestamptz; v_scade timestamptz; v_vincolo text;
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  IF (p_disponibilita_id IS NULL) = (p_session_online IS NULL) THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'dati_non_validi');
+  END IF;
+  SELECT o_sid, o_nome INTO v_sid, v_nome FROM telepatia_risolvi(p_disponibilita_id, p_session_online);
+  IF v_sid IS NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_disponibile'); END IF;
+  IF v_sid = p_session_id THEN RETURN jsonb_build_object('ok', false, 'motivo', 'dati_non_validi'); END IF;
+  v_me := nome_pubblico(p_session_id, p_nickname);
+  IF telepatia_in_training(p_session_id) THEN RETURN jsonb_build_object('ok', false, 'motivo', 'in_match'); END IF;
+  -- Non disponibile, bloccato nei due sensi, già in un training: stesso motivo per tutti e tre,
+  -- per non rivelare il blocco.
+  IF NOT telepatia_disponibile(v_sid) OR telepatia_bloccati(p_session_id, v_me, v_sid, v_nome) THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'non_disponibile');
+  END IF;
+  -- now() non può stare nel predicato degli indici unici: prima si chiudono gli scaduti delle
+  -- due persone, poi si guarda chi ha ancora un invito aperto.
+  UPDATE telepathy_invites SET status = 'expired', responded_at = now()
+   WHERE status = 'pending' AND expires_at <= now()
+     AND (from_id IN (p_session_id, v_sid) OR to_id IN (p_session_id, v_sid));
+  IF EXISTS (SELECT 1 FROM telepathy_invites WHERE from_id = p_session_id AND status = 'pending') THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'invito_in_corso');
+  END IF;
+  IF EXISTS (SELECT 1 FROM telepathy_invites WHERE to_id = v_sid AND status = 'pending') THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'gia_invitato');
+  END IF;
+  IF (SELECT count(*) FROM telepathy_invites
+       WHERE from_id = p_session_id AND created_at > now() - interval '1 hour') >= 10 THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'troppi_inviti');
+  END IF;
+
+  v_online := telepatia_online(v_sid);
+  v_scade := now() + CASE WHEN v_online THEN interval '45 seconds' ELSE interval '10 minutes' END;
+  -- La push solo a chi ha acceso l'interruttore (secondo giro): chi è online senza riga riceve
+  -- solo l'avviso dentro l'app, e non conta nel tetto.
+  IF EXISTS (SELECT 1 FROM telepathy_availability WHERE session_id = v_sid) THEN
+    v_saltata := (SELECT count(*) FROM telepathy_invites
+                   WHERE to_id = v_sid AND con_push AND created_at > now() - interval '1 hour') >= 6
+              OR EXISTS (SELECT 1 FROM telepathy_invites
+                          WHERE from_id = p_session_id AND to_id = v_sid AND con_push
+                            AND created_at > now() - interval '15 minutes');
+    v_con_push := NOT v_saltata;
+  END IF;
+
+  BEGIN
+    INSERT INTO telepathy_invites (from_id, from_name, to_id, to_name, status, expires_at, con_push, push_saltata)
+    VALUES (p_session_id, v_me, v_sid, v_nome, 'pending', v_scade, v_con_push, v_saltata)
+    RETURNING id, created_at INTO v_id, v_creato;
+  EXCEPTION WHEN unique_violation THEN
+    -- Due invii nello stesso istante: vince il primo. Il motivo dipende dall'indice urtato.
+    GET STACKED DIAGNOSTICS v_vincolo = CONSTRAINT_NAME;
+    RETURN jsonb_build_object('ok', false, 'motivo',
+      CASE WHEN v_vincolo = 'telepathy_invites_un_pending_mittente' THEN 'invito_in_corso' ELSE 'gia_invitato' END);
+  END;
+
+  INSERT INTO notifications (user_nickname, type, message)
+  VALUES (v_nome, 'telepathy_invite', v_me || ' ti ha invitato a un training telepatico');
+  -- Solo adesso, a insert riuscito: la richiesta parte al commit.
+  IF v_con_push THEN
+    PERFORM telepatia_chiama_motore(jsonb_build_object('invito', v_id, 'tipo', 'invito'));
+  END IF;
+  RETURN jsonb_build_object('ok', true, 'id', v_id, 'expires_at', v_scade, 'created_at', v_creato,
+                            'push_saltata', v_saltata, 'adesso', now());
+END $$;
+
+REVOKE ALL ON FUNCTION public.send_telepathy_invite(text, text, text, uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.send_telepathy_invite(text, text, text, uuid, text) TO anon, authenticated;
+
 NOTIFY pgrst, 'reload schema';
 
 COMMIT;

@@ -362,6 +362,144 @@ sezione('C4. credenziale sbagliata: Auth failed (C7)', async (db) => {
   check(!(await uno(db, `SELECT 1 x FROM telepathy_availability WHERE session_id = 'reg9'`)), 'e nessuna riga creata');
 });
 
+// ════ D. Invio (Task 10) ═══════════════════════════════════════════════════
+sezione('D1. invio: i rifiuti', async (db) => {
+  await disp(db, 'dest', 'Dest');
+  const dId = await idDisp(db, 'dest');
+  await disp(db, 'blk', 'Blk');
+  await db.query(`INSERT INTO telepathy_invite_blocks (blocker_session, blocked_session) VALUES ('blk', 'mitt')`);
+  let r = await invia(db, 'mitt', 'Mitt', { disp: await idDisp(db, 'blk') });
+  check(r.ok === false && r.motivo === 'non_disponibile', 'destinatario che mi ha bloccato: non_disponibile', r);
+  await db.query(`INSERT INTO telepathy_availability (session_id, nickname) VALUES ('senza', 'Senza')`);
+  r = await invia(db, 'mitt', 'Mitt', { disp: await idDisp(db, 'senza') });
+  check(r.ok === false && r.motivo === 'non_disponibile', 'destinatario senza abbonamento: non_disponibile', r);
+  await disp(db, 'allena', 'Allena');
+  await giocato(db, 'allena', 'q');
+  r = await invia(db, 'mitt', 'Mitt', { disp: await idDisp(db, 'allena') });
+  check(r.ok === false && r.motivo === 'non_disponibile', 'destinatario in un training: non_disponibile (stesso motivo del blocco)', r);
+  await disp(db, 'mitt', 'Mitt');
+  r = await invia(db, 'mitt', 'Mitt', { disp: await idDisp(db, 'mitt') });
+  check(r.ok === false && r.motivo === 'dati_non_validi', 'invitare sé stessi: dati_non_validi', r);
+  r = await invia(db, 'mitt', 'Mitt', { disp: dId, online: 'x' });
+  check(r.ok === false && r.motivo === 'dati_non_validi', 'due parametri insieme: dati_non_validi', r);
+  await online(db, 'lontano', 'Lontano', 31);
+  r = await invia(db, 'mitt', 'Mitt', { online: 'lontano' });
+  check(r.ok === false && r.motivo === 'non_disponibile', 'p_session_online visto 31 s fa: non si trova', r);
+  const m2 = await giocato(db, 'mitt', 'w');
+  r = await invia(db, 'mitt', 'Mitt', { disp: dId });
+  check(r.ok === false && r.motivo === 'in_match', 'mittente in un training: in_match', r);
+  await db.query(`UPDATE telepathy_matches SET ended_at = now() WHERE id = $1`, [m2]);
+  r = await invia(db, 'mitt', 'Mitt', { disp: dId });
+  check(r.ok === true && !!r.id, 'finito il training, l\'invito parte', r);
+  const r2 = await invia(db, 'mitt', 'Mitt', { disp: dId });
+  check(r2.ok === false && r2.motivo === 'invito_in_corso', 'secondo invito dello stesso mittente: invito_in_corso', r2);
+  await disp(db, 'altro', 'Altro');
+  const r3 = await invia(db, 'altro', 'Altro', { disp: dId });
+  check(r3.ok === false && r3.motivo === 'gia_invitato', 'un secondo mittente verso lo stesso destinatario: gia_invitato', r3);
+  await db.query(`UPDATE telepathy_invites SET expires_at = now() - interval '1 second' WHERE id = $1`, [r.id]);
+  const r4 = await invia(db, 'altro', 'Altro', { disp: dId });
+  check(r4.ok === true, 'scaduto l\'invito, il destinatario si libera', r4);
+  check((await uno(db, `SELECT status FROM telepathy_invites WHERE id = $1`, [r.id])).status === 'expired', 'e quello vecchio è expired');
+});
+
+sezione('D2. invio: 10 all\'ora per mittente', async (db) => {
+  await disp(db, 'dd', 'DD');
+  await db.query(`INSERT INTO telepathy_invites (from_id, from_name, to_id, to_name, status, created_at)
+                  SELECT 'spam', 'Spam', 'v' || i, 'V', 'cancelled', now() - interval '10 minutes' FROM generate_series(1, 10) i`);
+  const r = await invia(db, 'spam', 'Spam', { disp: await idDisp(db, 'dd') });
+  check(r.ok === false && r.motivo === 'troppi_inviti', '10 inviti nell\'ultima ora: troppi_inviti', r);
+  await db.query(`UPDATE telepathy_invites SET created_at = now() - interval '61 minutes' WHERE from_id = 'spam'`);
+  check((await invia(db, 'spam', 'Spam', { disp: await idDisp(db, 'dd') })).ok === true, 'dopo un\'ora si può di nuovo');
+});
+
+sezione('D3. invio: durata, push, nomi, campanella', async (db) => {
+  const dettagli = (id) => uno(db, `SELECT *, extract(epoch FROM expires_at - created_at)::int s FROM telepathy_invites WHERE id = $1`, [id]);
+  await disp(db, 'off', 'Off');
+  let n0 = await chiamateMotore(db);
+  let r = await invia(db, 'm1', 'M1', { disp: await idDisp(db, 'off') });
+  let inv = await dettagli(r.id);
+  check(inv.s === 600 && inv.con_push === true && inv.push_saltata === false, 'offline con l\'interruttore: 10 minuti e push', inv);
+  check(await chiamateMotore(db) === n0 + 1, 'esattamente una chiamata alla Edge Function');
+  const body = (await uno(db, `SELECT body FROM net.chiamate ORDER BY id DESC LIMIT 1`)).body;
+  check(body.invito === r.id && body.tipo === 'invito', 'la chiamata porta id e tipo', body);
+  check(inv.from_name === 'M1' && inv.to_name === 'Off', 'i nomi li scrive il server', inv);
+  const nt = await uno(db, `SELECT message FROM notifications WHERE user_nickname = 'Off' AND type = 'telepathy_invite'`);
+  check(!!nt && nt.message === 'M1 ti ha invitato a un training telepatico', 'la notifica della campanella la scrive la RPC', nt);
+  await online(db, 'onl', 'Onl');
+  n0 = await chiamateMotore(db);
+  r = await invia(db, 'm2', 'M2', { online: 'onl' });
+  inv = await dettagli(r.id);
+  check(inv.s === 45 && inv.con_push === false && inv.push_saltata === false, 'online senza interruttore: 45 s, niente push, niente push_saltata', inv);
+  check(await chiamateMotore(db) === n0, 'online senza interruttore: nessuna chiamata');
+  await disp(db, 'onl2', 'Onl2');
+  await online(db, 'onl2', 'Onl2');
+  n0 = await chiamateMotore(db);
+  r = await invia(db, 'm3', 'M3', { online: 'onl2' });
+  inv = await dettagli(r.id);
+  check(inv.s === 45 && inv.con_push === true, 'online con l\'interruttore: 45 s e push (la sopprime il service worker)', inv);
+  check(await chiamateMotore(db) === n0 + 1, 'online con l\'interruttore: una chiamata');
+  await iscritto(db, 'reg9', 'Nove', 'h9');
+  await disp(db, 't9', 'T9');
+  r = await chiama(db, 'send_telepathy_invite', { p_session_id: 'reg9', p_password_hash: 'h9', p_nickname: 'Impostore', p_disponibilita_id: await idDisp(db, 't9'), p_session_online: null });
+  check(r.ok === true && (await dettagli(r.id)).from_name === 'Nove', 'iscritto: il nome viene dal profilo, non dall\'app', r);
+  const mA = await errore(chiama(db, 'send_telepathy_invite', { p_session_id: 'reg9', p_password_hash: 'no', p_nickname: null, p_disponibilita_id: await idDisp(db, 't9'), p_session_online: null }));
+  check(!!mA && mA.includes('Auth failed'), 'iscritto con credenziale sbagliata: Auth failed', mA);
+  check((await uno(db, `SELECT count(*)::int n FROM telepathy_invites WHERE from_id = 'reg9' AND created_at > now() - interval '1 minute' AND id <> $1`, [r.id])).n === 0, 'e con la credenziale sbagliata non nasce nessun invito (C7)');
+  await disp(db, 't10', 'T10');
+  r = await invia(db, 'finto', 'nove', { disp: await idDisp(db, 't10') });
+  check(r.ok === true && (await dettagli(r.id)).from_name === 'Anonymous', 'ospite col nome di un iscritto: Anonymous', r);
+});
+
+sezione('D4. tetti per destinatario', async (db) => {
+  await disp(db, 'pop', 'Pop');
+  await db.query(`INSERT INTO telepathy_invites (from_id, from_name, to_id, to_name, status, con_push, created_at)
+                  SELECT 'f' || i, 'F', 'pop', 'Pop', 'declined', true, now() - interval '20 minutes' FROM generate_series(1, 6) i`);
+  let n0 = await chiamateMotore(db);
+  let r = await invia(db, 'nuovo', 'Nuovo', { disp: await idDisp(db, 'pop') });
+  check(r.ok === true && r.push_saltata === true, 'settimo invito con push nell\'ora: si scrive, ma senza push', r);
+  check(await chiamateMotore(db) === n0, 'e nessuna chiamata');
+  const inv = await uno(db, `SELECT con_push, push_saltata FROM telepathy_invites WHERE id = $1`, [r.id]);
+  check(inv.con_push === false && inv.push_saltata === true, 'con_push false, push_saltata true', inv);
+  await disp(db, 'cop', 'Cop');
+  const copId = await idDisp(db, 'cop');
+  r = await invia(db, 'amico', 'Amico', { disp: copId });
+  check(r.ok === true && r.push_saltata === false, 'primo invito della coppia: con push', r);
+  await db.query(`UPDATE telepathy_invites SET status = 'cancelled' WHERE id = $1`, [r.id]);
+  n0 = await chiamateMotore(db);
+  r = await invia(db, 'amico', 'Amico', { disp: copId });
+  check(r.ok === true && r.push_saltata === true && await chiamateMotore(db) === n0, 'stessa coppia entro 15 minuti: senza push', r);
+});
+
+sezione('D5. due invii nello stesso istante (23505 tradotto)', async (db) => {
+  await disp(db, 'c1', 'C1');
+  // La vera concorrenza in PGlite non si prova: un trigger di test scrive la riga in conflitto
+  // subito prima dell'insert della RPC. pg_trigger_depth(): agisce solo a profondità 1, perché
+  // il suo stesso insert fa scattare di nuovo i trigger della tabella.
+  await db.exec(`
+    CREATE FUNCTION test_conflitto() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF pg_trigger_depth() > 1 THEN RETURN NEW; END IF;
+      IF current_setting('test.conflitto', true) = 'mittente' THEN
+        INSERT INTO telepathy_invites (from_id, from_name, to_id, to_name) VALUES (NEW.from_id, 'X', 'terzo', 'T');
+      ELSIF current_setting('test.conflitto', true) = 'destinatario' THEN
+        INSERT INTO telepathy_invites (from_id, from_name, to_id, to_name) VALUES ('terzo', 'T', NEW.to_id, 'X');
+      END IF;
+      RETURN NEW;
+    END $$;
+    CREATE TRIGGER zz_test_conflitto BEFORE INSERT ON telepathy_invites FOR EACH ROW EXECUTE FUNCTION test_conflitto();`);
+  const n0 = await chiamateMotore(db);
+  await db.query(`SELECT set_config('test.conflitto', 'mittente', false)`);
+  let r = await invia(db, 'corsa', 'Corsa', { disp: await idDisp(db, 'c1') });
+  check(r.ok === false && r.motivo === 'invito_in_corso', '23505 sull\'indice del mittente: invito_in_corso', r);
+  await db.query(`SELECT set_config('test.conflitto', 'destinatario', false)`);
+  r = await invia(db, 'corsa', 'Corsa', { disp: await idDisp(db, 'c1') });
+  check(r.ok === false && r.motivo === 'gia_invitato', '23505 sull\'indice del destinatario: gia_invitato', r);
+  check(await chiamateMotore(db) === n0, 'nei conflitti non parte nessuna chiamata');
+  check((await uno(db, `SELECT count(*)::int n FROM telepathy_invites WHERE from_id IN ('corsa', 'terzo')`)).n === 0,
+    'e non resta nessuna riga (il conflitto annulla anche l\'insert del trigger)');
+  await db.query(`SELECT set_config('test.conflitto', '', false)`);
+});
+
 // ── esecuzione ──
 (async () => {
   for (const [nome, fn, opzioni] of sezioni) {
