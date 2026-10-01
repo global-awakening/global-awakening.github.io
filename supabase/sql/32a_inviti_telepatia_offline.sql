@@ -74,6 +74,17 @@ CREATE TRIGGER telepathy_matches_attivita BEFORE INSERT OR UPDATE ON telepathy_m
 -- ── telepathy_invites: entra nelle migration ─────────────────────────────────
 -- Era nata dallo Studio (spec §3). Il valore vero di expires_at lo scrive sempre la RPC; il
 -- default serve agli insert delle app vecchie durante la tenuta.
+-- «Prima applicazione» = la colonna expires_at non esisteva ancora. Lo si rileva QUI, prima
+-- dell'ALTER, e non dall'assenza di un indice: 32a_ritorno.sql toglie gli indici unici, e dopo un
+-- ritorno indietro il rilancio della 32a non deve credersi una prima applicazione (azzererebbe
+-- expires_at degli inviti vivi e chiuderebbe tutti i pending). Il flag vive solo in questa
+-- transazione (set_config con is_local = true).
+DO $$
+BEGIN
+  PERFORM set_config('ga.prima_32a', (NOT EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'telepathy_invites' AND column_name = 'expires_at'))::text, true);
+END $$;
+
 ALTER TABLE telepathy_invites
   ADD COLUMN IF NOT EXISTS expires_at   timestamptz NOT NULL DEFAULT now() + interval '45 seconds',
   ADD COLUMN IF NOT EXISTS match_id     uuid,
@@ -84,11 +95,10 @@ ALTER TABLE telepathy_invites
 
 -- Prima degli indici unici. Alla prima applicazione TUTTI i pending diventano expired: due
 -- pending per lo stesso destinatario farebbero fallire l'indice e con lui tutta la migration.
--- A un rilancio (indice già presente) solo quelli già scaduti: gli inviti vivi restano vivi.
+-- A un rilancio (anche dopo il ritorno indietro) solo quelli già scaduti: gli inviti vivi restano vivi.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_indexes
-                  WHERE schemaname = 'public' AND indexname = 'telepathy_invites_un_pending_destinatario') THEN
+  IF current_setting('ga.prima_32a') = 'true' THEN
     -- Le righe già presenti hanno preso dal DEFAULT «migrazione + 45 s», mentre il loro created_at
     -- può risalire a giorni fa: expires_at - created_at sembrerebbe un invito da 10 minuti, e la
     -- normalizzazione qui sotto manderebbe ai mittenti vere push «scaduto» per inviti vecchi.
@@ -100,6 +110,14 @@ BEGIN
     UPDATE telepathy_invites SET status = 'expired', responded_at = coalesce(responded_at, now())
      WHERE status = 'pending' AND expires_at <= now();
   END IF;
+  -- Doppioni di pending (dopo un ritorno indietro le app vecchie possono averne scritti più d'uno
+  -- per lo stesso mittente o destinatario, e sono vivi): resta il più recente, gli altri
+  -- diventano expired. Alla prima applicazione qui non c'è più nessun pending.
+  UPDATE telepathy_invites t SET status = 'expired', responded_at = coalesce(t.responded_at, now())
+   WHERE t.status = 'pending' AND EXISTS (
+     SELECT 1 FROM telepathy_invites o
+      WHERE o.status = 'pending' AND o.id <> t.id AND (o.to_id = t.to_id OR o.from_id = t.from_id)
+        AND (coalesce(o.created_at, 'epoch'), o.id) > (coalesce(t.created_at, 'epoch'), t.id));
   UPDATE telepathy_invites SET status = 'expired', responded_at = coalesce(responded_at, now())
    WHERE status IS NULL OR status NOT IN ('pending', 'accepted', 'declined', 'cancelled', 'expired');
 END $$;
@@ -704,6 +722,208 @@ GRANT EXECUTE ON FUNCTION public.cancel_telepathy_invite(uuid, text, text)      
 GRANT EXECUTE ON FUNCTION public.get_my_telepathy_invites(text, text)                      TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.get_telepathy_invite(uuid, text, text)                    TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.block_telepathy_inviter(text, text, uuid, uuid, text)     TO anon, authenticated;
+
+-- ════ F. Scadenze, account, cron ═════════════════════════════════════════════
+
+-- Solo per la Edge Function (ruolo di servizio). Segna expired i pending scaduti; restituisce
+-- gli inviti da 10 minuti diventati expired negli ultimi 10 minuti, DA CHIUNQUE siano stati
+-- segnati (anche da get_my_telepathy_invites di chi ha riaperto l'app): altrimenti la push
+-- «scaduto» si perderebbe proprio quando il destinatario apre tardi. La stessa riga può tornare
+-- in più giri: la dedup di telepathy_invite_pushes evita i doppioni.
+CREATE OR REPLACE FUNCTION public.expire_telepathy_invites()
+RETURNS TABLE (invito_id uuid) LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  UPDATE telepathy_invites SET status = 'expired', responded_at = now()
+   WHERE status = 'pending' AND expires_at <= now();
+  -- Pulizia: gli inviti chiusi da più di un giorno (con loro, a cascata, la dedup delle push) e
+  -- le disponibilità di chi non apre l'app da 90 giorni (a 14 era già fuori lista, §2.2).
+  DELETE FROM telepathy_invites WHERE status <> 'pending' AND coalesce(responded_at, created_at) < now() - interval '1 day';
+  DELETE FROM telepathy_availability WHERE rinnovata_il < now() - interval '90 days';
+  RETURN QUERY
+    SELECT i.id FROM telepathy_invites i
+     WHERE i.status = 'expired' AND i.responded_at > now() - interval '10 minutes'
+       AND telepatia_era_da_dieci(i.created_at, i.expires_at);
+END $$;
+REVOKE ALL ON FUNCTION public.expire_telepathy_invites() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.expire_telepathy_invites() TO service_role;
+
+-- ── Cancellare l'account ─────────────────────────────────────────────────────
+-- Corpo della 31_ (l'ultima migration che la ridefinisce), identico, più il blocco «NUOVO (32)».
+CREATE OR REPLACE FUNCTION public.delete_my_account(
+  p_nickname      text,
+  p_password_hash text
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_email text;
+  v_sid   text;
+BEGIN
+  SELECT email, session_id INTO v_email, v_sid
+    FROM profiles
+   WHERE nickname = p_nickname AND password_hash = p_password_hash;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Auth failed';
+  END IF;
+
+  -- (a) Anonimizza i contenuti pubblici (preserva i thread altrui)
+  UPDATE consciousness_posts    SET author_nickname = 'Utente eliminato' WHERE author_nickname = p_nickname;
+  UPDATE consciousness_comments SET author_nickname = 'Utente eliminato' WHERE author_nickname = p_nickname;
+  UPDATE ritual_comments        SET author_nickname = 'Utente eliminato' WHERE author_nickname = p_nickname;
+  UPDATE rituals                SET creator         = 'Utente eliminato' WHERE creator = p_nickname;
+  -- chat_messages NON esiste piu' (droppata da 08_drop_dead_tables.sql): vedi 17_.
+
+  -- (b) Cancella i dati personali/privati
+  DELETE FROM private_messages WHERE sender_name = p_nickname OR receiver_name = p_nickname;
+  DELETE FROM notifications    WHERE user_nickname = p_nickname;
+
+  IF v_email IS NOT NULL AND v_email <> '' THEN
+    DELETE FROM telepathy_scores WHERE user_id = v_email;
+    DELETE FROM magic_links      WHERE email   = v_email;
+    DELETE FROM password_resets  WHERE email   = v_email;
+  END IF;
+
+  IF v_sid IS NOT NULL AND v_sid <> '' THEN
+    DELETE FROM online_users      WHERE id = v_sid;
+    DELETE FROM telepathy_queue   WHERE id = v_sid;
+    DELETE FROM telepathy_invites WHERE from_id = v_sid OR to_id = v_sid;
+
+    -- NUOVO (22): abbonamenti alle notifiche push. Un endpoint push e' un canale aperto verso
+    -- un telefono: lasciarlo vivo dopo la cancellazione significa continuare a scrivere a
+    -- qualcuno che ha chiesto di sparire.
+    DELETE FROM push_subscriptions WHERE session_id = v_sid;
+
+    -- NUOVO (30): le sue candele e il nome accanto, in ogni rituale.
+    UPDATE rituals
+       SET candles      = coalesce((SELECT jsonb_agg(e) FROM jsonb_array_elements(candles) e
+                                     WHERE e <> to_jsonb(v_sid)), '[]'::jsonb),
+           candles_nomi = candles_nomi - v_sid
+     WHERE candles @> to_jsonb(array[v_sid]) OR candles_nomi ? v_sid;
+
+    -- NUOVO (31): la sua partecipazione (participants, array di session_id come candles) e le
+    -- sue presenze nelle stanze. Gli altri partecipanti restano, nello stesso ordine.
+    UPDATE rituals
+       SET participants = coalesce((SELECT jsonb_agg(e) FROM jsonb_array_elements(participants) e
+                                     WHERE e <> to_jsonb(v_sid)), '[]'::jsonb)
+     WHERE participants @> to_jsonb(array[v_sid]);
+    DELETE FROM ritual_presence WHERE session_id = v_sid;
+
+    -- NUOVO (32): la disponibilità agli inviti e i «Non voglio più inviti» impostati da me.
+    -- Quelli subiti restano, come per user_blocks (18_): cancellare l'account non deve diventare
+    -- un modo per farsi sbloccare. Gli inviti li cancella già la riga più sopra (dalla 06_), e
+    -- con loro, a cascata, telepathy_invite_pushes.
+    DELETE FROM telepathy_availability  WHERE session_id = v_sid;
+    DELETE FROM telepathy_invite_blocks WHERE blocker_session = v_sid;
+  END IF;
+
+  -- (c) SP1: se ne vanno solo i blocchi che ho impostato io. Quelli subiti
+  -- restano, altrimenti cancellare l'account diventa un modo per farsi
+  -- sbloccare da chi ci ha bloccati.
+  DELETE FROM user_blocks WHERE blocker_nickname = p_nickname;
+  UPDATE content_reports SET reporter_nickname = 'Utente eliminato' WHERE reporter_nickname = p_nickname;
+
+  -- (d) Cancella l'identita'
+  DELETE FROM profiles WHERE nickname = p_nickname AND password_hash = p_password_hash;
+END $$;
+
+GRANT EXECUTE ON FUNCTION public.delete_my_account(text, text) TO anon;
+
+-- ── Esportare l'account ──────────────────────────────────────────────────────
+-- Corpo della 24_ (l'ultima che la ridefinisce), identico, più le tre voci «NUOVO (32)». Senza
+-- i session_id delle altre persone: chi invita non riceve mai il to_id (spec §6), e l'export non
+-- deve diventare la strada per averlo.
+CREATE OR REPLACE FUNCTION public.export_my_account(
+  p_nickname      text,
+  p_password_hash text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_email  text;
+  v_sid    text;
+  v_result jsonb;
+BEGIN
+  SELECT email, session_id INTO v_email, v_sid
+    FROM profiles
+   WHERE nickname = p_nickname AND password_hash = p_password_hash;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Auth failed';
+  END IF;
+
+  SELECT jsonb_build_object(
+    'exported_at', now(),
+    'profile', (SELECT to_jsonb(p) - 'password_hash'
+                  FROM profiles p WHERE p.nickname = p_nickname),
+    'private_messages', coalesce((SELECT jsonb_agg(to_jsonb(m))
+                  FROM private_messages m
+                 WHERE m.sender_name = p_nickname OR m.receiver_name = p_nickname), '[]'::jsonb),
+    'consciousness_posts', coalesce((SELECT jsonb_agg(to_jsonb(c))
+                  FROM consciousness_posts c WHERE c.author_nickname = p_nickname), '[]'::jsonb),
+    'consciousness_comments', coalesce((SELECT jsonb_agg(to_jsonb(c))
+                  FROM consciousness_comments c WHERE c.author_nickname = p_nickname), '[]'::jsonb),
+    'ritual_comments', coalesce((SELECT jsonb_agg(to_jsonb(rc))
+                  FROM ritual_comments rc WHERE rc.author_nickname = p_nickname), '[]'::jsonb),
+    'rituals_created', coalesce((SELECT jsonb_agg(to_jsonb(r))
+                  FROM rituals r WHERE r.creator = p_nickname OR r.creator_id = v_sid), '[]'::jsonb),
+    'telepathy_scores', coalesce((SELECT jsonb_agg(to_jsonb(ts))
+                  FROM telepathy_scores ts WHERE ts.user_id = v_email), '[]'::jsonb),
+    'notifications', coalesce((SELECT jsonb_agg(to_jsonb(n))
+                  FROM notifications n WHERE n.user_nickname = p_nickname), '[]'::jsonb),
+    -- NUOVO (24): abbonamenti alle notifiche push.
+    'push_subscriptions', coalesce((SELECT jsonb_agg(to_jsonb(ps))
+                  FROM push_subscriptions ps WHERE ps.session_id = v_sid), '[]'::jsonb),
+    -- NUOVO (32): inviti (mandati e ricevuti), disponibilità, blocchi impostati da me.
+    'telepathy_invites', coalesce((SELECT jsonb_agg(jsonb_build_object(
+                    'ruolo', CASE WHEN i.from_id = v_sid THEN 'mittente' ELSE 'destinatario' END,
+                    'altra_persona', CASE WHEN i.from_id = v_sid THEN i.to_name ELSE i.from_name END,
+                    'status', i.status, 'created_at', i.created_at,
+                    'expires_at', i.expires_at, 'responded_at', i.responded_at))
+                  FROM telepathy_invites i WHERE i.from_id = v_sid OR i.to_id = v_sid), '[]'::jsonb),
+    'telepathy_availability', (SELECT jsonb_build_object('nickname', a.nickname, 'enabled_at', a.enabled_at,
+                                                         'rinnovata_il', a.rinnovata_il)
+                  FROM telepathy_availability a WHERE a.session_id = v_sid),
+    'telepathy_invite_blocks', coalesce((SELECT jsonb_agg(jsonb_build_object('created_at', b.created_at))
+                  FROM telepathy_invite_blocks b WHERE b.blocker_session = v_sid), '[]'::jsonb)
+  ) INTO v_result;
+
+  RETURN v_result;
+END $$;
+
+GRANT EXECUTE ON FUNCTION public.export_my_account(text, text) TO anon;
+
+-- ── Il cron: nessun job nuovo ────────────────────────────────────────────────
+-- Il job della 23_, stesso nome, stesso orario, stessa prima chiamata, più la seconda verso
+-- notify-telepathy-invite. Una sola cosa da sorvegliare, e la sentinella la vede già. Solo la
+-- chiave pubblica, come nella 23_.
+SELECT cron.unschedule(jobid) FROM cron.job WHERE jobname = 'notify-ritual-start';
+SELECT cron.schedule(
+  'notify-ritual-start',
+  '* * * * *',
+  $job$
+  SELECT net.http_post(
+    url     := 'https://vxzxdkcluyrcftsnxxza.supabase.co/functions/v1/notify-ritual-start',
+    headers := jsonb_build_object(
+                 'Content-Type', 'application/json',
+                 'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM'
+               ),
+    body    := '{}'::jsonb
+  );
+  SELECT net.http_post(
+    url     := 'https://vxzxdkcluyrcftsnxxza.supabase.co/functions/v1/notify-telepathy-invite',
+    headers := jsonb_build_object(
+                 'Content-Type', 'application/json',
+                 'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM'
+               ),
+    body    := '{"tipo":"scadenze"}'::jsonb
+  );
+  $job$
+);
 
 NOTIFY pgrst, 'reload schema';
 

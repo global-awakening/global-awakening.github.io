@@ -674,6 +674,144 @@ sezione('E5. credenziale sbagliata: Auth failed e nessuna modifica', async (db) 
   check(ok.ok === true && await stato(dalF.id) === 'cancelled', 'con la credenziale giusta l\'annullo funziona', ok);
 });
 
+// ════ F. Scadenze, account, cron, rilancio e ritorno (Task 12) ═════════════
+sezione('F1. scadenze e pulizia', async (db) => {
+  const scaduti = async () => (await righe(db, `SELECT * FROM expire_telepathy_invites()`)).map((x) => x.invito_id);
+  await disp(db, 's1', 'S1');
+  await online(db, 's2', 'S2');
+  const lungo = await invia(db, 'm1', 'M1', { disp: await idDisp(db, 's1') });
+  const breve = await invia(db, 'm2', 'M2', { online: 's2' });
+  // Si sposta indietro anche created_at: expires_at - created_at deve restare la durata vera
+  // dell'invito (10 minuti / 45 s), è quello che distingue gli inviti che meritano la push «scaduto».
+  await db.query(`UPDATE telepathy_invites SET created_at = now() - interval '11 minutes', expires_at = now() - interval '1 minute' WHERE id = $1`, [lungo.id]);
+  await db.query(`UPDATE telepathy_invites SET created_at = now() - interval '46 seconds', expires_at = now() - interval '1 second' WHERE id = $1`, [breve.id]);
+  let ids = await scaduti();
+  check(ids.includes(lungo.id) && !ids.includes(breve.id), 'restituisce solo gli scaduti da 10 minuti', ids);
+  check((await righe(db, `SELECT status FROM telepathy_invites WHERE id IN ($1, $2)`, [lungo.id, breve.id])).every((x) => x.status === 'expired'),
+    'e li segna tutti expired');
+  await disp(db, 's3', 'S3');
+  const altro = await invia(db, 'm3', 'M3', { disp: await idDisp(db, 's3') });
+  await db.query(`UPDATE telepathy_invites SET created_at = now() - interval '11 minutes', expires_at = now() - interval '1 minute' WHERE id = $1`, [altro.id]);
+  await chiama(db, 'get_my_telepathy_invites', { p_session_id: 's3', p_password_hash: null });
+  ids = await scaduti();
+  check(ids.includes(altro.id), 'uno scaduto segnato da get_my torna lo stesso (la push «scaduto» non si perde)', ids);
+  // Un invito vivo non si tocca; uno chiuso da più di dieci minuti non torna più.
+  await disp(db, 's4', 'S4');
+  const vivo = await invia(db, 'm4', 'M4', { disp: await idDisp(db, 's4') });
+  await db.query(`UPDATE telepathy_invites SET responded_at = now() - interval '11 minutes' WHERE id = $1`, [altro.id]);
+  ids = await scaduti();
+  check(!ids.includes(vivo.id) && !ids.includes(altro.id), 'un invito vivo non torna, uno chiuso da più di 10 minuti nemmeno', ids);
+  check((await uno(db, `SELECT status FROM telepathy_invites WHERE id = $1`, [vivo.id])).status === 'pending', 'l\'invito vivo resta pending');
+  await db.query(`UPDATE telepathy_invites SET responded_at = now() - interval '25 hours' WHERE id = $1`, [breve.id]);
+  await db.query(`INSERT INTO telepathy_availability (session_id, nickname, rinnovata_il) VALUES
+    ('v20', 'V20', now() - interval '20 days'), ('v91', 'V91', now() - interval '91 days')`);
+  await scaduti();
+  check(!(await uno(db, `SELECT 1 AS x FROM telepathy_invites WHERE id = $1`, [breve.id])), 'le righe chiuse da più di un giorno si cancellano');
+  const rimaste = (await righe(db, `SELECT session_id FROM telepathy_availability WHERE session_id IN ('v20', 'v91')`)).map((x) => x.session_id);
+  check(JSON.stringify(rimaste) === '["v20"]', 'disponibilità: a 20 giorni resta (è solo fuori lista), a 91 si cancella', rimaste);
+  const mA = await errore(comeAnon(db, () => db.query(`SELECT * FROM expire_telepathy_invites()`)));
+  check(!!mA && /permission denied/i.test(mA), 'anon non può chiamare expire_telepathy_invites', mA);
+});
+
+sezione('F2. cancellare ed esportare l\'account', async (db) => {
+  await iscritto(db, 'via', 'Via', 'hv');
+  await abbonamento(db, 'via');
+  await chiama(db, 'set_telepathy_availability', { p_session_id: 'via', p_password_hash: 'hv', p_nickname: null, p_enabled: true });
+  await disp(db, 'amica', 'Amica');
+  const inv = await chiama(db, 'send_telepathy_invite', { p_session_id: 'via', p_password_hash: 'hv', p_nickname: null,
+    p_disponibilita_id: await idDisp(db, 'amica'), p_session_online: null });
+  await db.query(`INSERT INTO telepathy_invite_blocks (blocker_session, blocked_session) VALUES ('via', 'x1'), ('x2', 'via')`);
+  // Quello che la 31_ (e le precedenti) già facevano: lo si prepara qui per provare che c'è ancora.
+  await online(db, 'via', 'Via');
+  await db.query(`INSERT INTO telepathy_queue (id, nickname) VALUES ('via', 'Via')`);
+  await db.query(`INSERT INTO user_blocks (blocker_nickname, blocked_nickname) VALUES ('Via', 'Altro'), ('Altro', 'Via')`);
+  await db.query(`INSERT INTO rituals (creator, creator_id, name, type, sacred_number, date, time, duration, participants, candles)
+    VALUES ('Via', 'via', 'R', 'x', 3, '2099-01-01', '10:00', 10, '["via", "resta"]', '["via", "resta"]')`);
+  const exp = (await uno(db, `SELECT export_my_account('Via', 'hv') AS e`)).e;
+  check(exp.telepathy_invites.length === 1 && exp.telepathy_invites[0].ruolo === 'mittente' && exp.telepathy_invites[0].altra_persona === 'Amica',
+    'export: gli inviti, con ruolo e nome dell\'altra persona', exp.telepathy_invites);
+  check(!!exp.telepathy_availability && exp.telepathy_availability.nickname === 'Via' && exp.telepathy_invite_blocks.length === 1,
+    'export: la disponibilità e i blocchi impostati da me', exp);
+  const testo = JSON.stringify({ i: exp.telepathy_invites, b: exp.telepathy_invite_blocks });
+  check(!testo.includes('amica') && !testo.includes('x1'), 'export: nessun session_id altrui', testo);
+  check(exp.push_subscriptions.length === 1 && exp.rituals_created.length === 1 && !!exp.profile && !('password_hash' in exp.profile),
+    'export: le voci di prima ci sono ancora (push, rituali, profilo senza password)', Object.keys(exp));
+  const mAF = await errore(db.query(`SELECT export_my_account('Via', 'sbagliata')`));
+  check(!!mAF && /Auth failed/.test(mAF), 'export: credenziale sbagliata, Auth failed', mAF);
+  await db.query(`SELECT delete_my_account('Via', 'hv')`);
+  check(!(await uno(db, `SELECT 1 AS x FROM telepathy_availability WHERE session_id = 'via'`)), 'delete: la disponibilità se ne va');
+  const bl = await righe(db, `SELECT blocker_session FROM telepathy_invite_blocks WHERE 'via' IN (blocker_session, blocked_session)`);
+  check(JSON.stringify(bl.map((x) => x.blocker_session)) === '["x2"]', 'delete: via i blocchi impostati da me, restano quelli subiti', bl);
+  check(!(await uno(db, `SELECT 1 AS x FROM telepathy_invites WHERE id = $1`, [inv.id])), 'delete: gli inviti se ne vanno (come dalla 06_)');
+  // Il comportamento di prima (31_ e precedenti) è intatto.
+  check(!(await uno(db, `SELECT 1 AS x FROM profiles WHERE session_id = 'via'`)), 'delete: il profilo se ne va');
+  check(!(await uno(db, `SELECT 1 AS x FROM push_subscriptions WHERE session_id = 'via'`)), 'delete: gli abbonamenti push se ne vanno (22_)');
+  check(!(await uno(db, `SELECT 1 AS x FROM online_users WHERE id = 'via'`)) && !(await uno(db, `SELECT 1 AS x FROM telepathy_queue WHERE id = 'via'`)),
+    'delete: via da online e dalla coda');
+  const ub = await righe(db, `SELECT blocker_nickname FROM user_blocks`);
+  check(JSON.stringify(ub.map((x) => x.blocker_nickname)) === '["Altro"]', 'delete: user_blocks, via i miei e restano i subiti (18_)', ub);
+  const r = await uno(db, `SELECT creator, participants, candles FROM rituals`);
+  check(r.creator === 'Utente eliminato' && JSON.stringify(r.participants) === '["resta"]' && JSON.stringify(r.candles) === '["resta"]',
+    'delete: rituale anonimizzato, via candela e partecipazione, resta chi c\'era (30_/31_)', r);
+  const corpo = (await uno(db, `SELECT prosrc FROM pg_proc WHERE proname = 'delete_my_account'`)).prosrc;
+  check(corpo.includes('NUOVO (31)') && corpo.includes('DELETE FROM ritual_presence WHERE session_id = v_sid') && corpo.includes('NUOVO (32)'),
+    'delete_my_account: il corpo della 31_ più il blocco 32');
+});
+
+sezione('F3. un solo job, due chiamate', async (db) => {
+  const job = await uno(db, `SELECT schedule, command FROM cron.job WHERE jobname = 'notify-ritual-start'`);
+  check(job.schedule === '* * * * *', 'stesso orario', job.schedule);
+  check(job.command.includes('/functions/v1/notify-ritual-start') && job.command.includes('/functions/v1/notify-telepathy-invite')
+    && job.command.includes('"tipo":"scadenze"'), 'lo stesso job chiama le due funzioni', job.command);
+  check(!job.command.includes('\r') && !new RegExp('service.?' + 'role', 'i').test(job.command), 'nessun ritorno a capo di Windows, nessuna chiave privilegiata');
+  check((await uno(db, `SELECT count(*)::int n FROM cron.job WHERE jobname = 'notify-ritual-start'`)).n === 1, 'un solo job con quel nome');
+  // La prima chiamata è quella della 23_, parola per parola (spazi a parte).
+  const f23 = require('fs').readFileSync('supabase/sql/23_cron_push.sql', 'utf8').replace(/\r\n/g, '\n');
+  const m23 = f23.match(/'notify-ritual-start',\s*'\* \* \* \* \*',\s*\$job\$([\s\S]*?)\$job\$/);
+  const norm = (t) => t.replace(/\s+/g, ' ').trim();
+  check(!!m23 && norm(job.command).startsWith(norm(m23[1]).replace(/;$/, ';')), 'la chiamata a notify-ritual-start è quella della 23_, invariata');
+  // I corpi: {} per il rituale; {"tipo":"scadenze"} per la funzione nuova, come lo legge leggiRichiesta.
+  const corpi = [...job.command.matchAll(/body\s*:=\s*'([^']*)'::jsonb/g)].map((x) => JSON.parse(x[1]));
+  check(corpi.length === 2 && JSON.stringify(corpi[0]) === '{}' && JSON.stringify(corpi[1]) === '{"tipo":"scadenze"}', 'i due corpi: {} e {"tipo":"scadenze"}', corpi);
+  const { leggiRichiesta } = await import('./supabase/functions/notify-telepathy-invite/decisioni.mjs');
+  check(JSON.stringify(leggiRichiesta(corpi[1])) === '{"tipo":"scadenze"}', 'leggiRichiesta capisce il corpo del cron');
+  // «scaduto» non è un tipo che arriva da fuori: la push ai mittenti nasce solo da {tipo:'scadenze'}, quindi
+  // il database non manda mai {tipo:'scaduto', invito} (leggiRichiesta lo scarterebbe).
+  check(leggiRichiesta({ tipo: 'scaduto', invito: '11111111-2222-3333-4444-555555555555' }) === null, 'nessuna chiamata per singolo invito «scaduto»: il tipo non esiste per leggiRichiesta');
+});
+
+sezione('F4. rilancio e ritorno indietro', async (db) => {
+  check(!(await errore(applicaFile(db, F32A))), '32a rilanciata: nessun errore');
+  const firme = await righe(db, `SELECT proname, count(*)::int n FROM pg_proc WHERE proname IN ('send_telepathy_invite', 'get_invitable_users',
+    'get_invite_card', 'respond_telepathy_invite', 'block_telepathy_inviter', 'set_telepathy_availability', 'renew_telepathy_availability',
+    'cancel_telepathy_invite', 'get_my_telepathy_invites', 'get_telepathy_invite', 'expire_telepathy_invites') GROUP BY 1`);
+  check(firme.length === 11 && firme.every((f) => f.n === 1), 'undici RPC, una firma ciascuna', firme);
+  check((await uno(db, `SELECT count(*)::int n FROM cron.job WHERE jobname = 'notify-ritual-start'`)).n === 1, 'rilancio: sempre un solo job');
+  check(!(await errore(applicaFile(db, 'supabase/sql/32a_ritorno.sql'))), '32a_ritorno si applica');
+  check(!(await errore(applicaFile(db, 'supabase/sql/32a_ritorno.sql'))), '32a_ritorno si applica anche due volte (idempotente)');
+  await comeAnon(db, () => db.query(`INSERT INTO telepathy_invites (from_id, from_name, to_id, to_name) VALUES ('old', 'Old', 'dup', 'Dup'), ('old2', 'Old2', 'dup', 'Dup')`));
+  check((await uno(db, `SELECT count(*)::int n FROM telepathy_invites WHERE to_id = 'dup' AND status = 'pending'`)).n === 2,
+    'dopo il ritorno le app vecchie scrivono come prima della 32a (anche due pending per destinatario)');
+  check(!(await errore(applicaFile(db, F32A))), 'dopo il ritorno la 32a si riapplica, normalizzando i doppioni');
+  check((await uno(db, `SELECT count(*)::int n FROM telepathy_invites WHERE to_id = 'dup' AND status = 'pending'`)).n === 1,
+    'dopo il rilancio resta un solo pending per destinatario (il più recente)');
+  const idx = await righe(db, `SELECT indexname FROM pg_indexes WHERE tablename = 'telepathy_invites' AND indexname LIKE 'telepathy_invites_un_pending_%'`);
+  check(idx.length === 2, 'gli indici unici sono tornati', idx);
+});
+
+// Pendenza del Task 7: il rilancio dopo il ritorno non è una «prima applicazione».
+sezione('F5. rilancio dopo il ritorno: gli inviti vivi restano vivi', async (db) => {
+  await disp(db, 'r1', 'R1');
+  await online(db, 'm9', 'M9');
+  const vivo = await invia(db, 'm9', 'M9', { disp: await idDisp(db, 'r1') });
+  const prima = await uno(db, `SELECT status, expires_at::text AS e FROM telepathy_invites WHERE id = $1`, [vivo.id]);
+  check(prima.status === 'pending', 'invito da 10 minuti vivo prima del ritorno', prima);
+  check(!(await errore(applicaFile(db, 'supabase/sql/32a_ritorno.sql'))), '32a_ritorno applicato');
+  check(!(await errore(applicaFile(db, F32A))), '32a riapplicata');
+  const dopo = await uno(db, `SELECT status, expires_at::text AS e, extract(epoch FROM expires_at - created_at)::int AS s FROM telepathy_invites WHERE id = $1`, [vivo.id]);
+  check(dopo.status === 'pending' && dopo.e === prima.e && dopo.s === 600, 'il rilancio lascia pending e con lo stesso expires_at l\'invito vivo', dopo);
+});
+
 // ── esecuzione ──
 (async () => {
   for (const [nome, fn, opzioni] of sezioni) {
