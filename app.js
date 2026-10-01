@@ -2089,6 +2089,7 @@ function GlobalAwakeningPlatform() {
       return;
     }
     const existing = esito.profilo;
+    await spegniDisponibilitaDi(sessionId, null);
     setSessionId(existing.session_id);
     localStorage.setItem('ga_session_id', existing.session_id);
     setPasswordHash(effectiveHash);
@@ -2183,6 +2184,7 @@ function GlobalAwakeningPlatform() {
     }
     setPasswordHash(hash);
     localStorage.setItem('ga_pwhash', hash);
+    await spegniDisponibilitaDi(sessionId, null);
     setSessionId(newSid);
     localStorage.setItem('ga_session_id', newSid);
     setLoginSuccess(t.newAccountCreated);
@@ -2338,6 +2340,7 @@ function GlobalAwakeningPlatform() {
       const existing = esito.profilo;
       const email = existing.email;
       const credenziale = esito.password_hash;
+      await spegniDisponibilitaDi(sessionId, null);
       setSessionId(existing.session_id);
       localStorage.setItem('ga_session_id', existing.session_id);
       setUserEmail(email);
@@ -2382,6 +2385,7 @@ function GlobalAwakeningPlatform() {
     loginWithMagicToken();
   }, [magicToken]);
   const handleLogout = () => {
+    spegniDisponibilitaDi(sessionId, passwordHash);
     spegniPushAlLogout();
     localStorage.removeItem('ga_nickname');
     localStorage.removeItem('ga_email');
@@ -3153,6 +3157,7 @@ function GlobalAwakeningPlatform() {
     const c = confermaBlocco;
     if (!c) return;
     setConfermaBlocco(null);
+    setSchedaInvito(null);
     const {
       nome,
       daNotifica,
@@ -3174,6 +3179,171 @@ function GlobalAwakeningPlatform() {
       nome: r.nome || nome
     }));
   };
+  const [disponibileInviti, setDisponibileInviti] = useState(null);
+  const [invitabili, setInvitabili] = useState([]);
+  const [schedaInvito, setSchedaInvito] = useState(null);
+  const ultimoRinnovoRef = React.useRef(0);
+  useEffect(() => {
+    setSchedaInvito(null);
+    if (!nickname || !sessionId) {
+      setDisponibileInviti(null);
+      setInvitabili([]);
+      return;
+    }
+    let fermo = false;
+    const rinnova = async () => {
+      ultimoRinnovoRef.current = Date.now();
+      let r = await rpcInviti('renew_telepathy_availability', {});
+      if (fermo || !r || !r.ok) return;
+      if (r.stato === 'senza_abbonamento' && pushDisponibile() && Notification.permission === 'granted' && localStorage.getItem('ga_push_spento') !== '1') {
+        try {
+          await iscriviPush();
+          r = await rpcInviti('renew_telepathy_availability', {});
+        } catch (_) {}
+      }
+      if (fermo || !r || !r.ok) return;
+      setDisponibileInviti(r.stato === 'acceso');
+      if (r.stato === 'senza_abbonamento') setAvvisoInviti(testoInviti('nessun_abbonamento'));
+    };
+    rinnova();
+    const alRitorno = () => {
+      if (document.visibilityState === 'visible' && Date.now() - ultimoRinnovoRef.current >= 3600000) rinnova();
+    };
+    document.addEventListener('visibilitychange', alRitorno);
+    return () => {
+      fermo = true;
+      document.removeEventListener('visibilitychange', alRitorno);
+    };
+  }, [nickname, sessionId]);
+  const accendiDisponibilita = async () => {
+    if (!pushDisponibile()) {
+      const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      const installata = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+      if (iOS && !installata) setMostraInstallaPerPush(true);
+      setDisponibileInviti(false);
+      setAvvisoInviti(testoInviti('nessun_abbonamento'));
+      return;
+    }
+    try {
+      if (Notification.permission !== 'granted') {
+        const p = await Notification.requestPermission();
+        if (p !== 'granted') {
+          setDisponibileInviti(false);
+          setAvvisoInviti(testoInviti('permesso_negato'));
+          return;
+        }
+      }
+      await iscriviPush();
+    } catch (_) {
+      setDisponibileInviti(false);
+      setAvvisoInviti(testoInviti('nessun_abbonamento'));
+      return;
+    }
+    const r = await rpcInviti('set_telepathy_availability', {
+      p_nickname: nickname || 'Anonymous',
+      p_enabled: true
+    });
+    const ok = !!(r && r.ok && r.acceso);
+    setDisponibileInviti(ok);
+    if (!ok) setAvvisoInviti(testoInviti(r && r.motivo || 'errore'));
+  };
+  const spegniDisponibilita = async () => {
+    const r = await rpcInviti('set_telepathy_availability', {
+      p_nickname: nickname || 'Anonymous',
+      p_enabled: false
+    });
+    if (r && r.ok) setDisponibileInviti(false);else setAvvisoInviti(testoInviti('errore'));
+  };
+  const spegniDisponibilitaDi = async (sid, hash) => {
+    if (disponibileInviti === false || !sid) return;
+    try {
+      await supabase.rpc('set_telepathy_availability', {
+        p_session_id: sid,
+        p_password_hash: hash || null,
+        p_nickname: null,
+        p_enabled: false
+      });
+    } catch (_) {}
+    setDisponibileInviti(false);
+  };
+  const renderInterruttoreInviti = dataTest => React.createElement("div", {
+    style: {
+      padding: '0.5rem 0'
+    }
+  }, React.createElement("div", {
+    className: "flex items-center justify-between",
+    style: {
+      gap: '0.75rem'
+    }
+  }, React.createElement("span", {
+    className: "text-white text-sm"
+  }, testoInviti('interruttore')), React.createElement("button", {
+    "data-test": dataTest,
+    role: "switch",
+    "aria-checked": disponibileInviti === true,
+    "aria-label": testoInviti('interruttore'),
+    onClick: () => disponibileInviti ? spegniDisponibilita() : accendiDisponibilita(),
+    style: {
+      width: '3rem',
+      height: '1.5rem',
+      flexShrink: 0,
+      borderRadius: '9999px',
+      position: 'relative',
+      cursor: 'pointer',
+      transition: 'all 0.3s',
+      background: disponibileInviti ? 'rgba(34,197,94,0.5)' : 'rgba(255,255,255,0.2)',
+      border: disponibileInviti ? '1px solid rgba(34,197,94,0.7)' : '1px solid rgba(255,255,255,0.3)'
+    }
+  }, React.createElement("div", {
+    style: {
+      width: '1.1rem',
+      height: '1.1rem',
+      borderRadius: '50%',
+      background: '#fff',
+      position: 'absolute',
+      top: '50%',
+      transform: 'translateY(-50%)',
+      left: disponibileInviti ? 'calc(100% - 1.3rem)' : '0.15rem',
+      transition: 'all 0.3s'
+    }
+  }))), React.createElement("p", {
+    className: "text-secondary text-xs",
+    style: {
+      marginTop: '0.25rem'
+    }
+  }, testoInviti('nota_nome')));
+  useEffect(() => {
+    if (activeTab !== 'telepathy' || partner || !nickname || !sessionId) return;
+    let fermo = false;
+    const giro = async () => {
+      const r = await rpcInviti('get_invitable_users', {
+        p_nickname: nickname || 'Anonymous'
+      });
+      if (!fermo && Array.isArray(r)) setInvitabili(r);
+    };
+    giro();
+    const intervallo = setInterval(giro, 15000);
+    return () => {
+      fermo = true;
+      clearInterval(intervallo);
+    };
+  }, [activeTab, partner, nickname, sessionId]);
+  const apriScheda = async chi => {
+    const r = await rpcInviti('get_invite_card', {
+      p_nickname: nickname || 'Anonymous',
+      p_disponibilita_id: chi.disponibilita_id || null,
+      p_session_online: chi.disponibilita_id ? null : chi.id
+    });
+    if (!r || !r.ok) {
+      setAvvisoInviti(testoInviti(r && r.motivo === 'non_trovato' ? 'non_disponibile' : r && r.motivo || 'errore'));
+      return;
+    }
+    setSchedaInvito({
+      chi,
+      dati: r.scheda
+    });
+  };
+  const onlineInLobby = onlineUsersForTelepathy.filter(u => !invitabili.some(d => d.nickname === u.nickname));
   const playAgainSamePartner = async () => {
     const savedPartner = partner;
     if (!savedPartner) return;
@@ -3712,6 +3882,7 @@ function GlobalAwakeningPlatform() {
   const spegniPush = async () => {
     localStorage.setItem('ga_push_spento', '1');
     setPushAttive(false);
+    if (disponibileInviti !== false) spegniDisponibilita();
     try {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
@@ -5507,7 +5678,9 @@ ${ritual.description || ''}`
     className: "text-primary text-sm"
   }, t.telepathy.step2), React.createElement("p", {
     className: "text-primary text-sm"
-  }, t.telepathy.step3)), invitoInUscita && React.createElement("div", {
+  }, t.telepathy.step3)), React.createElement("div", {
+    className: "bg-glass-dark rounded-xl p-4"
+  }, renderInterruttoreInviti('interruttore-inviti')), invitoInUscita && React.createElement("div", {
     className: "bg-glass-dark rounded-xl p-4",
     style: {
       display: 'flex',
@@ -5537,17 +5710,17 @@ ${ritual.description || ''}`
       cursor: 'pointer',
       padding: 0
     }
-  }, t.telepathy.cancel)), onlineUsersForTelepathy.length > 0 && React.createElement("div", {
+  }, t.telepathy.cancel)), onlineInLobby.length > 0 && React.createElement("div", {
     className: "bg-glass-dark rounded-xl p-4"
   }, React.createElement("h3", {
     className: "text-white font-bold mb-3"
-  }, t.telepathy.onlineUsers, " (", onlineUsersForTelepathy.length, ")"), React.createElement("div", {
+  }, t.telepathy.onlineUsers, " (", onlineInLobby.length, ")"), React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
       gap: '0.5rem'
     }
-  }, onlineUsersForTelepathy.map(u => React.createElement("div", {
+  }, onlineInLobby.map(u => React.createElement("div", {
     key: u.id,
     "data-test": "riga-online",
     style: {
@@ -5578,11 +5751,56 @@ ${ritual.description || ''}`
       cursor: 'pointer',
       textDecoration: 'underline dotted'
     },
-    onClick: () => openProfile(u.nickname)
+    onClick: () => apriScheda({
+      id: u.id,
+      nickname: u.nickname
+    })
   }, u.nickname), React.createElement("span", {
     className: "text-secondary text-xs"
   }, u.status === 'busy' ? t.telepathy.inSession : t.telepathy.available)), u.status === 'available' && !invitoInUscita && !directInviteTarget && React.createElement("button", {
     onClick: () => sendDirectInvite(u),
+    className: "btn-primary",
+    style: {
+      fontSize: '0.75rem',
+      padding: '0.3rem 0.75rem'
+    }
+  }, t.telepathy.propose))))), invitabili.length > 0 && React.createElement("div", {
+    "data-test": "lista-disponibili",
+    className: "bg-glass-dark rounded-xl p-4"
+  }, React.createElement("h3", {
+    className: "text-white font-bold mb-3"
+  }, testoInviti('disponibili'), " (", invitabili.length, ")"), React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '0.5rem'
+    }
+  }, invitabili.map(u => React.createElement("div", {
+    key: u.id,
+    "data-test": "riga-disponibile",
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: '0.5rem 0.75rem',
+      borderRadius: '0.75rem',
+      background: 'rgba(255,255,255,0.05)'
+    }
+  }, React.createElement("span", {
+    className: "text-white text-sm font-medium",
+    style: {
+      cursor: 'pointer',
+      textDecoration: 'underline dotted'
+    },
+    onClick: () => apriScheda({
+      disponibilita_id: u.id,
+      nickname: u.nickname
+    })
+  }, u.nickname), !invitoInUscita && !directInviteTarget && React.createElement("button", {
+    onClick: () => sendDirectInvite({
+      disponibilita_id: u.id,
+      nickname: u.nickname
+    }),
     className: "btn-primary",
     style: {
       fontSize: '0.75rem',
@@ -6403,7 +6621,7 @@ ${ritual.description || ''}`
       left: pushAttive ? 'calc(100% - 1.3rem)' : '0.15rem',
       transition: 'all 0.3s'
     }
-  })))), React.createElement("div", {
+  }))), renderInterruttoreInviti('interruttore-inviti-impostazioni')), React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
@@ -7226,7 +7444,68 @@ ${ritual.description || ''}`
       margin: 0,
       textAlign: 'center'
     }
-  }, avvisoInviti)), confermaBlocco && React.createElement("div", {
+  }, avvisoInviti)), schedaInvito && React.createElement("div", {
+    "data-test": "scheda-invito",
+    role: "dialog",
+    style: {
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(0,0,0,0.6)',
+      zIndex: 9999,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '1rem'
+    }
+  }, React.createElement("div", {
+    className: "bg-glass-dark rounded-2xl",
+    style: {
+      maxWidth: '22rem',
+      width: '100%',
+      padding: '1.25rem'
+    }
+  }, React.createElement("h3", {
+    className: "text-white font-bold"
+  }, schedaInvito.dati.nickname), schedaInvito.dati.country && React.createElement("p", {
+    className: "text-secondary text-sm"
+  }, schedaInvito.dati.country), schedaInvito.dati.bio && React.createElement("p", {
+    className: "text-white text-sm",
+    style: {
+      margin: '0.5rem 0'
+    }
+  }, schedaInvito.dati.bio), schedaInvito.dati.prove != null && React.createElement("p", {
+    className: "text-secondary text-sm"
+  }, testoInviti('prove'), ": ", schedaInvito.dati.prove, IH && IH.percentuale(schedaInvito.dati.prove, schedaInvito.dati.indovinate) ? ` · ${testoInviti('indovinate')}: ${IH.percentuale(schedaInvito.dati.prove, schedaInvito.dati.indovinate)}` : ''), React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '0.5rem',
+      marginTop: '1rem'
+    }
+  }, !invitoInUscita && !directInviteTarget && React.createElement("button", {
+    "data-test": "btn-invita",
+    className: "btn-primary",
+    onClick: () => {
+      const chi = schedaInvito.chi;
+      setSchedaInvito(null);
+      sendDirectInvite(chi);
+    }
+  }, testoInviti('invita')), React.createElement("button", {
+    "data-test": "btn-blocca-scheda",
+    className: "btn-secondary",
+    onClick: () => setConfermaBlocco({
+      nome: schedaInvito.dati.nickname,
+      ...(schedaInvito.chi.disponibilita_id ? {
+        p_disponibilita_id: schedaInvito.chi.disponibilita_id
+      } : {
+        p_session_online: schedaInvito.chi.id
+      })
+    })
+  }, testoInviti('blocca')), React.createElement("button", {
+    "data-test": "btn-chiudi-scheda",
+    className: "btn-secondary",
+    onClick: () => setSchedaInvito(null)
+  }, testoInviti('chiudi'))))), confermaBlocco && React.createElement("div", {
     "data-test": "conferma-blocco",
     role: "dialog",
     style: {

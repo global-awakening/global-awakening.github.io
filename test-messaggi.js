@@ -55,7 +55,7 @@ async function sbFetch(path, opts = {}) {
 }
 
 async function cleanup() {
-  // Usa la service_role key (vedi test-helpers.js): con la sola anon key le DELETE
+  // Usa la chiave del ruolo di servizio (vedi test-helpers.js): con la sola anon key le DELETE
   // su tabelle RLS rispondono 2xx ma non cancellano nulla. I filtri sono tutti
   // specifici sui nick/email di questo run (TS) → nessun rischio su dati veri.
   const enc = encodeURIComponent;
@@ -100,8 +100,11 @@ async function goToTelepathy(page, nick) {
 
 /** Apre il profilo di un utente dalla community list */
 async function openProfileOf(page, targetNick) {
+  // Dal 01/10 (inviti offline, decisione di Irene) un nome nella lista Online della Telepatia apre
+  // la scheda d'invito, non il profilo: il profilo si apre dalla Community, nel tab Coscienza.
+  await page.locator('button').filter({ hasText: /Coscienza|Consciousness/ }).first().click();
   // Clicca lo span con il nickname nella community list (onClick bubbla al div padre)
-  const nick = page.locator('span.text-white.font-medium').filter({ hasText: targetNick }).first();
+  const nick = page.locator('#community-section span.text-white.font-medium').filter({ hasText: targetNick }).first();
   await nick.waitFor({ timeout: TIMEOUT });
   await nick.click();
   // Aspetta apertura modal profilo

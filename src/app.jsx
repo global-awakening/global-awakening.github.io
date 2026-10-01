@@ -1878,6 +1878,7 @@
             }
             const existing = esito.profilo;
 
+            await spegniDisponibilitaDi(sessionId, null);
             setSessionId(existing.session_id);
             localStorage.setItem('ga_session_id', existing.session_id);
             setPasswordHash(effectiveHash);
@@ -1964,6 +1965,7 @@
             }
             setPasswordHash(hash);
             localStorage.setItem('ga_pwhash', hash);
+            await spegniDisponibilitaDi(sessionId, null);
             setSessionId(newSid);
             localStorage.setItem('ga_session_id', newSid);
 
@@ -2074,6 +2076,7 @@
               const existing = esito.profilo;
               const email = existing.email;
               const credenziale = esito.password_hash;
+              await spegniDisponibilitaDi(sessionId, null);
               setSessionId(existing.session_id);
               localStorage.setItem('ga_session_id', existing.session_id);
               setUserEmail(email);
@@ -2123,6 +2126,9 @@
             // «Luna piena sta iniziando ora» per i rituali di chi è appena uscito — col nome
             // del rituale in chiaro sulla schermata di blocco. E chi è uscito smetterebbe di
             // ricevere le sue notifiche senza saperlo.
+            // Stessa cosa per «Disponibili su invito»: la chiamata parte con la credenziale di chi
+            // esce, prima che venga cancellata qui sotto (senza await: handleLogout non è asincrona).
+            spegniDisponibilitaDi(sessionId, passwordHash);
             spegniPushAlLogout();
             localStorage.removeItem('ga_nickname');
             localStorage.removeItem('ga_email');
@@ -2914,6 +2920,7 @@
             const c = confermaBlocco;
             if (!c) return;
             setConfermaBlocco(null);
+            setSchedaInvito(null);
             const { nome, daNotifica, ...chi } = c;
             const r = await rpcInviti('block_telepathy_inviter', { p_invite_id: null, p_disponibilita_id: null, p_session_online: null, ...chi });
             if (!r || !r.ok) {
@@ -2926,6 +2933,137 @@
             setIncomingInvite((x) => (x && (x.invite_id === chi.p_invite_id || x.from_name === (r.nome || nome)) ? null : x));
             setAvvisoInviti(testoInviti('bloccato_ok', { nome: r.nome || nome }));
           };
+
+          const [disponibileInviti, setDisponibileInviti] = useState(null); // null = non ancora chiesto al server
+          const [invitabili, setInvitabili] = useState([]);                 // get_invitable_users: [{ id (opaco), nickname }]
+          const [schedaInvito, setSchedaInvito] = useState(null);           // { chi, dati }
+          const ultimoRinnovoRef = React.useRef(0);
+
+          // Lo stato dell'interruttore lo decide il server, non localStorage: un altro telefono che
+          // l'ha spento vince sul rinnovo di questo. Con «senza_abbonamento» si prova una volta a
+          // riregistrare l'abbonamento (se il permesso c'è ancora) e a rinnovare — ma non se la
+          // persona ha spento le notifiche dei rituali: l'abbonamento è uno solo per telefono, e
+          // quella scelta non si annulla da sola (ruling M4).
+          // Si rinnova anche quando la PWA torna dal background (ruling m11): su un telefono l'app
+          // resta aperta per giorni senza mai ripartire, e dopo 14 giorni uscirebbe dalla lista.
+          // Al massimo una volta all'ora.
+          useEffect(() => {
+            // Cambio d'identità (logout, ospite → account): niente stato né scheda della persona di prima.
+            setSchedaInvito(null);
+            if (!nickname || !sessionId) { setDisponibileInviti(null); setInvitabili([]); return; }
+            let fermo = false;
+            const rinnova = async () => {
+              ultimoRinnovoRef.current = Date.now();
+              let r = await rpcInviti('renew_telepathy_availability', {});
+              if (fermo || !r || !r.ok) return;
+              if (r.stato === 'senza_abbonamento' && pushDisponibile() && Notification.permission === 'granted'
+                  && localStorage.getItem('ga_push_spento') !== '1') {
+                try { await iscriviPush(); r = await rpcInviti('renew_telepathy_availability', {}); } catch (_) {}
+              }
+              if (fermo || !r || !r.ok) return;
+              setDisponibileInviti(r.stato === 'acceso');
+              if (r.stato === 'senza_abbonamento') setAvvisoInviti(testoInviti('nessun_abbonamento'));
+            };
+            rinnova();
+            const alRitorno = () => {
+              if (document.visibilityState === 'visible' && Date.now() - ultimoRinnovoRef.current >= 3600000) rinnova();
+            };
+            document.addEventListener('visibilitychange', alRitorno);
+            return () => { fermo = true; document.removeEventListener('visibilitychange', alRitorno); };
+          }, [nickname, sessionId]);
+
+          // Accendere: il tocco sull'interruttore, con la frase accanto, è la nostra domanda; da
+          // qui parte il permesso del browser, poi l'abbonamento (lo stesso dei rituali: riaccende
+          // anche quelle notifiche, decisione di Irene del 01/10), poi la disponibilità. Se
+          // qualcosa non va, l'interruttore resta spento e lo dice: niente verde finto (rilievo
+          // della review del 21/09).
+          const accendiDisponibilita = async () => {
+            if (!pushDisponibile()) {
+              const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+              const installata = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+              if (iOS && !installata) setMostraInstallaPerPush(true);
+              setDisponibileInviti(false);
+              setAvvisoInviti(testoInviti('nessun_abbonamento'));
+              return;
+            }
+            try {
+              if (Notification.permission !== 'granted') {
+                const p = await Notification.requestPermission();
+                if (p !== 'granted') { setDisponibileInviti(false); setAvvisoInviti(testoInviti('permesso_negato')); return; }
+              }
+              await iscriviPush();
+            } catch (_) {
+              setDisponibileInviti(false);
+              setAvvisoInviti(testoInviti('nessun_abbonamento'));
+              return;
+            }
+            const r = await rpcInviti('set_telepathy_availability', { p_nickname: nickname || 'Anonymous', p_enabled: true });
+            const ok = !!(r && r.ok && r.acceso);
+            setDisponibileInviti(ok);
+            if (!ok) setAvvisoInviti(testoInviti((r && r.motivo) || 'errore'));
+          };
+          // Spegnere toglie la riga, non l'abbonamento: le notifiche dei rituali restano.
+          const spegniDisponibilita = async () => {
+            const r = await rpcInviti('set_telepathy_availability', { p_nickname: nickname || 'Anonymous', p_enabled: false });
+            if (r && r.ok) setDisponibileInviti(false); else setAvvisoInviti(testoInviti('errore'));
+          };
+          // Prima di un cambio d'identità (iscrizione, login, link magico, logout) si spegne la
+          // disponibilità del session_id che se ne va: altrimenti resterebbe in lista una persona
+          // che su questo telefono non riceve più niente (spec §4.4). sid e credenziale si passano
+          // espliciti: rpcInviti leggerebbe i riferimenti, che a quel punto possono essere già del nuovo.
+          // Si salta solo se il server ha già detto «spento»: con null (risposta non ancora
+          // arrivata, o il link magico letto alla prima apertura) si spegne lo stesso, costa poco.
+          const spegniDisponibilitaDi = async (sid, hash) => {
+            if (disponibileInviti === false || !sid) return;
+            try { await supabase.rpc('set_telepathy_availability', { p_session_id: sid, p_password_hash: hash || null, p_nickname: null, p_enabled: false }); } catch (_) {}
+            setDisponibileInviti(false);
+          };
+          const renderInterruttoreInviti = (dataTest) => (
+            <div style={{padding: '0.5rem 0'}}>
+              <div className="flex items-center justify-between" style={{gap: '0.75rem'}}>
+                <span className="text-white text-sm">{testoInviti('interruttore')}</span>
+                <button data-test={dataTest} role="switch" aria-checked={disponibileInviti === true}
+                  aria-label={testoInviti('interruttore')}
+                  onClick={() => (disponibileInviti ? spegniDisponibilita() : accendiDisponibilita())}
+                  style={{width: '3rem', height: '1.5rem', flexShrink: 0, borderRadius: '9999px', position: 'relative', cursor: 'pointer', transition: 'all 0.3s',
+                    background: disponibileInviti ? 'rgba(34,197,94,0.5)' : 'rgba(255,255,255,0.2)',
+                    border: disponibileInviti ? '1px solid rgba(34,197,94,0.7)' : '1px solid rgba(255,255,255,0.3)'}}>
+                  <div style={{width: '1.1rem', height: '1.1rem', borderRadius: '50%', background: '#fff', position: 'absolute', top: '50%',
+                    transform: 'translateY(-50%)', left: disponibileInviti ? 'calc(100% - 1.3rem)' : '0.15rem', transition: 'all 0.3s'}} />
+                </button>
+              </div>
+              <p className="text-secondary text-xs" style={{marginTop: '0.25rem'}}>{testoInviti('nota_nome')}</p>
+            </div>
+          );
+
+          // La lista, finché si è nella lobby della telepatia.
+          useEffect(() => {
+            if (activeTab !== 'telepathy' || partner || !nickname || !sessionId) return;
+            let fermo = false;
+            const giro = async () => {
+              const r = await rpcInviti('get_invitable_users', { p_nickname: nickname || 'Anonymous' });
+              if (!fermo && Array.isArray(r)) setInvitabili(r);
+            };
+            giro();
+            const intervallo = setInterval(giro, 15000);
+            return () => { fermo = true; clearInterval(intervallo); };
+          }, [activeTab, partner, nickname, sessionId]);
+
+          // La scheda: dalla lista «Disponibili su invito» ({ disponibilita_id, nickname }) o dalla
+          // lista Online ({ id: session_id, nickname }). Nessun session_id torna dal server.
+          const apriScheda = async (chi) => {
+            const r = await rpcInviti('get_invite_card', {
+              p_nickname: nickname || 'Anonymous',
+              p_disponibilita_id: chi.disponibilita_id || null,
+              p_session_online: chi.disponibilita_id ? null : chi.id
+            });
+            if (!r || !r.ok) { setAvvisoInviti(testoInviti(r && r.motivo === 'non_trovato' ? 'non_disponibile' : ((r && r.motivo) || 'errore'))); return; }
+            setSchedaInvito({ chi, dati: r.scheda });
+          };
+          // Ruling m10: la lista Online dell'app tiene chi è stato visto negli ultimi 2 minuti, il
+          // server solo negli ultimi 30 s. Fra 30 s e 2 minuti chi ha l'interruttore acceso sta già
+          // in «Disponibili su invito» (con l'invito da 10 minuti e la push): lì soltanto, non due volte.
+          const onlineInLobby = onlineUsersForTelepathy.filter((u) => !invitabili.some((d) => d.nickname === u.nickname));
 
           const playAgainSamePartner = async () => {
             const savedPartner = partner;
@@ -3500,6 +3638,9 @@
             // spegnimento voluto da un abbonamento che il browser ha buttato via da solo.
             localStorage.setItem('ga_push_spento', '1');
             setPushAttive(false);
+            // L'abbonamento è uno solo per telefono, rituali e inviti insieme: senza, restare in
+            // «Disponibili su invito» sarebbe una promessa falsa (ruling M4).
+            if (disponibileInviti !== false) spegniDisponibilita();
             try {
               const reg = await navigator.serviceWorker.ready;
               const sub = await reg.pushManager.getSubscription();
@@ -4879,6 +5020,8 @@ ${ritual.description || ''}` })}
                           <p className="text-primary text-sm">{t.telepathy.step3}</p>
                         </div>
 
+                        <div className="bg-glass-dark rounded-xl p-4">{renderInterruttoreInviti('interruttore-inviti')}</div>
+
                         {invitoInUscita && (
                           <div className="bg-glass-dark rounded-xl p-4" style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem'}}>
                             {/* «Invito inviato...» resta: test-telepathy.js lo cerca dopo «Proponi». */}
@@ -4896,15 +5039,15 @@ ${ritual.description || ''}` })}
                         )}
 
                         {/* Lista utenti online */}
-                        {onlineUsersForTelepathy.length > 0 && (
+                        {onlineInLobby.length > 0 && (
                           <div className="bg-glass-dark rounded-xl p-4">
-                            <h3 className="text-white font-bold mb-3">{t.telepathy.onlineUsers} ({onlineUsersForTelepathy.length})</h3>
+                            <h3 className="text-white font-bold mb-3">{t.telepathy.onlineUsers} ({onlineInLobby.length})</h3>
                             <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
-                              {onlineUsersForTelepathy.map(u => (
+                              {onlineInLobby.map(u => (
                                 <div key={u.id} data-test="riga-online" style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', borderRadius: '0.75rem', background: 'rgba(255,255,255,0.05)'}}>
                                   <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
                                     <span style={{width: '0.6rem', height: '0.6rem', borderRadius: '50%', background: u.status === 'available' ? '#4ade80' : '#9ca3af', display: 'inline-block'}} />
-                                    <span className="text-white text-sm font-medium" style={{cursor: 'pointer', textDecoration: 'underline dotted'}} onClick={() => openProfile(u.nickname)}>{u.nickname}</span>
+                                    <span className="text-white text-sm font-medium" style={{cursor: 'pointer', textDecoration: 'underline dotted'}} onClick={() => apriScheda({ id: u.id, nickname: u.nickname })}>{u.nickname}</span>
                                     <span className="text-secondary text-xs">{u.status === 'busy' ? t.telepathy.inSession : t.telepathy.available}</span>
                                   </div>
                                   {u.status === 'available' && !invitoInUscita && !directInviteTarget && (
@@ -4915,6 +5058,24 @@ ${ritual.description || ''}` })}
                                     >
                                       {t.telepathy.propose}
                                     </button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {invitabili.length > 0 && (
+                          <div data-test="lista-disponibili" className="bg-glass-dark rounded-xl p-4">
+                            <h3 className="text-white font-bold mb-3">{testoInviti('disponibili')} ({invitabili.length})</h3>
+                            <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
+                              {invitabili.map(u => (
+                                <div key={u.id} data-test="riga-disponibile" style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', borderRadius: '0.75rem', background: 'rgba(255,255,255,0.05)'}}>
+                                  <span className="text-white text-sm font-medium" style={{cursor: 'pointer', textDecoration: 'underline dotted'}}
+                                    onClick={() => apriScheda({ disponibilita_id: u.id, nickname: u.nickname })}>{u.nickname}</span>
+                                  {!invitoInUscita && !directInviteTarget && (
+                                    <button onClick={() => sendDirectInvite({ disponibilita_id: u.id, nickname: u.nickname })} className="btn-primary"
+                                      style={{fontSize: '0.75rem', padding: '0.3rem 0.75rem'}}>{t.telepathy.propose}</button>
                                   )}
                                 </div>
                               ))}
@@ -5358,6 +5519,7 @@ ${ritual.description || ''}` })}
                           }} />
                         </button>
                       </div>
+                      {renderInterruttoreInviti('interruttore-inviti-impostazioni')}
                     </div>
 
                     <div style={{display: 'flex', flexDirection: 'column', gap: '1.25rem'}}>
@@ -5883,6 +6045,36 @@ ${ritual.description || ''}` })}
                   border: '1px solid rgba(167,139,250,0.5)', borderRadius: '0.85rem', padding: '0.85rem 1rem', zIndex: 9999
                 }}>
                   <p className="text-white" style={{fontSize: '0.9rem', margin: 0, textAlign: 'center'}}>{avvisoInviti}</p>
+                </div>
+              )}
+
+              {/* La scheda ha zIndex 9999 e la conferma del blocco 10000: la conferma si apre sopra. */}
+              {schedaInvito && (
+                <div data-test="scheda-invito" role="dialog" style={{position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9999,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'}}>
+                  <div className="bg-glass-dark rounded-2xl" style={{maxWidth: '22rem', width: '100%', padding: '1.25rem'}}>
+                    <h3 className="text-white font-bold">{schedaInvito.dati.nickname}</h3>
+                    {schedaInvito.dati.country && <p className="text-secondary text-sm">{schedaInvito.dati.country}</p>}
+                    {schedaInvito.dati.bio && <p className="text-white text-sm" style={{margin: '0.5rem 0'}}>{schedaInvito.dati.bio}</p>}
+                    {schedaInvito.dati.prove != null && (
+                      <p className="text-secondary text-sm">
+                        {testoInviti('prove')}: {schedaInvito.dati.prove}
+                        {IH && IH.percentuale(schedaInvito.dati.prove, schedaInvito.dati.indovinate) ? ` · ${testoInviti('indovinate')}: ${IH.percentuale(schedaInvito.dati.prove, schedaInvito.dati.indovinate)}` : ''}
+                      </p>
+                    )}
+                    <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem'}}>
+                      {!invitoInUscita && !directInviteTarget && (
+                        <button data-test="btn-invita" className="btn-primary"
+                          onClick={() => { const chi = schedaInvito.chi; setSchedaInvito(null); sendDirectInvite(chi); }}>{testoInviti('invita')}</button>
+                      )}
+                      <button data-test="btn-blocca-scheda" className="btn-secondary"
+                        onClick={() => setConfermaBlocco({ nome: schedaInvito.dati.nickname, ...(schedaInvito.chi.disponibilita_id
+                          ? { p_disponibilita_id: schedaInvito.chi.disponibilita_id } : { p_session_online: schedaInvito.chi.id }) })}>
+                        {testoInviti('blocca')}
+                      </button>
+                      <button data-test="btn-chiudi-scheda" className="btn-secondary" onClick={() => setSchedaInvito(null)}>{testoInviti('chiudi')}</button>
+                    </div>
+                  </div>
                 </div>
               )}
 

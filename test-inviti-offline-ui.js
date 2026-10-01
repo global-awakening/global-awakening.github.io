@@ -389,6 +389,123 @@ scenario('apri_senza_identita', async (browser) => {
   check(!!bl && await B.page.locator('.invite-toast').count() === 0, 'dal banner: conferma, blocco sul server, banner chiuso', bl);
 });
 
+// ════ Task 22: interruttore, lista, scheda ═════════════════════════════════
+// Etichette nuove (N12, S12, S13…): A9/B9 sono già di attesa_con_presenza_vecchia, e con lo stesso
+// TS due scenari si troverebbero lo stesso nickname (inciampo del Task 21).
+const interruttore = (p, dt = 'interruttore-inviti') => p.page.locator(`[data-test="${dt}"]`);
+const acceso = async (p, dt) => (await interruttore(p, dt).getAttribute('aria-checked')) === 'true';
+// Ruling m2: set_telepathy_availability si può chiamare solo con la chiave pubblica (EXECUTE ad
+// anon/authenticated), come farebbe «un altro telefono» della stessa persona.
+const CHIAVE_PUBBLICA = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
+async function pubblica(rpc, corpo) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${rpc}`, { method: 'POST', body: JSON.stringify(corpo),
+    headers: { apikey: CHIAVE_PUBBLICA, Authorization: `Bearer ${CHIAVE_PUBBLICA}`, 'Content-Type': 'application/json' } });
+  const t = await r.text();
+  try { return JSON.parse(t); } catch (_) { return t; }
+}
+// Il logout passa da un dialogo di conferma dell'app (non window.confirm), come in test-push-ui.js.
+async function esci(p) {
+  await p.page.locator('button:has-text("Logout"), button:has-text("Esci")').first().click();
+  await p.page.locator('.modal-content button').last().click({ timeout: 5000 });
+}
+
+scenario('interruttore', async (browser) => {
+  const N = await entra(browser, 'N12', { permesso: 'denied' });
+  await aTelepatia(N);
+  await interruttore(N).waitFor({ timeout: 15000 });
+  check((await N.page.getByText(/Il tuo nome sarà visibile a tutti quelli che usano l'app\.|Your name will be visible to everyone using the app\./).count()) > 0,
+    'accanto all\'interruttore la frase sul nome visibile');
+  await interruttore(N).click();
+  await N.page.locator('[data-test="avviso-inviti"]').waitFor({ timeout: 10000 });
+  check(!(await acceso(N)), 'permesso negato: l\'interruttore resta spento, e lo dice');
+  const S = await entra(browser, 'S12');
+  await aTelepatia(S);
+  await interruttore(S).click();
+  await attendi(() => acceso(S), 15000);
+  const riga = (await leggi('telepathy_availability', `session_id=eq.${q(S.sid)}&select=nickname`))[0];
+  check(!!riga && riga.nickname === S.nick, 'permesso dato: acceso, e la riga è sul server', riga);
+  // Spento da «un altro telefono»: alla riapertura vince il server.
+  const spento = await pubblica('set_telepathy_availability', { p_session_id: S.sid, p_password_hash: null, p_nickname: S.nick, p_enabled: false });
+  check(!!spento && spento.ok === true && spento.acceso === false, 'con la chiave pubblica la RPC spegne', spento);
+  await S.page.reload();
+  await aTelepatia(S);
+  await interruttore(S).waitFor({ timeout: 15000 });
+  await pausa(3000);
+  check(!(await acceso(S)), 'spento da un altro telefono: alla riapertura risulta spento');
+  await interruttore(S).click();
+  await attendi(() => acceso(S), 15000);
+  await esci(S);
+  const via = await attendi(async () => (await leggi('telepathy_availability', `session_id=eq.${q(S.sid)}&select=id`)).length === 0, 10000);
+  check(!!via, 'logout di un ospite con l\'interruttore acceso: la disponibilità si spegne');
+});
+
+scenario('lista_e_scheda', async (browser) => {
+  const S = await entra(browser, 'S13');
+  await aTelepatia(S);
+  await interruttore(S).click();
+  await attendi(() => acceso(S), 15000);
+  await S.ctx.close();                                                        // S chiude l'app…
+  await servizio(`online_users?id=eq.${q(S.sid)}`, { method: 'DELETE' });    // …e non risulta più online
+  const A = await entra(browser, 'A13');
+  await aTelepatia(A);
+  const riga = A.page.locator('[data-test="riga-disponibile"]').filter({ hasText: S.nick });
+  await riga.waitFor({ timeout: 25000 });
+  ok('chi ha acceso l\'interruttore e non è online compare in «Disponibili su invito»');
+  check((await A.page.locator('[data-test="riga-online"]').filter({ hasText: S.nick }).count()) === 0, 'e non compare anche fra gli online');
+  await riga.locator('span').first().click();
+  await A.page.locator('[data-test="scheda-invito"]').waitFor({ timeout: 10000 });
+  check((await A.page.locator('[data-test="scheda-invito"]').innerText()).includes(S.nick), 'la scheda si apre, col nome');
+  await A.page.locator('[data-test="btn-invita"]').click();
+  const inv = await attendi(() => pendingDa(A));
+  const durata = inv ? (Date.parse(inv.expires_at) - Date.parse(inv.created_at)) / 1000 : 0;
+  check(!!inv && inv.con_push === true && durata === 600, 'invito da 10 minuti, con push', { con_push: inv && inv.con_push, durata });
+  check(/(9|10):\d\d/.test(await A.page.locator('[data-test="conto-invito"]').innerText()), 'e il conto alla rovescia da 10 minuti');
+  const B = await entra(browser, 'B13');
+  await aTelepatia(B);
+  await rigaOnline(B, A).waitFor({ timeout: 20000 });
+  await rigaOnline(B, A).locator('span').filter({ hasText: A.nick }).click();
+  await B.page.locator('[data-test="scheda-invito"]').waitFor({ timeout: 10000 });
+  ok('la stessa scheda si apre dalla lista Online');
+  await B.page.locator('[data-test="btn-blocca-scheda"]').click();
+  await B.page.locator('[data-test="btn-conferma-blocco"]').click();
+  const bl = await attendi(async () => (await leggi('telepathy_invite_blocks', `blocker_session=eq.${q(B.sid)}&blocked_session=eq.${q(A.sid)}&select=created_at`))[0]);
+  check(!!bl, 'dalla scheda: «Non voglio più inviti» con il session_id di chi è online', bl);
+  check(await B.page.locator('[data-test="scheda-invito"]').count() === 0, 'dopo il blocco la scheda si chiude');
+});
+
+// Ruling M4: un solo abbonamento per telefono. (a) Spegnere le notifiche dei rituali spegne anche la
+// disponibilità agli inviti. (b) Il rinnovo all'apertura rispetta ga_push_spento: con
+// «senza_abbonamento» non si riabbona da solo. (c) L'interruttore in Impostazioni è lo stesso stato.
+scenario('notifiche_rituali_e_inviti', async (browser) => {
+  const S = await entra(browser, 'S14');
+  await aTelepatia(S);
+  await interruttore(S).click();
+  await attendi(() => acceso(S), 15000);
+  await S.page.locator('.text-white.font-medium[title]').first().click();   // il proprio nome apre il profilo
+  const imp = interruttore(S, 'interruttore-inviti-impostazioni');
+  await imp.waitFor({ timeout: 10000 });
+  check(await acceso(S, 'interruttore-inviti-impostazioni'), 'in Impostazioni l\'interruttore è lo stesso stato: acceso');
+  await S.page.locator('[data-test="push-interruttore"]').click();
+  const via = await attendi(async () => (await leggi('telepathy_availability', `session_id=eq.${q(S.sid)}&select=id`)).length === 0, 10000);
+  check(!!via && !(await acceso(S, 'interruttore-inviti-impostazioni')), 'spegnere le notifiche dei rituali spegne anche gli inviti');
+  // Riacceso, poi l'abbonamento sparisce dal server (come un indirizzo buttato via dal browser) e
+  // la persona aveva spento i rituali: alla riapertura non si riabbona da sola.
+  await imp.click();
+  await attendi(() => acceso(S, 'interruttore-inviti-impostazioni'), 15000);
+  check(await S.page.evaluate(() => localStorage.getItem('ga_push_spento')) === null, 'accendere gli inviti riaccende anche le notifiche dei rituali (decisione di Irene)');
+  await servizio(`push_subscriptions?session_id=eq.${q(S.sid)}`, { method: 'DELETE' });
+  await S.page.evaluate(() => localStorage.setItem('ga_push_spento', '1'));
+  // Il permesso resta dato dopo la ricarica (lo stub ripartirebbe da «default», e il controllo
+  // passerebbe per costruzione): è il caso in cui il rinnovo PROVEREBBE a riabbonarsi.
+  await S.ctx.addInitScript("window.__permesso = 'granted';");
+  await S.page.reload();
+  await aTelepatia(S);
+  await S.page.locator('[data-test="avviso-inviti"]').filter({ hasText: /non sono più attive|no longer active/ }).waitFor({ timeout: 15000 });
+  await pausa(2000);
+  const abb = await leggi('push_subscriptions', `session_id=eq.${q(S.sid)}&select=endpoint`);
+  check(abb.length === 0 && !(await acceso(S)), 'con ga_push_spento il rinnovo non riabbona: spento, e lo dice', abb.length);
+});
+
 // ── esecuzione ──
 (async () => {
   if (!KEY) { console.log('⛔ serve SUPABASE_SERVICE_KEY in .env.test (spostare i tempi e ripulire): non parto.'); process.exit(2); }
