@@ -24,7 +24,7 @@ importScripts('push-helpers.js?v=12');
 // push d'invito: senza il bump le app installate terrebbero quelli vecchi.
 const CACHE = 'ga-pwa-v12';
 const PRECACHE = [
-  'app.html', 'app.js', 'push-helpers.js?v=12', 'music-helpers.js', 'index.html', 'manifest.webmanifest',
+  'app.html', 'app.js', 'push-helpers.js?v=12', 'music-helpers.js', 'inviti-helpers.js', 'index.html', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
   'icons/icon-any-192.png', 'icons/icon-any-512.png',
   'https://unpkg.com/react@18.3.1/umd/react.production.min.js',
@@ -67,7 +67,7 @@ self.addEventListener('fetch', (e) => {
   // music-helpers.js e' codice dell'app quanto app.js: se stesse fra i file cache-first, una
   // correzione all'avvio della musica non arriverebbe mai a chi ha gia' l'app installata.
   // Lo stesso vale per il manifest: e' da li' che Android legge icone, nome e colori dell'app.
-  const isFresh = req.mode === 'navigate' || url.pathname.endsWith('/app.html') || url.pathname.endsWith('/app.js') || url.pathname.endsWith('/music-helpers.js') || url.pathname.endsWith('/manifest.webmanifest') || url.pathname.endsWith('/');
+  const isFresh = req.mode === 'navigate' || url.pathname.endsWith('/app.html') || url.pathname.endsWith('/app.js') || url.pathname.endsWith('/music-helpers.js') || url.pathname.endsWith('/inviti-helpers.js') || url.pathname.endsWith('/manifest.webmanifest') || url.pathname.endsWith('/');
   if (isFresh) {
     e.respondWith((async () => {
       try {
