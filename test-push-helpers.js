@@ -6,7 +6,7 @@
  *
  * Esecuzione: node test-push-helpers.js
  */
-const { costruisciNotifica } = require('./push-helpers.js');
+const { costruisciNotifica, urlAzione, puoTacere } = require('./push-helpers.js');
 
 let passati = 0, falliti = 0;
 const ok = (n) => { console.log('✅ ' + n); passati++; };
@@ -52,6 +52,47 @@ try { vuoto = costruisciNotifica({}); ok('payload vuoto non solleva eccezioni');
 catch (err) { ko('payload vuoto non solleva eccezioni', err.message); }
 if (vuoto && typeof vuoto.titolo === 'string' && vuoto.titolo.length > 0) ok('payload vuoto produce comunque un titolo');
 else ko('payload vuoto produce comunque un titolo', JSON.stringify(vuoto));
+
+// --- Inviti telepatia (spec 2026-09-25 §4.3) ----------------------------------
+const ID = '3f0c2b1e-8a4d-4c6e-9b7a-1d2e3f4a5b6c';
+const inv = costruisciNotifica({ tipo: 'invito', invito: ID, nome: 'Aurora', locale: 'it' });
+uguale('invito it: titolo', inv.titolo, 'Aurora ti invita a un training telepatico');
+uguale('invito it: testo', inv.corpo, 'Tocca per rispondere.');
+/\d+\s*minut/i.test(inv.titolo + inv.corpo) ? ko('invito senza numero di minuti', inv.titolo) : ok('invito senza numero di minuti');
+uguale('invito: destinazione', inv.url, 'app.html?invito=' + ID);
+uguale('invito: tag', inv.tag, 'invito-' + ID);
+uguale('invito: azione «blocca»', inv.azioni.length === 1 && inv.azioni[0].action, 'blocca');
+uguale('invito en: titolo', costruisciNotifica({ tipo: 'invito', invito: ID, nome: 'Aurora', locale: 'en' }).titolo, 'Aurora invites you to a telepathy training');
+const acc = costruisciNotifica({ tipo: 'accettato', invito: ID, nome: 'Bruno', locale: 'it' });
+uguale('accettato it', acc.titolo, 'Bruno ha accettato, entra!');
+uguale('stesso tag per tutti i messaggi di un invito', acc.tag, inv.tag);
+uguale('accettato: nessuna azione', acc.azioni.length, 0);
+uguale('rifiutato it', costruisciNotifica({ tipo: 'rifiutato', invito: ID, nome: 'Bruno', locale: 'it' }).titolo, 'Bruno non può ora');
+uguale('scaduto it', costruisciNotifica({ tipo: 'scaduto', invito: ID, nome: 'Bruno', locale: 'it' }).titolo, "L'invito a Bruno è scaduto");
+uguale('scaduto en', costruisciNotifica({ tipo: 'scaduto', invito: ID, nome: 'Bruno', locale: 'en' }).titolo, 'Your invite to Bruno has expired');
+const senza = costruisciNotifica({ tipo: 'invito', locale: 'it' });
+uguale('invito senza nome: «Qualcuno»', senza.titolo, 'Qualcuno ti invita a un training telepatico');
+uguale('invito senza id: apre l\'app, nessuna azione', `${senza.url}/${senza.azioni.length}`, 'app.html/0');
+uguale('un id storto non entra nell\'indirizzo', costruisciNotifica({ tipo: 'invito', invito: 'x"><script>', nome: 'A' }).url, 'app.html');
+const lungo = '🌙'.repeat(5) + 'L'.repeat(45);
+costruisciNotifica({ tipo: 'invito', invito: ID, nome: lungo, locale: 'it' }).titolo.startsWith(lungo)
+  ? ok('nome di 50 caratteri con emoji: intero') : ko('nome di 50 caratteri con emoji: intero', lungo);
+costruisciNotifica({ tipo: 'invito', invito: ID, nome: '<b>x</b>', locale: 'it' }).titolo.includes('<b>x</b>')
+  ? ok('il nome resta testo') : ko('il nome resta testo', '');
+const ign = costruisciNotifica({ tipo: 'boh', rituale: 'Luna', ritualeId: 3, locale: 'it' });
+uguale('tipo sconosciuto: testo neutro, non un rituale', `${ign.titolo}/${ign.corpo}/${ign.url}`, "Global Awakening/Apri l'app/app.html");
+uguale('promemoria invariato', costruisciNotifica({ tipo: 'reminder', rituale: 'X', ritualeId: 1, locale: 'it' }).titolo, 'X sta per iniziare');
+uguale('urlAzione: blocca', urlAzione('app.html?invito=' + ID, 'blocca'), 'app.html?invito=' + ID + '&azione=blocca');
+uguale('urlAzione: senza azione', urlAzione('app.html?invito=' + ID, ''), 'app.html?invito=' + ID);
+uguale('urlAzione: su un rituale non fa niente', urlAzione('app.html?ritual=4', 'blocca'), 'app.html?ritual=4');
+uguale('puoTacere: Chrome su Android', puoTacere('Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Mobile Safari/537.36'), true);
+uguale('puoTacere: Safari su iPhone', puoTacere('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'), false);
+uguale('puoTacere: Chrome su iPhone (sotto è Safari)', puoTacere('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/129.0 Mobile/15E148 Safari/604.1'), false);
+uguale('puoTacere: Firefox', puoTacere('Mozilla/5.0 (Windows NT 10.0; rv:131.0) Gecko/20100101 Firefox/131.0'), false);
+// Ruling m7: un nickname con sequenze speciali di String.replace resta letterale.
+uguale('il nome con $& e $$ resta letterale', costruisciNotifica({ tipo: 'invito', invito: ID, nome: 'a$&b$$c$1', locale: 'it' }).titolo, 'a$&b$$c$1 ti invita a un training telepatico');
+uguale('scaduto: il nome con $& resta letterale', costruisciNotifica({ tipo: 'scaduto', invito: ID, nome: '$&$$', locale: 'en' }).titolo, 'Your invite to $&$$ has expired');
+uguale('invito senza nome en: «Someone»', costruisciNotifica({ tipo: 'invito', invito: ID, nome: '', locale: 'en' }).titolo, 'Someone invites you to a telepathy training');
 
 console.log(`\n${passati} passati, ${falliti} falliti`);
 process.exit(falliti === 0 ? 0 : 1);
