@@ -252,6 +252,35 @@ scenario('campanella_e_training', async (browser) => {
   check(await B.page.locator('[data-test="partner-nome"]').isVisible(), 'e il training continua');
 });
 
+// Fix round 1: chi invita posa il telefono e la sua riga di presenza resta lì, fresca ma più
+// vecchia dell'accettazione (nessuno la cancella quando il telefono si blocca). Non deve contare
+// come «è arrivato»: chi ha accettato resta in attesa oltre i 35 s di checkPartnerLeft.
+scenario('attesa_con_presenza_vecchia', async (browser) => {
+  const A = await entra(browser, 'A9');
+  const B = await entra(browser, 'B9');
+  await aTelepatia(A);
+  await rigaOnline(A, B).waitFor({ timeout: 20000 });
+  await rigaOnline(A, B).locator('button').click();
+  await attendi(() => pendingDa(A));
+  await A.page.close({ runBeforeUnload: true });   // la riga in online_users resta (last_seen di pochi secondi fa)
+  // Doppio tocco su «Accetta»: il secondo, col primo in volo, si ignora.
+  await B.page.locator('.invite-toast [data-test="btn-accetta"]').dblclick({ timeout: 15000 });
+  await B.page.locator('[data-test="attesa-invitante"]').waitFor({ timeout: 10000 });
+  const aperti = await leggi('telepathy_matches', `user2_id=eq.${q(B.sid)}&ended_at=is.null&select=id`);
+  check(aperti.length === 1 && (await B.page.locator('[data-test="avviso-inviti"]').count()) === 0,
+    'doppio tocco su «Accetta»: un match solo e nessun messaggio d\'errore', aperti);
+  const riga = (await leggi('online_users', `id=eq.${q(A.sid)}&select=last_seen`))[0];
+  check(!!riga, 'la presenza di chi ha invitato è rimasta (come un telefono posato)', riga);
+  await pausa(45000);   // oltre i 35 s del controllo sul last_seen
+  check(await B.page.locator('[data-test="attesa-invitante"]').isVisible(),
+    'una presenza vista prima dell\'accettazione non chiude l\'attesa: dopo 45 s è ancora in attesa');
+  const pA = await A.ctx.newPage();   // chi ha invitato arriva davvero (rientro all'avvio)
+  await pA.goto(APP_URL);
+  await pA.locator('[data-test="partner-nome"]').filter({ hasText: B.nick }).waitFor({ timeout: 25000 });
+  await B.page.locator('[data-test="attesa-invitante"]').waitFor({ state: 'detached', timeout: 15000 });
+  check(await B.page.locator('[data-test="partner-nome"]').isVisible(), 'quando arriva davvero l\'attesa finisce e il training resta');
+});
+
 // Ruling m9 (prove poco costose): la campanella segue il server e chi invita legge «scaduto».
 // «Annullato» non ha una prova UI qui: chi riceve vede solo sparire il banner, e il messaggio
 // compare solo se tocca «Accetta» nei ≤4 s fra il ritiro e il giro successivo (corsa).

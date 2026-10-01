@@ -2700,8 +2700,15 @@
             if (uscita) await rpcInviti('cancel_telepathy_invite', { p_invite_id: uscita.id });
           };
 
+          // Un secondo tocco su «Accetta» mentre il primo è in volo creerebbe un secondo match
+          // (o un falso «già accettato»): si ignora.
+          const accettoInCorsoRef = React.useRef(false);
           const acceptInvite = async () => {
-            if (!incomingInvite) return;
+            if (!incomingInvite || accettoInCorsoRef.current) return;
+            accettoInCorsoRef.current = true;
+            try { await accettaInvito(); } finally { accettoInCorsoRef.current = false; }
+          };
+          const accettaInvito = async () => {
             // Durante un training non si accetta (il server risponderebbe in_match): la UI mostra
             // solo «Rifiuta». Dalla schermata «sessione conclusa» (sessionEnded) o con il partner
             // uscito si può: bug 2, `partner` resta valorizzato anche a sessione finita.
@@ -2818,7 +2825,14 @@
               try {
                 const { data: pu } = await supabase.from('online_users').select('last_seen').eq('id', partner.id);
                 if (fermo) return;
-                if (pu && pu.length > 0 && Date.now() - new Date(pu[0].last_seen).getTime() < 30000) { setAttesaInvitante(null); return; }
+                // Conta solo una presenza vista DOPO l'accettazione (+5 s di margine): chi posa il
+                // telefono lascia la sua riga fresca per un po' (niente la cancella quando lo schermo
+                // si blocca), e quella riga non vuol dire «è arrivato». last_seen lo scrive l'orologio
+                // di chi ha invitato: nel dubbio si aspetta; l'uscita sicura resta giocato (M2).
+                const visto = pu && pu.length > 0 ? Date.parse(pu[0].last_seen) : NaN;
+                const risposto = Date.parse(rispostoIlRef.current);
+                if (!isNaN(visto) && !isNaN(risposto) && visto > risposto + 5000
+                    && Date.now() - visto < 30000) { setAttesaInvitante(null); return; }
                 const { data: mm, error: errM } = await supabase.from('telepathy_matches').select('giocato').eq('id', matchId);
                 if (fermo) return;
                 if (!errM && Array.isArray(mm) && mm.length > 0 && mm[0].giocato === true) { setAttesaInvitante(null); return; }

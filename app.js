@@ -2900,8 +2900,17 @@ function GlobalAwakeningPlatform() {
       p_invite_id: uscita.id
     });
   };
+  const accettoInCorsoRef = React.useRef(false);
   const acceptInvite = async () => {
-    if (!incomingInvite) return;
+    if (!incomingInvite || accettoInCorsoRef.current) return;
+    accettoInCorsoRef.current = true;
+    try {
+      await accettaInvito();
+    } finally {
+      accettoInCorsoRef.current = false;
+    }
+  };
+  const accettaInvito = async () => {
     if ((matchId || partner) && !sessionEnded && !partnerDisconnected) return;
     if (matchId || partner) resetTelepathy();
     setSearchingPartner(false);
@@ -3023,7 +3032,9 @@ function GlobalAwakeningPlatform() {
           data: pu
         } = await supabase.from('online_users').select('last_seen').eq('id', partner.id);
         if (fermo) return;
-        if (pu && pu.length > 0 && Date.now() - new Date(pu[0].last_seen).getTime() < 30000) {
+        const visto = pu && pu.length > 0 ? Date.parse(pu[0].last_seen) : NaN;
+        const risposto = Date.parse(rispostoIlRef.current);
+        if (!isNaN(visto) && !isNaN(risposto) && visto > risposto + 5000 && Date.now() - visto < 30000) {
           setAttesaInvitante(null);
           return;
         }
