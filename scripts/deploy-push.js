@@ -64,6 +64,7 @@ function esegui(descrizione, argomenti, env) {
 const FUNZIONI = [
   { nome: 'notify-ritual-start', descrizione: 'pubblico il motore delle notifiche dei rituali' },
   { nome: 'alert-cron', descrizione: 'pubblico la sentinella sui guasti' },
+  { nome: 'notify-telepathy-invite', descrizione: 'pubblico le push degli inviti telepatia' },
 ];
 
 function funzioniScelte(argv) {
@@ -119,8 +120,7 @@ function main() {
     '--project-ref', ref
   ], ambiente);
 
-  console.log('\n✅ Funzione pubblicata e segreti caricati.');
-  console.log('   Prossimo passo: node scripts/apply-sql.js supabase/sql/23_cron_push.sql');
+  console.log('\n✅ Funzioni pubblicate e segreti caricati.');
 }
 
 main();
