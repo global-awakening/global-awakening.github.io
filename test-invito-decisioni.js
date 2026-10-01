@@ -62,16 +62,22 @@ const atteso = (n, a, b) => (a === b ? ok(n) : ko(n, `atteso ${JSON.stringify(b)
   d = decidiPush('accettato', invito({ status: 'accepted', match_id: ID }), adesso);
   atteso('accettato con match_id: al mittente, TTL 180, alta', d && `${d.a}/${d.ttl}/${d.urgency}/${d.nome}`, 'mittente/180/high/Bruno');
   atteso('accettato senza match_id (app vecchia): niente', decidiPush('accettato', invito({ status: 'accepted' }), adesso), null);
+  atteso('accettato via_diretta true: niente (service worker v11 vecchio confonde con rituale)', decidiPush('accettato', invito({ status: 'accepted', match_id: ID, via_diretta: true }), adesso), null);
+  atteso('accettato via_diretta false: al mittente come al solito', decidiPush('accettato', invito({ status: 'accepted', match_id: ID, via_diretta: false }), adesso) && 'parte', 'parte');
 
   // --- rifiutato ------------------------------------------------------------
   d = decidiPush('rifiutato', invito({ status: 'declined' }), adesso);
   atteso('rifiutato da 10 minuti: al mittente, TTL 3600, normale', d && `${d.a}/${d.ttl}/${d.urgency}`, 'mittente/3600/normal');
   atteso('rifiutato da 45 s: niente', decidiPush('rifiutato', invito({ status: 'declined', created_at: iso(-10000), expires_at: iso(35000) }), adesso), null);
+  atteso('rifiutato via_diretta true: niente (service worker v11 vecchio confonde con rituale)', decidiPush('rifiutato', invito({ status: 'declined', via_diretta: true }), adesso), null);
+  atteso('rifiutato via_diretta false: al mittente come al solito', decidiPush('rifiutato', invito({ status: 'declined', via_diretta: false }), adesso) && 'parte', 'parte');
 
   // --- scaduto --------------------------------------------------------------
   d = decidiPush('scaduto', invito({ status: 'expired', created_at: iso(-700000), expires_at: iso(-100000) }), adesso);
   atteso('scaduto da 10 minuti: al mittente', d && `${d.a}/${d.kind}/${d.ttl}`, 'mittente/scaduto/3600');
   atteso('scaduto da 45 s: niente', decidiPush('scaduto', invito({ status: 'expired', created_at: iso(-100000), expires_at: iso(-55000) }), adesso), null);
+  atteso('scaduto via_diretta true: niente (service worker v11 vecchio confonde con rituale)', decidiPush('scaduto', invito({ status: 'expired', created_at: iso(-700000), expires_at: iso(-100000), via_diretta: true }), adesso), null);
+  atteso('scaduto via_diretta false: al mittente come al solito', decidiPush('scaduto', invito({ status: 'expired', created_at: iso(-700000), expires_at: iso(-100000), via_diretta: false }), adesso) && 'parte', 'parte');
   atteso('nessun invito: niente', decidiPush('invito', null, adesso, true), null);
 
   // --- prenotazione rifiutata dal database ----------------------------------

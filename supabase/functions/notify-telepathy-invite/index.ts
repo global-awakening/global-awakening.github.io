@@ -24,7 +24,7 @@ import webpush from 'npm:web-push@3.6.7';
 import { decidiDopoErrore } from '../_shared/esito.mjs';
 import { leggiRichiesta, decidiPush, prenotazioneSaltata } from './decisioni.mjs';
 
-const COLONNE = 'id, from_id, from_name, to_id, to_name, status, created_at, expires_at, match_id, con_push';
+const COLONNE = 'id, from_id, from_name, to_id, to_name, status, created_at, expires_at, match_id, con_push, via_diretta';
 
 Deno.serve(async (req) => {
   let corpo: unknown = null;
