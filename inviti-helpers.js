@@ -29,6 +29,9 @@
       annullato: "L'invito è stato ritirato",
       gia_accettato: "L'invito è già stato accettato",
       non_ce_piu: "L'altra persona non c'è più",
+      // L'invito in uscita non c'è più sul server (le app vecchie cancellano gli inviti ricevuti
+      // dopo 2 minuti): il pulsante si libera e si può reinvitare.
+      invito_sparito: "L'invito non c'è più: puoi mandarne un altro",
       match_non_valido: 'Non è stato possibile avviare il training: riprova',
       nessun_abbonamento: 'Le notifiche di questo telefono non sono più attive: riaccendi per ricevere inviti',
       senza_abbonamento: 'Le notifiche di questo telefono non sono più attive: riaccendi per ricevere inviti',
@@ -68,6 +71,7 @@
       annullato: 'The invite was withdrawn',
       gia_accettato: 'The invite has already been accepted',
       non_ce_piu: 'The other person is no longer there',
+      invito_sparito: 'The invite is gone: you can send another one',
       match_non_valido: 'The training could not start: try again',
       nessun_abbonamento: 'Notifications on this phone are no longer active: switch on again to receive invites',
       senza_abbonamento: 'Notifications on this phone are no longer active: switch on again to receive invites',

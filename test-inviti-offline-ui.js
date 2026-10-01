@@ -134,6 +134,47 @@ scenario('invio_online', async (browser) => {
   check(!!dopo && dopo.status === 'pending', 'chiudere l\'app non ritira più l\'invito', dopo);
 });
 
+// ════ Task 19: attesa di chi invita ════════════════════════════════════════
+// Questi due scenari dipendono da acceptInvite del Task 20 (match_id scritto nell'invito):
+// si verificano al Task 20 (ruling B1).
+scenario('attesa_di_chi_invita', async (browser) => {
+  const A = await entra(browser, 'A2');
+  const B = await entra(browser, 'B2');
+  await aTelepatia(A);
+  await rigaOnline(A, B).waitFor({ timeout: 20000 });
+  await rigaOnline(A, B).locator('button').click();
+  const inv = await attendi(() => pendingDa(A));
+  await sposta('telepathy_invites', `id=eq.${inv.id}`, { expires_at: faSecondi(1) });
+  await A.page.locator('[data-test="conto-invito"]').waitFor({ state: 'detached', timeout: 10000 });
+  ok('a expires_at (ora del server) l\'invito si chiude e il pulsante torna, senza timer locale');
+  await rigaOnline(A, B).locator('button').click();
+  await B.page.locator('.invite-toast [data-test="btn-accetta"]').click({ timeout: 15000 });
+  await A.page.locator('[data-test="partner-nome"]').filter({ hasText: B.nick }).waitFor({ timeout: 15000 });
+  ok('B accetta: A entra nel match, col nome del partner preso dal match');
+  const m = (await leggi('telepathy_matches', `user1_id=eq.${q(A.sid)}&select=user2_id,da_invito,giocato`))[0];
+  check(!!m && m.user2_id === B.sid && m.da_invito === true && m.giocato === true,
+    'è il match dell\'invito, e l\'arrivo di A conta come attività (giocato)', m);
+});
+
+scenario('rientro_all_avvio', async (browser) => {
+  const A = await entra(browser, 'A3');
+  const B = await entra(browser, 'B3');
+  await aTelepatia(A);
+  await rigaOnline(A, B).waitFor({ timeout: 20000 });
+  await rigaOnline(A, B).locator('button').click();
+  const inv = await attendi(() => pendingDa(A));
+  // runBeforeUnload (ruling m1): la chiusura vera, con beforeunload, come sul telefono.
+  await A.page.close({ runBeforeUnload: true });
+  await servizio(`online_users?id=eq.${q(A.sid)}`, { method: 'DELETE' });   // A risulta offline
+  await B.page.locator('.invite-toast [data-test="btn-accetta"]').click({ timeout: 15000 });
+  const pA = await A.ctx.newPage();
+  // Riapre dalla notifica «accettato» (?invito=<id>): entra nel match_id dell'invito. Senza il parametro
+  // lo farebbe lo stesso il rientro all'avvio; con, si prova anche la strada di chi arriva dalla notifica.
+  await pA.goto(`${APP_URL}?invito=${inv.id}`);
+  await pA.locator('[data-test="partner-nome"]').filter({ hasText: B.nick }).waitFor({ timeout: 25000 });
+  ok('A riapre l\'app entro 3 minuti ed entra da sola/o nel match accettato');
+});
+
 // ── esecuzione ──
 (async () => {
   if (!KEY) { console.log('⛔ serve SUPABASE_SERVICE_KEY in .env.test (spostare i tempi e ripulire): non parto.'); process.exit(2); }

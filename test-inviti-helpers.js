@@ -86,6 +86,13 @@ uguale('non_trovato dalla scheda/Online è un messaggio neutro, diverso da quell
   H.testo('non_trovato_scheda', 'it') !== H.testo('non_trovato', 'it') && H.testo('non_trovato_scheda', 'it') !== H.testo('errore', 'it'), true);
 uguale('non_trovato dalla scheda: neutro anche in inglese', H.testo('non_trovato_scheda', 'en') !== H.testo('errore', 'en') && !/device/i.test(H.testo('non_trovato_scheda', 'en')), true);
 
+// Ruling M1 (Task 19): l'invito in uscita sparito dal server (le app vecchie cancellano gli inviti
+// ricevuti dopo 2 minuti) ha un messaggio suo: non è «scaduto» né «non trovato su questo dispositivo».
+for (const l of ['it', 'en']) {
+  const t = H.testo('invito_sparito', l);
+  uguale(`invito sparito: messaggio proprio (${l})`, t !== H.testo('errore', l) && t !== H.testo('scaduto', l) && t !== H.testo('non_trovato', l), true);
+}
+
 // «Auth failed» (m6): messaggio proprio, non «Connessione non riuscita»
 uguale('Auth failed ha il suo messaggio (it)', H.testo('auth_fallita', 'it') !== H.testo('errore', 'it') && /accedi/i.test(H.testo('auth_fallita', 'it')), true);
 uguale('Auth failed ha il suo messaggio (en)', H.testo('auth_fallita', 'en') !== H.testo('errore', 'en') && /log in/i.test(H.testo('auth_fallita', 'en')), true);

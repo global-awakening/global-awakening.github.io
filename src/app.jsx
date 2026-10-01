@@ -2387,37 +2387,106 @@
             return () => clearInterval(interval);
           }, [matchId, showLevelBanner, currentLevel, roundCount]);
 
-          // Poll per match da invito diretto (l'invitante aspetta che l'altro accetti)
-          useEffect(() => {
-            if (!directInviteTarget || partner) return;
+          // Chi ha invitato entra SOLO nel match dell'invito accettato (spec §4.4): nessuna ricerca
+          // di «un match qualunque in cui compaio». Id e nome del partner vengono dal match
+          // (user2_*): chi invita non riceve mai il session_id dell'altro dalle RPC.
+          const entraNelMatchDaInvito = async (idMatch, gia) => {
+            let m = gia;
+            if (!m) {
+              const { data } = await supabase.from('telepathy_matches').select('*').eq('id', idMatch);
+              m = data && data[0];
+            }
+            if (!m || m.ended_at) {
+              setDirectInviteTarget(null);
+              setInvitoInUscita(null);
+              setAvvisoInviti(testoInviti('non_ce_piu'));
+              return false;
+            }
+            // L'arrivo è un update del match: per il trigger della 32a vale come attività.
+            await supabase.from('telepathy_matches').update({ round_count: m.round_count || 0 }).eq('id', m.id);
+            const amUser1 = m.user1_id === sessionId;
+            setPartner({ id: amUser1 ? m.user2_id : m.user1_id, nickname: amUser1 ? m.user2_nickname : m.user1_nickname });
+            setRole(amUser1 ? m.user1_role : m.user2_role);
+            setMatchId(m.id);
+            setSessionEnded(false);
+            setPartnerDisconnected(false);
+            // Entrati nel match l'invito in uscita è chiuso: senza azzerarlo il ticchettio da 1 s
+            // continuerebbe per tutto il training e resetTelepathy proverebbe un annullo inutile.
+            setDirectInviteTarget(null);
+            setInvitoInUscita(null);
+            setActiveTab('telepathy');
+            return true;
+          };
 
-            const pollForMatch = async () => {
-              const { data: matches } = await supabase.from('telepathy_matches').select('*');
-              if (!matches) return;
-              // Solo match ATTIVI: senza il filtro ended_at l'invitante si agganciava al match
-              // CONCLUSO di una sessione precedente con lo stesso partner (residuo nel DB) invece
-              // di attendere quello nuovo creato dall'accettazione → sessione mai avviata.
-              const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
-              if (myMatch) {
-                const amUser1 = myMatch.user1_id === sessionId;
-                setPartner({ id: amUser1 ? myMatch.user2_id : myMatch.user1_id, nickname: amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname });
-                setRole(amUser1 ? myMatch.user1_role : myMatch.user2_role);
-                setMatchId(myMatch.id);
+          // L'invitante segue il suo invito dal server ogni 2 s. Il conto alla rovescia viene da
+          // expires_at (45 s o 10 minuti): niente timer locale, resta giusto dopo una riapertura.
+          // Il vecchio setTimeout di 45 s che cancellava l'invito non c'è più: a expires_at il
+          // server risponde 'expired' (lo segna lui, anche se il cron è in ritardo) e il pulsante
+          // torna libero da qui.
+          useEffect(() => {
+            if (!invitoInUscita || partner) return;
+            let fermo = false;
+            let inCorso = false;   // un giro lento non si sovrappone al successivo (niente doppio ingresso)
+            const giro = async () => {
+              if (inCorso) return;
+              inCorso = true;
+              try {
+                const r = await rpcInviti('get_my_telepathy_invites', {});
+                if (fermo || !r || !r.ok) return;
+                if (IH) setScartoOrologio(IH.scarto(r.adesso, Date.now()));
+                const u = r.in_uscita;
+                // Il mio invito non c'è più o non è più l'ultimo (le app vecchie cancellano gli
+                // inviti ricevuti dopo 2 minuti, e allora in_uscita è uno più vecchio o nessuno):
+                // si libera il pulsante e lo si dice, invece di restare appesi a un invito fantasma.
+                if (!u || u.id !== invitoInUscita.id) {
+                  setDirectInviteTarget(null);
+                  setInvitoInUscita(null);
+                  setAvvisoInviti(testoInviti('invito_sparito'));
+                  return;
+                }
+                if (u.status === 'pending') { setInvitoInUscita(u); return; }
+                if (u.status === 'accepted') {
+                  if (u.match_id) { await entraNelMatchDaInvito(u.match_id); return; }
+                  // TENUTA (fra la 32a e la 32b; si toglie con la 32b): un'app vecchia accetta senza
+                  // match_id e crea il match con user1_id = chi ha invitato. Funziona solo con
+                  // quest'app aperta: senza match_id non parte nessuna push «accettato».
+                  const { data: miei } = await supabase.from('telepathy_matches').select('*').eq('user1_id', sessionId);
+                  if (fermo) return;
+                  const m = IH ? IH.matchDiRipiego(miei, sessionId, u.created_at) : null;
+                  if (m) await entraNelMatchDaInvito(m.id, m);
+                  return;
+                }
                 setDirectInviteTarget(null);
+                setInvitoInUscita(null);
+                setAvvisoInviti(testoInviti(IH ? IH.motivoDaStato(u.status) : 'scaduto', { nome: u.nome }));
+              } finally {
+                inCorso = false;
               }
             };
+            giro();
+            const intervallo = setInterval(giro, 2000);
+            return () => { fermo = true; clearInterval(intervallo); };
+          }, [invitoInUscita && invitoInUscita.id, partner, sessionId, giroInviti]);
 
-            pollForMatch();
-            const interval = setInterval(pollForMatch, 2000);
-            // Auto-sblocco: se entro 45s nessuno accetta, libera il latch e rimuove
-            // l'invito pendente. Senza questo, alla scadenza il bottone "invita" resta
-            // nascosto per sempre e non si puo' piu' reinvitare (stallo osservato nei test).
-            const expiry = setTimeout(async () => {
-              await supabase.from('telepathy_invites').delete().eq('from_id', sessionId).eq('to_id', directInviteTarget.id);
-              setDirectInviteTarget(null);
-            }, 45000);
-            return () => { clearInterval(interval); clearTimeout(expiry); };
-          }, [directInviteTarget, partner, sessionId]);
+          // Rientro all'avvio: se il mio invito è stato accettato da meno di 3 minuti (ora del
+          // server) con un match ancora vivo, ci entro; se è ancora aperto, riprendo l'attesa.
+          // Una volta per identità: dopo un login il session_id cambia e gli inviti sono altri.
+          const rientroFattoRef = React.useRef(null);
+          useEffect(() => {
+            if (!nickname || !sessionId || partner || rientroFattoRef.current === sessionId) return;
+            rientroFattoRef.current = sessionId;
+            (async () => {
+              const r = await rpcInviti('get_my_telepathy_invites', {});
+              if (!r || !r.ok || !r.in_uscita || !IH) return;
+              const scarto = IH.scarto(r.adesso, Date.now());
+              setScartoOrologio(scarto);
+              const u = r.in_uscita;
+              if (u.status === 'pending') { setInvitoInUscita(u); setDirectInviteTarget({ id: null, nickname: u.nome }); return; }
+              if (u.status === 'accepted' && u.match_id && !IH.attesaFinita(u.responded_at, scarto, Date.now())) {
+                await entraNelMatchDaInvito(u.match_id);
+              }
+            })();
+          }, [nickname, sessionId]);
 
           // Chat in-match telepatia
           useEffect(() => {
@@ -4760,7 +4829,7 @@ ${ritual.description || ''}` })}
                         <div className="tele-col tele-col-info" style={{flex: '0 0 180px', minWidth: '160px', display: 'flex', flexDirection: 'column', gap: '0.75rem'}}>
                           <div className="bg-glass-dark rounded-xl p-4">
                             <p className="text-secondary text-xs mb-1">{t.telepathy.partner}</p>
-                            <p className="text-white font-bold">{partner?.nickname}</p>
+                            <p data-test="partner-nome" className="text-white font-bold">{partner?.nickname}</p>
                             <p className="text-secondary text-xs mt-2">{t.telepathy.yourRole}</p>
                             <p className="text-white font-bold">{effectiveRole === 'sender' ? t.telepathy.roleSender : t.telepathy.roleReceiver}</p>
                           </div>
