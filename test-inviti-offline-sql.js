@@ -155,9 +155,9 @@ sezione('B2. nome_pubblico uguale alla pulizia della candela (30_)', async (db) 
   const rit = await uno(db, `SELECT * FROM create_ritual('Ospite', 'prova', 'Candela', '', 'consciousness', 11, $1, $2, 30, NULL)`,
     [new Date(t).toISOString().slice(0, 10), new Date(t).toISOString().slice(11, 16)]);
   // Gli stessi casi di test-candela-stanza-sql.js, scritti con gli escape per non perderli.
-  const nomi = ['  Luce  ', 'aURORA', '​Aurora‮', ' ​Lu‏c⁦e\u0007\u001b ', '​‍‪⁩\u0001',
-    '​'.repeat(10) + 'y'.repeat(60), 'Luna Nuova', 'Luna　Nuova', 'Ａｕｒｏｒａ',
-    'Luna 　Piena', '   ', 'x'.repeat(80), 'Au­rora', 'Normale'];
+  const nomi = ['  Luce  ', 'aURORA', '\u200BAurora\u202E', ' \u200BLu\u200Fc\u2066e\u0007\u001b ', '\u200B\u200D\u202A\u2069\u0001',
+    '\u200B'.repeat(10) + 'y'.repeat(60), 'Luna Nuova', 'Luna\u3000Nuova', '\uFF21\uFF55\uFF52\uFF4F\uFF52\uFF41',
+    'Luna \u3000Piena', '   ', 'x'.repeat(80), 'Au\u00ADrora', 'Normale'];
   let uguali = 0;
   for (let i = 0; i < nomi.length; i++) {
     const sid = 'np' + i;
@@ -170,13 +170,13 @@ sezione('B2. nome_pubblico uguale alla pulizia della candela (30_)', async (db) 
   check((await uno(db, `SELECT nome_pubblico('reg1', 'Impostore') AS n`)).n === 'Aurora', 'iscritto: il nome viene dal profilo');
   // C12: ogni carattere invisibile della classe viene tolto, e ogni spazio speciale diventa uno spazio.
   const np = async (s) => (await uno(db, `SELECT nome_pubblico('ospx', $1) AS n`, [s])).n;
-  const invisibili = { U202E: '‮', U202A: '‪', U2069: '⁩', U200B: '​', U200F: '‏', U2060: '⁠',
-    U2064: '⁤', UFEFF: '﻿', U00AD: '­', U034F: '͏', U061C: '؜', U180E: '᠎',
-    U115F: 'ᅟ', U1160: 'ᅠ', U3164: 'ㅤ', UFFA0: 'ﾠ', U0007: '\u0007' };
+  const invisibili = { U202E: '\u202E', U202A: '\u202A', U2069: '\u2069', U200B: '\u200B', U200F: '\u200F', U2060: '\u2060',
+    U2064: '\u2064', UFEFF: '\uFEFF', U00AD: '\u00AD', U034F: '\u034F', U061C: '\u061C', U180E: '\u180E',
+    U115F: '\u115F', U1160: '\u1160', U3164: '\u3164', UFFA0: '\uFFA0', U0007: '\u0007' };
   const tenuti = [];
   for (const [k, c] of Object.entries(invisibili)) if ((await np(`Lu${c}na`)) !== 'Luna') tenuti.push(k);
   check(tenuti.length === 0, 'nome_pubblico toglie ogni carattere invisibile/direzionale della classe', tenuti);
-  const spazi = { U2028: ' ', U2029: ' ', U00A0: ' ', U1680: ' ', U2003: ' ', U202F: ' ', U205F: ' ', U3000: '　' };
+  const spazi = { U2028: '\u2028', U2029: '\u2029', U00A0: '\u00A0', U1680: '\u1680', U2003: '\u2003', U202F: '\u202F', U205F: '\u205F', U3000: '\u3000' };
   const nonSpazi = [];
   for (const [k, c] of Object.entries(spazi)) if ((await np(`Luna${c}${c}Piena`)) !== 'Luna Piena') nonSpazi.push(k);
   check(nonSpazi.length === 0, 'nome_pubblico riduce ogni spazio Unicode speciale a uno spazio solo', nonSpazi);
@@ -255,7 +255,7 @@ sezione('B6. disponibile, risolvi, motivo, soglia', async (db) => {
   await db.query(`UPDATE telepathy_availability SET rinnovata_il = now() WHERE session_id = 'd2'`);
   let r = await uno(db, `SELECT * FROM telepatia_risolvi($1, NULL)`, [id2]);
   check(r.o_sid === 'd2' && r.o_nome === 'Due', 'risolvi da identificativo opaco', r);
-  await online(db, 'd3', '​Tre‮');
+  await online(db, 'd3', '\u200BTre\u202E');
   r = await uno(db, `SELECT * FROM telepatia_risolvi(NULL, 'd3')`);
   check(r.o_sid === 'd3' && r.o_nome === 'Tre', 'risolvi da lista Online: nome ripulito dal server', r);
   await online(db, 'd4', 'Quattro', 40);

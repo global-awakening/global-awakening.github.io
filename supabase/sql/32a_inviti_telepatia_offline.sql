@@ -232,9 +232,9 @@ BEGIN
   SELECT nullif(btrim(nickname), '') INTO v_nome FROM profiles WHERE session_id = p_session_id;
   IF v_nome IS NULL THEN
     v_nome := regexp_replace(normalize(coalesce(p_nome, ''), NFKC),
-                '[[:cntrl:]­͏؜ᅟᅠ᠎​-‏‪-‮⁠-⁤⁦-⁩ㅤ﻿ﾠ]',
+                '[[:cntrl:]\u00AD\u034F\u061C\u115F\u1160\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\u3164\uFEFF\uFFA0]',
                 '', 'g');
-    v_nome := regexp_replace(v_nome, '[[:space:]   -     　]+', ' ', 'g');
+    v_nome := regexp_replace(v_nome, '[[:space:]\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+', ' ', 'g');
     v_nome := nullif(btrim(left(btrim(v_nome), 50)), '');
     IF v_nome IS NOT NULL AND EXISTS (SELECT 1 FROM profiles
                                         WHERE lower(btrim(nickname)) = lower(btrim(v_nome))
