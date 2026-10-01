@@ -203,6 +203,149 @@ CREATE TABLE IF NOT EXISTS public.telepathy_invite_pushes (
 ALTER TABLE public.telepathy_invite_pushes ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.telepathy_invite_pushes FROM PUBLIC, anon, authenticated;
 
+-- ════ B. Funzioni interne condivise ══════════════════════════════════════════
+-- Una sola definizione di ogni regola, usata da tutte le RPC. Nessun privilegio per l'app:
+-- le chiamano solo le RPC SECURITY DEFINER.
+
+-- Stesso cancello di leave_ritual e toggle_ritual_candle (30_): per un iscritto (profilo con
+-- email) serve la sua credenziale; per un ospite il session_id resta l'unica prova (rischio
+-- accettato, spec §6).
+CREATE OR REPLACE FUNCTION public.telepatia_verifica_identita(p_session_id text, p_password_hash text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF p_session_id IS NULL OR p_session_id = '' THEN RAISE EXCEPTION 'session_required'; END IF;
+  IF length(p_session_id) > 255 THEN RAISE EXCEPTION 'session_id_too_long'; END IF;
+  IF EXISTS (SELECT 1 FROM profiles WHERE session_id = p_session_id AND email IS NOT NULL)
+     AND NOT EXISTS (SELECT 1 FROM profiles WHERE session_id = p_session_id AND password_hash = p_password_hash) THEN
+    RAISE EXCEPTION 'Auth failed';
+  END IF;
+END $$;
+
+-- La pulizia del nome della 30_ (toggle_ritual_candle), con la stessa classe di caratteri scritta
+-- con gli escape \uXXXX (invisibili e di direzione del testo non sopravvivono a un copia-incolla).
+-- toggle_ritual_candle NON si ridefinisce per usarla (spec §9): le due copie le tiene uguali il
+-- test B2 di test-inviti-offline-sql.js.
+CREATE OR REPLACE FUNCTION public.nome_pubblico(p_session_id text, p_nome text)
+RETURNS text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_nome text;
+BEGIN
+  SELECT nullif(btrim(nickname), '') INTO v_nome FROM profiles WHERE session_id = p_session_id;
+  IF v_nome IS NULL THEN
+    v_nome := regexp_replace(normalize(coalesce(p_nome, ''), NFKC),
+                '[[:cntrl:]­͏؜ᅟᅠ᠎​-‏‪-‮⁠-⁤⁦-⁩ㅤ﻿ﾠ]',
+                '', 'g');
+    v_nome := regexp_replace(v_nome, '[[:space:]   -     　]+', ' ', 'g');
+    v_nome := nullif(btrim(left(btrim(v_nome), 50)), '');
+    IF v_nome IS NOT NULL AND EXISTS (SELECT 1 FROM profiles
+                                        WHERE lower(btrim(nickname)) = lower(btrim(v_nome))
+                                          AND session_id <> p_session_id) THEN
+      v_nome := NULL;
+    END IF;
+  END IF;
+  RETURN coalesce(v_nome, 'Anonymous');
+END $$;
+
+-- «Visto online negli ultimi 30 s». Il cast regge sia timestamptz sia testo ISO.
+CREATE OR REPLACE FUNCTION public.telepatia_online(p_session_id text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT EXISTS (SELECT 1 FROM online_users
+                  WHERE id = p_session_id AND last_seen::timestamptz > now() - interval '30 seconds');
+$$;
+
+-- «Sta già facendo un training»: un match senza ended_at, aggiornato negli ultimi 10 minuti, e
+-- già giocato oppure legato a un invito accettato. Un orfano appena inserito non tiene nessuno
+-- occupato. p_escludi: il match appena creato da chi accetta.
+CREATE OR REPLACE FUNCTION public.telepatia_in_training(p_session_id text, p_escludi uuid DEFAULT NULL)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM telepathy_matches m
+     WHERE (m.user1_id = p_session_id OR m.user2_id = p_session_id)
+       AND m.ended_at IS NULL
+       AND m.ultima_attivita > now() - interval '10 minutes'
+       AND (p_escludi IS NULL OR m.id <> p_escludi)
+       AND (m.giocato OR EXISTS (SELECT 1 FROM telepathy_invites i WHERE i.match_id = m.id AND i.status = 'accepted')));
+$$;
+
+-- «C'è un blocco fra i due», in un senso o nell'altro: user_blocks sui nomi (quelli dati dal
+-- server), telepathy_invite_blocks sui session_id. Si legge senza contare su una PK dei nomi.
+CREATE OR REPLACE FUNCTION public.telepatia_bloccati(p_sid_a text, p_nome_a text, p_sid_b text, p_nome_b text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT EXISTS (SELECT 1 FROM user_blocks
+                  WHERE (blocker_nickname = p_nome_a AND blocked_nickname = p_nome_b)
+                     OR (blocker_nickname = p_nome_b AND blocked_nickname = p_nome_a))
+      OR EXISTS (SELECT 1 FROM telepathy_invite_blocks
+                  WHERE (blocker_session = p_sid_a AND blocked_session = p_sid_b)
+                     OR (blocker_session = p_sid_b AND blocked_session = p_sid_a));
+$$;
+
+-- Un invito da 45 s dura 45 s, uno da 10 minuti 600: la soglia a 60 s li separa.
+CREATE OR REPLACE FUNCTION public.telepatia_era_da_dieci(p_creato timestamptz, p_scade timestamptz)
+RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  SELECT p_scade - p_creato > interval '60 seconds';
+$$;
+
+-- «Disponibile» (spec §4.1 punto 7): riga di disponibilità rinnovata negli ultimi 14 giorni con
+-- almeno un abbonamento, oppure visto online negli ultimi 30 s; e non già in un training.
+CREATE OR REPLACE FUNCTION public.telepatia_disponibile(p_session_id text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT NOT telepatia_in_training(p_session_id)
+     AND (telepatia_online(p_session_id)
+          OR EXISTS (SELECT 1 FROM telepathy_availability a
+                      WHERE a.session_id = p_session_id AND a.rinnovata_il > now() - interval '14 days'
+                        AND EXISTS (SELECT 1 FROM push_subscriptions s WHERE s.session_id = p_session_id)));
+$$;
+
+-- Chi è la persona indicata dall'app: dall'identificativo opaco della lista, oppure dal
+-- session_id della lista Online (valido solo se visto negli ultimi 30 s). Il nome sempre dal
+-- server: profilo, se c'è; altrimenti quello della riga, ripulito. NULL se non si trova.
+CREATE OR REPLACE FUNCTION public.telepatia_risolvi(p_disponibilita_id uuid, p_session_online text,
+                                                    OUT o_sid text, OUT o_nome text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF p_disponibilita_id IS NOT NULL THEN
+    SELECT a.session_id, nome_pubblico(a.session_id, a.nickname) INTO o_sid, o_nome
+      FROM telepathy_availability a WHERE a.id = p_disponibilita_id;
+  ELSIF p_session_online IS NOT NULL AND length(p_session_online) <= 255 AND telepatia_online(p_session_online) THEN
+    SELECT u.id, nome_pubblico(u.id, u.nickname) INTO o_sid, o_nome
+      FROM online_users u WHERE u.id = p_session_online ORDER BY u.last_seen::timestamptz DESC LIMIT 1;
+  END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.telepatia_motivo_stato(p_status text)
+RETURNS text LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  SELECT CASE p_status WHEN 'accepted' THEN 'gia_accettato' WHEN 'declined' THEN 'rifiutato'
+                       WHEN 'cancelled' THEN 'annullato' ELSE 'scaduto' END;
+$$;
+
+-- La chiamata alla Edge Function. net.http_post è transazionale (parte solo al commit) e non
+-- aspetta la risposta: un errore della funzione lo vede la sentinella alert-cron. Solo la chiave
+-- pubblica, come nella 23_: la funzione era già invocabile da chiunque.
+-- Il corpo lo legge leggiRichiesta (decisioni.mjs): {"tipo":"scadenze"} oppure
+-- {"tipo":"invito|accettato|rifiutato|scaduto","invito":"<uuid>"}; qui passa com'è.
+CREATE OR REPLACE FUNCTION public.telepatia_chiama_motore(p_corpo jsonb)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM net.http_post(
+    url     := 'https://vxzxdkcluyrcftsnxxza.supabase.co/functions/v1/notify-telepathy-invite',
+    headers := jsonb_build_object(
+                 'Content-Type', 'application/json',
+                 'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM'
+               ),
+    body    := p_corpo
+  );
+END $$;
+
+REVOKE ALL ON FUNCTION public.telepatia_verifica_identita(text, text)          FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.nome_pubblico(text, text)                        FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.telepatia_online(text)                           FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.telepatia_in_training(text, uuid)                FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.telepatia_bloccati(text, text, text, text)       FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.telepatia_era_da_dieci(timestamptz, timestamptz) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.telepatia_disponibile(text)                      FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.telepatia_risolvi(uuid, text)                    FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.telepatia_motivo_stato(text)                     FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.telepatia_chiama_motore(jsonb)                   FROM PUBLIC, anon, authenticated;
+
 NOTIFY pgrst, 'reload schema';
 
 COMMIT;
