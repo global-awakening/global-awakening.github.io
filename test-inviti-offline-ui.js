@@ -307,6 +307,88 @@ scenario('campanella_e_scaduto', async (browser) => {
   check(await B.page.locator('.invite-toast').count() === 0, 'toccarla la chiude soltanto: nessun banner d\'invito');
 });
 
+// ════ Task 21: ?invito= e blocco ═══════════════════════════════════════════
+// Il server locale `serve` risponde a app.html?… con un 301 verso /app che PERDE la query: con
+// APP_URL ?invito= non arriverebbe mai all'app (e «si toglie dall'indirizzo» passerebbe per
+// costruzione). /app è la stessa pagina, come in test-rituali-ricorrenti-ui.js per ?ritual=.
+const APP_NOTIFICA = 'http://localhost:4321/app';
+scenario('apri_da_notifica', async (browser) => {
+  const A = await entra(browser, 'A7');
+  const B = await entra(browser, 'B7');
+  await aTelepatia(A);
+  await rigaOnline(A, B).waitFor({ timeout: 20000 });
+  await rigaOnline(A, B).locator('button').click();
+  const inv = await attendi(() => pendingDa(A));
+  await B.page.goto(`${APP_NOTIFICA}?invito=${inv.id}`);
+  await B.page.locator('.invite-toast [data-test="btn-accetta"]').waitFor({ timeout: 15000 });
+  check(!(await B.page.evaluate(() => location.search)).includes('invito'), '?invito= si toglie subito dall\'indirizzo e apre l\'invito');
+  // Il tocco con l'app aperta: il service worker manda «apri-invito» e aspetta la conferma.
+  const conferma = await B.page.evaluate(async (id) => {
+    const canale = new MessageChannel();
+    const risposta = new Promise((r) => { canale.port1.onmessage = (e) => r(e.data); setTimeout(() => r(null), 1500); });
+    navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: { tipo: 'apri-invito', invito: id, azione: 'blocca' }, ports: [canale.port2] }));
+    return risposta;
+  }, inv.id);
+  check(!!conferma && conferma.ok === true, 'l\'app conferma al service worker di aver ricevuto l\'invito', conferma);
+  await B.page.locator('[data-test="conferma-blocco"]').waitFor({ timeout: 10000 });
+  await B.page.locator('[data-test="btn-conferma-blocco"]').click();
+  const blocco = await attendi(async () => (await leggi('telepathy_invite_blocks', `blocker_session=eq.${q(B.sid)}&blocked_session=eq.${q(A.sid)}&select=created_at`))[0]);
+  check(!!blocco, 'azione «blocca»: dopo la conferma il blocco è sul server', blocco);
+  const st = (await leggi('telepathy_invites', `id=eq.${inv.id}&select=status`))[0];
+  check(!!st && st.status === 'declined', 'e l\'invito aperto si chiude come rifiutato', st);
+  await B.page.goto(`${APP_NOTIFICA}?invito=00000000-0000-4000-8000-000000000000`);
+  await B.page.locator('[data-test="avviso-inviti"]').filter({ hasText: /non trovato|not found/ }).waitFor({ timeout: 15000 });
+  ok('un invito che non è mio (o di un\'identità persa): «Invito non trovato su questo dispositivo»');
+});
+
+// Plan Review Focus #4: la notifica aperta in un browser che non ha l'identità del destinatario
+// (altro browser, dati cancellati). Si entra come ospite partendo dall'indirizzo della notifica:
+// l'invito resta in attesa dell'identità e poi si legge «non trovato», mai una schermata vuota.
+// Più l'apertura senza «blocca» con l'app aperta, e il «blocca» dall'indirizzo con «Annulla».
+scenario('apri_senza_identita', async (browser) => {
+  const A = await entra(browser, 'A10');
+  const B = await entra(browser, 'B10');
+  await aTelepatia(A);
+  await rigaOnline(A, B).waitFor({ timeout: 20000 });
+  await rigaOnline(A, B).locator('button').click();
+  const inv = await attendi(() => pendingDa(A));
+  // B è online: l'invito durerebbe 45 s, meno di questo scenario. Si allunga sul server.
+  await sposta('telepathy_invites', `id=eq.${inv.id}`, { expires_at: faSecondi(-600) });
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  const C = { ctx, page, nick: nick('C10') };
+  tutte.push(C); attive.push(C);
+  await loginAsGuest(page, C.nick, { appUrl: `${APP_NOTIFICA}?invito=${inv.id}&azione=blocca` });
+  C.sid = await page.evaluate(() => localStorage.getItem('ga_session_id'));
+  await page.locator('[data-test="avviso-inviti"]').filter({ hasText: /non trovato|not found/ }).waitFor({ timeout: 15000 });
+  check(await page.locator('[data-test="conferma-blocco"]').count() === 0, 'browser senza l\'identità: dopo l\'entrata come ospite «non trovato», nessuna conferma di blocco');
+  // B: «apri-invito» senza azione con l'app aperta → conferma sulla porta, nessuna ricarica, banner.
+  await B.page.evaluate(() => { window.__nonRicaricata = true; });
+  const conferma = await B.page.evaluate(async (id) => {
+    const canale = new MessageChannel();
+    const risposta = new Promise((r) => { canale.port1.onmessage = (e) => r(e.data); setTimeout(() => r(null), 1500); });
+    navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: { tipo: 'apri-invito', invito: id, azione: null }, ports: [canale.port2] }));
+    return risposta;
+  }, inv.id);
+  await B.page.locator('.invite-toast [data-test="btn-accetta"]').waitFor({ timeout: 15000 });
+  check(!!conferma && conferma.ok === true && await B.page.evaluate(() => window.__nonRicaricata === true),
+    'tocco senza «blocca» con l\'app aperta: conferma, nessuna ricarica, banner con «Accetta»', conferma);
+  await B.page.goto(`${APP_NOTIFICA}?invito=${inv.id}&azione=blocca`);
+  await B.page.locator('[data-test="conferma-blocco"]').waitFor({ timeout: 15000 });
+  check(!(await B.page.evaluate(() => location.search)).includes('azione'), '?invito=…&azione=blocca: conferma del blocco, indirizzo ripulito');
+  await B.page.locator('[data-test="btn-annulla-blocco"]').click();
+  await pausa(1500);
+  const blocchi = await leggi('telepathy_invite_blocks', `blocker_session=eq.${q(B.sid)}&select=created_at`);
+  const st = (await leggi('telepathy_invites', `id=eq.${inv.id}&select=status`))[0];
+  check(blocchi.length === 0 && !!st && st.status === 'pending', '«Annulla» non blocca e l\'invito resta aperto', { blocchi, st });
+  // Dal banner: «Non voglio più inviti da questa persona» → conferma → blocco, banner chiuso.
+  await B.page.locator('.invite-toast [data-test="btn-blocca-da-invito"]').click();
+  await B.page.locator('[data-test="btn-conferma-blocco"]').click();
+  await B.page.locator('[data-test="avviso-inviti"]').filter({ hasText: /Non riceverai più|no longer receive/ }).waitFor({ timeout: 10000 });
+  const bl = await attendi(async () => (await leggi('telepathy_invite_blocks', `blocker_session=eq.${q(B.sid)}&blocked_session=eq.${q(A.sid)}&select=created_at`))[0]);
+  check(!!bl && await B.page.locator('.invite-toast').count() === 0, 'dal banner: conferma, blocco sul server, banner chiuso', bl);
+});
+
 // ── esecuzione ──
 (async () => {
   if (!KEY) { console.log('⛔ serve SUPABASE_SERVICE_KEY in .env.test (spostare i tempi e ripulire): non parto.'); process.exit(2); }

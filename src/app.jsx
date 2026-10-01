@@ -1114,6 +1114,18 @@
             if (id) window.history.replaceState({}, '', window.location.pathname);
             return id && /^\d+$/.test(id) ? Number(id) : null;
           });
+          // Dalla notifica d'invito si arriva con ?invito=<id>[&azione=blocca] (push-helpers.js).
+          // Un solo useState legge insieme i due parametri e POI toglie l'indirizzo: leggerli in
+          // due punti farebbe perdere il secondo, già cancellato dal primo. Si tengono finché
+          // l'identità non è pronta (può servire un'entrata come ospite). Un id storto si tiene
+          // come null: l'apertura dirà «non trovato» invece di non mostrare niente.
+          const [invitoDaAprire, setInvitoDaAprire] = useState(() => {
+            if (typeof InvitiHelpers === 'undefined') return null;
+            const letto = InvitiHelpers.leggiInvitoDaUrl(window.location.search);
+            if (letto.presente) window.history.replaceState({}, '', window.location.pathname);
+            return letto.presente ? { invito: letto.invito, azione: letto.azione } : null;
+          });
+          const [confermaBlocco, setConfermaBlocco] = useState(null);
           const [stanzaId, setStanzaId] = useState(null);
           const [presentiStanza, setPresentiStanza] = useState(null);
           const stanza = stanzaId != null ? rituals.find(r => r.id === stanzaId) : null;
@@ -1390,15 +1402,18 @@
           React.useEffect(() => { if (giroInviti) aggiornaInviti(); }, [giroInviti]);
           // Il service worker avvisa quando una push d'invito arriva con l'app in primo piano (e
           // non la mostra): si rilegge subito. Un messaggio perso lo recupera il giro delle
-          // presenze (4 s). «apri-invito» (tocco sulla notifica con l'app già aperta): per ora si
-          // rilegge e si conferma, così il service worker non ricarica la pagina in mezzo a un
-          // training; aprire l'invito giusto (e azione=blocca) è del Task 21, che estende questo
-          // gestore invece di aggiungerne un secondo.
+          // presenze (4 s). «apri-invito» (tocco sulla notifica con l'app già aperta): si apre
+          // l'invito per la stessa strada di ?invito=…[&azione=blocca] (invitoDaAprire) e si
+          // conferma sempre sulla porta, così il service worker non ricarica la pagina in mezzo a
+          // un training. L'id arriva grezzo dal service worker: lo si valida come quello
+          // dell'indirizzo (uno storto finisce in «non trovato»).
           React.useEffect(() => {
             if (!('serviceWorker' in navigator)) return;
             const ascolta = (ev) => {
               const d = ev.data || {};
               if (d.tipo === 'apri-invito') {
+                const letto = IH ? IH.leggiInvitoDaUrl('?invito=' + encodeURIComponent(String(d.invito || ''))) : null;
+                if (letto) setInvitoDaAprire({ invito: letto.invito, azione: d.azione === 'blocca' ? 'blocca' : null });
                 setGiroInviti((x) => x + 1);
                 if (ev.ports && ev.ports[0]) ev.ports[0].postMessage({ ok: true });
                 return;
@@ -2853,6 +2868,64 @@
             const intervallo = setInterval(giro, 2000);
             return () => { fermo = true; clearInterval(intervallo); };
           }, [attesaInvitante && attesaInvitante.invitoId, matchId, partner]);
+
+          // Aprire un invito (da ?invito= o dal messaggio del service worker): get_telepathy_invite
+          // dice di chi è e in che stato; IH.esitoApertura sceglie cosa mostrare. Mai una
+          // schermata vuota: anche un browser senza l'identità del destinatario, dopo l'entrata
+          // come ospite, legge «Invito non trovato su questo dispositivo».
+          useEffect(() => {
+            if (!invitoDaAprire || !nickname || !sessionId || !IH) return;
+            const { invito, azione } = invitoDaAprire;
+            setInvitoDaAprire(null);
+            (async () => {
+              setActiveTab('telepathy');
+              if (!invito) { setAvvisoInviti(testoInviti('non_trovato')); return; }
+              const r = await rpcInviti('get_telepathy_invite', { p_invite_id: invito });
+              // Un errore (rete, Auth failed) non vale «l'invito non c'è»: si dice l'errore. Se
+              // l'invito è aperto, il giro delle presenze lo mostra comunque fra pochi secondi.
+              if (r && r.ok === false && (r.motivo === 'errore' || r.motivo === 'auth_fallita')) {
+                setAvvisoInviti(testoInviti(r.motivo));
+                return;
+              }
+              if (r && r.adesso) setScartoOrologio(IH.scarto(r.adesso, Date.now()));
+              const esito = IH.esitoApertura(r, azione);
+              if (esito.tipo === 'conferma_blocco') { setConfermaBlocco({ nome: esito.nome, p_invite_id: invito, daNotifica: true }); return; }
+              if (esito.tipo === 'rispondi') {
+                // Durante un training il render mostra solo «Rifiuta» (invito-durante-training).
+                setIncomingInvite({ from_id: r.invito.from_id, from_name: r.invito.nome, invite_id: r.invito.id, expires_at: r.invito.expires_at });
+                return;
+              }
+              if (esito.tipo === 'entra') { await entraNelMatchDaInvito(esito.matchId); return; }
+              if (esito.tipo === 'attesa') {
+                setInvitoInUscita(r.invito);
+                setDirectInviteTarget({ id: null, nickname: r.invito.nome });
+                return;
+              }
+              setAvvisoInviti(testoInviti(esito.motivo, { nome: esito.nome }));
+            })();
+          }, [invitoDaAprire, nickname, sessionId]);
+
+          // «Non voglio più inviti da questa persona»: blocco lato server per session_id, nei due
+          // sensi, anche per gli ospiti. Il service worker non lo fa mai da sé: passa sempre di qui.
+          // «non_trovato» dice «Invito non trovato su questo dispositivo» solo arrivando da una
+          // notifica; dal banner (e dalla scheda, Task 22) vuol dire che la persona non è più
+          // raggiungibile (ruling m5).
+          const confermaBloccoInviti = async () => {
+            const c = confermaBlocco;
+            if (!c) return;
+            setConfermaBlocco(null);
+            const { nome, daNotifica, ...chi } = c;
+            const r = await rpcInviti('block_telepathy_inviter', { p_invite_id: null, p_disponibilita_id: null, p_session_online: null, ...chi });
+            if (!r || !r.ok) {
+              const motivo = (r && r.motivo) || 'errore';
+              setAvvisoInviti(testoInviti(motivo === 'non_trovato' && !daNotifica ? 'non_trovato_scheda' : motivo));
+              return;
+            }
+            // Il server ha già chiuso gli inviti aperti fra i due: sparisce il banner di quella
+            // persona (non quello di un'altra, se nel frattempo ne è arrivato uno).
+            setIncomingInvite((x) => (x && (x.invite_id === chi.p_invite_id || x.from_name === (r.nome || nome)) ? null : x));
+            setAvvisoInviti(testoInviti('bloccato_ok', { nome: r.nome || nome }));
+          };
 
           const playAgainSamePartner = async () => {
             const savedPartner = partner;
@@ -5813,6 +5886,19 @@ ${ritual.description || ''}` })}
                 </div>
               )}
 
+              {confermaBlocco && (
+                <div data-test="conferma-blocco" role="dialog" style={{position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 10000,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'}}>
+                  <div className="bg-glass-dark rounded-2xl" style={{maxWidth: '22rem', width: '100%', padding: '1.25rem'}}>
+                    <p className="text-white" style={{marginBottom: '1rem'}}>{testoInviti('conferma_blocco', { nome: confermaBlocco.nome })}</p>
+                    <div style={{display: 'flex', gap: '0.5rem'}}>
+                      <button data-test="btn-conferma-blocco" className="btn-primary" style={{flex: 1}} onClick={confermaBloccoInviti}>{testoInviti('conferma')}</button>
+                      <button data-test="btn-annulla-blocco" className="btn-secondary" style={{flex: 1}} onClick={() => setConfermaBlocco(null)}>{testoInviti('annulla')}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {infoToast && (
                 <div role="status" style={{
                   position: 'fixed', bottom: '1rem', left: '50%', transform: 'translateX(-50%)',
@@ -5859,6 +5945,11 @@ ${ritual.description || ''}` })}
                     <button data-test="btn-accetta" onClick={acceptInvite} className="btn-primary" style={{flex: 1, fontSize: '0.85rem', padding: '0.4rem 0.6rem'}}>{t.telepathy.acceptBtn}</button>
                     <button data-test="btn-rifiuta" onClick={declineInvite} className="btn-secondary" style={{flex: 1, fontSize: '0.85rem', padding: '0.4rem 0.6rem'}}>{t.telepathy.declineBtn}</button>
                   </div>
+                  <button data-test="btn-blocca-da-invito"
+                    onClick={() => setConfermaBlocco({ nome: incomingInvite.from_name, p_invite_id: incomingInvite.invite_id })}
+                    className="text-white text-xs" style={{marginTop: '0.5rem', opacity: 0.85, textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', padding: 0}}>
+                    {testoInviti('blocca')}
+                  </button>
                 </div>
               )}
               {/* Un invito durante un training (es. notifica toccata mentre si gioca): il training
