@@ -2393,8 +2393,11 @@
           const entraNelMatchDaInvito = async (idMatch, gia) => {
             let m = gia;
             if (!m) {
-              const { data } = await supabase.from('telepathy_matches').select('*').eq('id', idMatch);
-              m = data && data[0];
+              // Il client fatto a mano non solleva: un errore di rete torna in error. Non è «il
+              // match non c'è più»: non si tocca niente e il giro fra 2 s riprova.
+              const { data, error } = await supabase.from('telepathy_matches').select('*').eq('id', idMatch);
+              if (error || !Array.isArray(data)) return null;   // null = non so (rete), false = non c'è
+              m = data[0];
             }
             if (!m || m.ended_at) {
               setDirectInviteTarget(null);
@@ -2450,8 +2453,9 @@
                   // TENUTA (fra la 32a e la 32b; si toglie con la 32b): un'app vecchia accetta senza
                   // match_id e crea il match con user1_id = chi ha invitato. Funziona solo con
                   // quest'app aperta: senza match_id non parte nessuna push «accettato».
-                  const { data: miei } = await supabase.from('telepathy_matches').select('*').eq('user1_id', sessionId);
-                  if (fermo) return;
+                  const { data: miei, error: errMiei } = await supabase.from('telepathy_matches').select('*').eq('user1_id', sessionId);
+                  // Errore di rete: si riprova al giro dopo, senza concludere niente.
+                  if (fermo || errMiei) return;
                   const m = IH ? IH.matchDiRipiego(miei, sessionId, u.created_at) : null;
                   if (m) await entraNelMatchDaInvito(m.id, m);
                   return;
@@ -2475,17 +2479,24 @@
           useEffect(() => {
             if (!nickname || !sessionId || partner || rientroFattoRef.current === sessionId) return;
             rientroFattoRef.current = sessionId;
-            (async () => {
+            const sid = sessionId;
+            // Un errore di rete all'avvio non vuol dire «niente da riprendere»: si riprova ogni 2 s
+            // per qualche giro, finché l'identità è la stessa e non si è già entrati in un match.
+            const prova = async (restano) => {
+              if (rientroFattoRef.current !== sid || matchIdRef.current) return;
+              const riprova = () => { if (restano > 0) setTimeout(() => prova(restano - 1), 2000); };
               const r = await rpcInviti('get_my_telepathy_invites', {});
-              if (!r || !r.ok || !r.in_uscita || !IH) return;
+              if (!r || (r.ok === false && r.motivo === 'errore')) { riprova(); return; }
+              if (!r.ok || !r.in_uscita || !IH) return;
               const scarto = IH.scarto(r.adesso, Date.now());
               setScartoOrologio(scarto);
               const u = r.in_uscita;
               if (u.status === 'pending') { setInvitoInUscita(u); setDirectInviteTarget({ id: null, nickname: u.nome }); return; }
               if (u.status === 'accepted' && u.match_id && !IH.attesaFinita(u.responded_at, scarto, Date.now())) {
-                await entraNelMatchDaInvito(u.match_id);
+                if ((await entraNelMatchDaInvito(u.match_id)) === null) riprova();
               }
-            })();
+            };
+            prova(5);
           }, [nickname, sessionId]);
 
           // Chat in-match telepatia

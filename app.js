@@ -2613,9 +2613,11 @@ function GlobalAwakeningPlatform() {
     let m = gia;
     if (!m) {
       const {
-        data
+        data,
+        error
       } = await supabase.from('telepathy_matches').select('*').eq('id', idMatch);
-      m = data && data[0];
+      if (error || !Array.isArray(data)) return null;
+      m = data[0];
     }
     if (!m || m.ended_at) {
       setDirectInviteTarget(null);
@@ -2668,9 +2670,10 @@ function GlobalAwakeningPlatform() {
             return;
           }
           const {
-            data: miei
+            data: miei,
+            error: errMiei
           } = await supabase.from('telepathy_matches').select('*').eq('user1_id', sessionId);
-          if (fermo) return;
+          if (fermo || errMiei) return;
           const m = IH ? IH.matchDiRipiego(miei, sessionId, u.created_at) : null;
           if (m) await entraNelMatchDaInvito(m.id, m);
           return;
@@ -2695,9 +2698,18 @@ function GlobalAwakeningPlatform() {
   useEffect(() => {
     if (!nickname || !sessionId || partner || rientroFattoRef.current === sessionId) return;
     rientroFattoRef.current = sessionId;
-    (async () => {
+    const sid = sessionId;
+    const prova = async restano => {
+      if (rientroFattoRef.current !== sid || matchIdRef.current) return;
+      const riprova = () => {
+        if (restano > 0) setTimeout(() => prova(restano - 1), 2000);
+      };
       const r = await rpcInviti('get_my_telepathy_invites', {});
-      if (!r || !r.ok || !r.in_uscita || !IH) return;
+      if (!r || r.ok === false && r.motivo === 'errore') {
+        riprova();
+        return;
+      }
+      if (!r.ok || !r.in_uscita || !IH) return;
       const scarto = IH.scarto(r.adesso, Date.now());
       setScartoOrologio(scarto);
       const u = r.in_uscita;
@@ -2710,9 +2722,10 @@ function GlobalAwakeningPlatform() {
         return;
       }
       if (u.status === 'accepted' && u.match_id && !IH.attesaFinita(u.responded_at, scarto, Date.now())) {
-        await entraNelMatchDaInvito(u.match_id);
+        if ((await entraNelMatchDaInvito(u.match_id)) === null) riprova();
       }
-    })();
+    };
+    prova(5);
   }, [nickname, sessionId]);
   useEffect(() => {
     if (!matchId) return;
