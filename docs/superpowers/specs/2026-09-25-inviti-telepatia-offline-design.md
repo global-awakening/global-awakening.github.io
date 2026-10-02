@@ -612,7 +612,9 @@ in `net._http_response`.
   nostra → permesso del browser → `register_push_subscription`) e poi chiama
   `set_telepathy_availability`. Se il permesso è negato o l'iscrizione fallisce, l'interruttore
   **resta spento e lo dice**: niente verde finto (rilievo della review del 21/09). Su iPhone senza
-  app installata vale la guardia esistente. Spegnerlo chiama la RPC con `false` (la riga sparisce).
+  app installata vale la guardia esistente (il popup «Aggiungi a Home», senza altri avvisi); un
+  browser senza Push legge «Su questo browser non si possono ricevere notifiche» (02/10/2026).
+  Spegnerlo chiama la RPC con `false` (la riga sparisce).
 - **Lo stato lo decide il server**: all'apertura l'app chiama `renew_telepathy_availability` e
   mostra l'interruttore come dice la risposta, non come ricorda `localStorage`. Con
   `senza_abbonamento` l'app prova una volta a riregistrare l'abbonamento del telefono (se il
@@ -694,6 +696,21 @@ in `net._http_response`.
   `last_seen` del partner (35 s)**: chi ha invitato è offline per definizione, e con quel controllo
   l'attesa finirebbe dopo 35 s. Resta attivo il controllo «il match è sparito o ha `ended_at`».
   Appena il partner compare, tornano entrambi i controlli normali.
+  **Deciso in implementazione (02/10/2026).** L'arrivo dell'altro si riconosce in due modi: una
+  presenza in `online_users` con `last_seen` **dopo `responded_at` + 5 s** (margine per l'orologio;
+  una riga lasciata da chi ha appena posato il telefono non vale «è arrivato»), oppure il match
+  che risulta **`giocato`** (ruling M2: entrando, chi ha invitato fa un update del match, e così
+  un orologio sfasato non chiude un training vero). Perché `giocato` resti un segnale affidabile,
+  **durante l'attesa chi ha accettato non può giocare**: «Invia» e «Conferma» sono disattivati
+  e l'app non scrive simbolo né tentativo (il banner «In attesa che *Nome* entri…» spiega perché);
+  altrimenti il suo stesso update accenderebbe `giocato` e chiuderebbe l'attesa in anticipo, con
+  «L'altra persona non c'è più» dopo 35–90 s invece dei 3 minuti.
+- **Online e «Disponibili su invito» (ruling m10, 02/10/2026).** La lista Online dell'app tiene
+  chi è stato visto negli ultimi 2 minuti, il server negli ultimi 30 s: fra 30 s e 2 minuti chi ha
+  l'interruttore acceso compare già in «Disponibili su invito». Per non mostrarlo due volte, da
+  Online si toglie chi ha lo stesso nome di una persona in «Disponibili» **solo se non è stato
+  visto negli ultimi 30 s**: chi è attivo resta in Online anche se un'altra persona con lo stesso
+  nome è fra i disponibili. Una riga Online «in sessione» apre la scheda **senza** «Invita».
 - **Pulizia dei match in `findPartner`** (r. 1559, secondo giro): non si cancellano più i match
   creati da più di 5 minuti. Si cancellano solo quelli **chiusi** (`ended_at` valorizzato da più di
   un minuto, per lasciare il tempo alla schermata finale) o **inattivi** (`ultima_attivita` più
@@ -708,6 +725,11 @@ in `net._http_response`.
   chi è in coda scopre proprio così il match appena creato dall'altro (prima che nessuno abbia
   giocato), e saltarli romperebbe l'abbinamento. Resta vero che un match attivo e già giocato in
   cui compaio mi riprende: è il comportamento di oggi.
+  **Rischio accettato (Task 23, 01/10/2026).** Le app non ancora aggiornate cancellano ancora ogni
+  match creato da più di 5 minuti, anche un training lungo nato da un invito: dura finché le app
+  si aggiornano (~10 minuti di cache + chiudi e riapri), riguarda pochi utenti e non vale una
+  migration nuova fuori piano. Costo se va male: un training lungo interrotto da un'app vecchia
+  nei primi giorni.
 - **Il loop presenze** (r. 1470–1484) smette di leggere `telepathy_invites` e di cancellare gli
   inviti vecchi di 2 minuti: legge l'invito in arrivo da `get_my_telepathy_invites`. Lo stesso per
   **`markOneNotifRead`** (r. 2941–2948), che oggi legge direttamente la tabella. La pulizia la fa
@@ -737,7 +759,10 @@ in `net._http_response`.
 - **Cambi d'identità di un ospite con l'interruttore acceso**: prima di passare al `session_id`
   dell'account — iscrizione (r. 1874), login con password (r. 1802), link magico (r. ~1998) —
   l'app chiama `set_telepathy_availability(vecchio_sid, …, false)` (per un ospite il `session_id`
-  basta). Al **logout** (r. 2047, accanto a `spegniPushAlLogout()`) fa lo stesso con il
+  basta). **Deciso in implementazione (02/10/2026):** con login e link magico si spegne solo se il
+  `session_id` dell'account è diverso da quello attuale (rientrare nello stesso account non spegne
+  la propria disponibilità), e si passa la credenziale di chi se ne va: così anche un cambio
+  account → account spegne la riga vecchia. Al **logout** (r. 2047, accanto a `spegniPushAlLogout()`) fa lo stesso con il
   `session_id` e la credenziale di chi esce, **prima** di cancellarli: il telefono smette di
   ricevere push, e restare in lista sarebbe una promessa falsa. Se una di queste chiamate fallisce,
   la riga vecchia sparisce comunque dalla lista appena muore il suo abbonamento, o dopo 14 giorni
