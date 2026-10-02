@@ -4,6 +4,8 @@
 *Aggiornata di nuovo il 30/09/2026 dopo la seconda revisione indipendente e le risposte di Irene.*
 *Aggiornata una terza volta il 30/09/2026 dopo la terza revisione indipendente (finestra della
 32a, scadenza a 14 giorni, match «mai giocati», nomi degli ospiti nei blocchi).*
+*Aggiornata il 01/10/2026 con le divergenze decise durante l'implementazione: sono segnate nel
+testo con «Deciso in implementazione (01/10/2026)» (§2.5, §4.1, §4.2, §4.4, §5).*
 
 **Data:** 2026-09-25 (prima stesura), 2026-09-30 (tre aggiornamenti)
 **Stato:** spec rivista tre volte; piano in `docs/superpowers/plans/2026-09-30-inviti-telepatia-offline.md`
@@ -67,6 +69,17 @@ entro 10 minuti dall'invito, senza accordarsi fuori dall'app.
   l'app.»**
 - Soglia d'inattività di un training: **10 minuti** (secondo giro).
 - Tetti per destinatario: **6 push d'invito all'ora**, **1 per coppia ogni 15 minuti**.
+
+### 2.5 Confermate da Irene il 01/10
+
+**Deciso in implementazione (01/10/2026).** Due scelte che l'implementazione ha fatto emergere,
+confermate da Irene («k andiamo pure avanti»):
+
+1. **Un solo abbonamento per telefono.** Accendere «Ricevi inviti anche quando non sei
+   collegata/o» riaccende anche le notifiche dei rituali, se erano spente; e, all'inverso,
+   spegnere le notifiche dei rituali spegne anche la disponibilità agli inviti (§4.4).
+2. **Toccare un nome nella lista «Online» della telepatia apre la scheda d'invito** e non più il
+   profilo. Il profilo resta raggiungibile dagli altri punti dell'app in cui si apre oggi.
 
 ## 3. Cosa c'è oggi (verificato su `main` = `996f8c9`, 30/09)
 
@@ -276,6 +289,21 @@ chiude l'accesso diretto. Salvo dove è detto «32b», tutto quello che segue st
      vecchie (`pending`, `accepted`, `declined`) sono tutti ammessi. Su un **rilancio** della 32a
      (indice unico già presente) si segnano `expired` solo i `pending` già scaduti: rilanciarla non
      deve chiudere gli inviti vivi;
+   - **Deciso in implementazione (01/10/2026) — come si riconosce la «prima applicazione».** Non
+     dall'assenza dell'indice unico, come scritto sopra, ma dall'**assenza della colonna
+     `expires_at`**, letta prima dell'`ALTER` e tenuta in un'impostazione valida solo per la
+     transazione (`set_config(..., true)`). Il motivo: lo script di ritorno indietro
+     (`32a_ritorno.sql`) toglie gli indici unici, e un rilancio della 32a dopo un ritorno indietro
+     si crederebbe una prima applicazione, chiudendo tutti gli inviti vivi. Alla prima applicazione,
+     prima della normalizzazione, `expires_at` delle righe già presenti si riporta a `created_at +
+     45 s` (altrimenti, col default «adesso + 45 s», inviti vecchi di giorni sembrerebbero da 10
+     minuti e i mittenti riceverebbero vere push «scaduto»). A ogni rilancio si tolgono anche i
+     `pending` doppi per mittente o destinatario (resta il più recente), che dopo un ritorno
+     indietro le app vecchie possono aver scritto;
+   - **Deciso in implementazione (01/10/2026) — `status` obbligatorio.** Il `CHECK` da solo lascia
+     passare `NULL`; dopo la normalizzazione (che porta a `expired` anche gli stati `NULL`)
+     `telepathy_invites.status` diventa `NOT NULL`. Le app vecchie scrivono sempre uno stato
+     esplicito (`pending` all'invio);
    - **trigger di guardia `BEFORE INSERT OR UPDATE`** (terzo giro: chiude la finestra della 32a).
      Con le policy ancora aperte chiunque, con la chiave pubblica, potrebbe scrivere le colonne
      nuove: un invito con `con_push = true` seguito da una chiamata alla Edge Function (una push che
@@ -289,6 +317,11 @@ chiude l'accesso diretto. Salvo dove è detto «32b», tutto quello che segue st
      - **update**: cambia solo `status` (tutte le altre colonne tornano al valore di prima, quindi
        `match_id` non si scrive), `responded_at = now()` quando lo stato esce da `pending`,
        `via_diretta = true`.
+       **Deciso in implementazione (01/10/2026):** lo stato, da fuori, può fare **solo** il
+       passaggio `pending` → `accepted` o `declined`, cioè quello che fanno davvero le app vecchie.
+       Ogni altro cambio di stato (`pending` → `expired`/`cancelled`, o rianimare un invito già
+       chiuso) viene rifiutato con un errore: altrimenti chiunque, con la chiave pubblica, potrebbe
+       chiudere o riaprire gli inviti degli altri (§6 vince).
      Per le RPC il trigger si limita a riempire `responded_at` se una RPC lo dimentica uscendo da
      `pending`. Le app vecchie non se ne accorgono: scrivono solo `pending`/`accepted`/`declined` e
      non leggono le colonne nuove;
@@ -404,6 +437,10 @@ chiude l'accesso diretto. Salvo dove è detto «32b», tutto quello che segue st
      Con `p_accept = false` → `declined`, riga in `notifications` per il mittente (non più dal
      client) e push `rifiutato` **solo per gli inviti da 10 minuti**: per quelli da 45 s chi ha
      invitato è online e lo vede nell'app.
+     **Deciso in implementazione (01/10/2026) — doppia accettazione.** Se l'invito è già
+     `accepted` (la stessa persona ha accettato da un altro telefono o da un'altra scheda), la RPC
+     risponde `gia_accettato` e **non tocca nessun match**: quello eventualmente indicato è di norma
+     proprio il match dell'invito. Il caso lo gestisce l'app (§4.4, «Accettazione»).
    - `cancel_telepathy_invite(p_invite_id, p_session_id, p_password_hash)` — solo il mittente, solo
      se `pending` → `cancelled`, nessuna push.
    - `get_my_telepathy_invites(p_session_id, p_password_hash)` — la lettura degli inviti al posto
@@ -500,6 +537,21 @@ in `net._http_response`.
   guasto vero (lettura del database fallita, prenotazione fallita con un codice diverso da 23505,
   errore di invio non classificato), come `notify-ritual-start`. Mai 4xx: altrimenti chiunque la
   chiami a caso farebbe partire l'email della sentinella.
+  **Deciso in implementazione (01/10/2026)**, due correzioni alla frase qui sopra:
+  - un **errore d'invio non classificato** risponde **200**, non 500: la prenotazione resta (la
+    push si considera persa, non si ritenta) e il conto finisce nella risposta, esattamente come fa
+    già `notify-ritual-start`. Vince il codice esistente: costa al più un nuovo tentativo di
+    `pg_net` in meno;
+  - una prenotazione che fallisce con **23503** (l'invito o l'abbonamento sono spariti fra la
+    lettura e la prenotazione: account cancellato, app vecchie che cancellano, abbonamento morto
+    tolto da `notify-ritual-start`) si tratta come il 23505: **saltata**, niente 500. Per un invito
+    cancellato nessuno vuole un'email d'allarme, e su quella tabella non ci sono altre chiavi
+    esterne che possano rompersi davvero. Resta 500 ogni altro codice.
+- **Deciso in implementazione (01/10/2026) — niente push di ritorno per gli inviti
+  `via_diretta`.** Per un invito scritto o cambiato dalle app vecchie (`via_diretta = true`) la
+  funzione non manda `accettato`, `rifiutato` né `scaduto`: il service worker vecchio (v11)
+  mostrerebbe quelle push come «Un rituale sta iniziando ora». La funzione legge `via_diretta`
+  insieme al resto dell'invito; al rilascio della Fase C va ripubblicata.
 - `esito.mjs` si sposta in `supabase/functions/_shared/` e lo importano entrambe le funzioni. Non
   si copia: due copie della logica che cancella gli abbonamenti divergerebbero. Spostarlo obbliga
   a ripubblicare `notify-ritual-start`, che è live: è il **passo 0** del rilascio (§8), fatto da
@@ -560,18 +612,39 @@ in `net._http_response`.
   nostra → permesso del browser → `register_push_subscription`) e poi chiama
   `set_telepathy_availability`. Se il permesso è negato o l'iscrizione fallisce, l'interruttore
   **resta spento e lo dice**: niente verde finto (rilievo della review del 21/09). Su iPhone senza
-  app installata vale la guardia esistente. Spegnerlo chiama la RPC con `false` (la riga sparisce).
+  app installata vale la guardia esistente (il popup «Aggiungi a Home», senza altri avvisi); un
+  browser senza Push legge «Su questo browser non si possono ricevere notifiche» (02/10/2026).
+  Spegnerlo chiama la RPC con `false` (la riga sparisce).
 - **Lo stato lo decide il server**: all'apertura l'app chiama `renew_telepathy_availability` e
   mostra l'interruttore come dice la risposta, non come ricorda `localStorage`. Con
   `senza_abbonamento` l'app prova una volta a riregistrare l'abbonamento del telefono (se il
   permesso c'è ancora) e poi a rinnovare; se non ci riesce, mostra l'interruttore spento con «Le
   notifiche di questo telefono non sono più attive: riaccendi per ricevere inviti». Da
   `set_telepathy_availability` con `nessun_abbonamento` vale lo stesso messaggio.
+- **Deciso in implementazione (01/10/2026) — interruttore e notifiche dei rituali (M4).** Il
+  telefono ha **un solo abbonamento**, per rituali e inviti insieme (decisione di Irene, §2.5).
+  Quindi: accendere l'interruttore riaccende anche le notifiche dei rituali; **spegnere le
+  notifiche dei rituali spegne anche la disponibilità agli inviti** (restare in «Disponibili su
+  invito» senza abbonamento sarebbe una promessa falsa); e il rinnovo all'apertura **rispetta la
+  scelta esplicita di aver spento le notifiche** (`ga_push_spento`): non riregistra da solo
+  l'abbonamento, anche se il permesso del browser c'è ancora. Il rinnovo parte anche quando l'app
+  installata torna in primo piano, al massimo una volta all'ora.
 - **Lista «Disponibili su invito»** sotto «Online», da `get_invitable_users`. La lista non ripete
   chi è online perché lo esclude già il server. Toccando un nome si apre la **scheda**
   (`get_invite_card` con `p_disponibilita_id`) con «Invita a un training» e «Non voglio più inviti
   da questa persona». Toccando un nome nella lista **Online** si apre la stessa scheda con
   `p_session_online`, con gli stessi due pulsanti.
+  **Deciso in implementazione (01/10/2026):** Irene ha confermato che il tocco su un nome in
+  «Online» apre la scheda d'invito **al posto del profilo** (§2.5); il profilo si apre dagli
+  altri punti dell'app.
+- **Deciso in implementazione (01/10/2026) — «online» dipende dall'orologio del telefono (M3,
+  rischio accettato).** `telepatia_online` guarda `online_users.last_seen`, che scrive il client
+  con l'ora del proprio telefono. Un telefono con l'orologio indietro di oltre 30 s risulta non
+  online per il server: non è invitabile dalla lista Online (resta invitabile da «Disponibili su
+  invito», se ha l'interruttore acceso), e la durata del suo invito si decide come per chi è
+  offline. I telefoni prendono di norma l'ora dalla rete e scarti così grandi sono rari; un
+  `last_seen` scritto dal server (trigger) è fuori scope. Lo stesso limite vale per l'attesa di chi
+  accetta, che riconosce l'arrivo dell'altro da una presenza vista dopo l'accettazione.
 - **Invio**: `sendDirectInvite` passa da `send_telepathy_invite`, **anche per gli inviti a chi è
   online** (con `p_session_online`): una sola strada, un solo insieme di controlli. Spariscono i
   `delete`/`insert` diretti su `telepathy_invites` e l'insert in `notifications`. I motivi della RPC
@@ -623,6 +696,21 @@ in `net._http_response`.
   `last_seen` del partner (35 s)**: chi ha invitato è offline per definizione, e con quel controllo
   l'attesa finirebbe dopo 35 s. Resta attivo il controllo «il match è sparito o ha `ended_at`».
   Appena il partner compare, tornano entrambi i controlli normali.
+  **Deciso in implementazione (02/10/2026).** L'arrivo dell'altro si riconosce in due modi: una
+  presenza in `online_users` con `last_seen` **dopo `responded_at` + 5 s** (margine per l'orologio;
+  una riga lasciata da chi ha appena posato il telefono non vale «è arrivato»), oppure il match
+  che risulta **`giocato`** (ruling M2: entrando, chi ha invitato fa un update del match, e così
+  un orologio sfasato non chiude un training vero). Perché `giocato` resti un segnale affidabile,
+  **durante l'attesa chi ha accettato non può giocare**: «Invia» e «Conferma» sono disattivati
+  e l'app non scrive simbolo né tentativo (il banner «In attesa che *Nome* entri…» spiega perché);
+  altrimenti il suo stesso update accenderebbe `giocato` e chiuderebbe l'attesa in anticipo, con
+  «L'altra persona non c'è più» dopo 35–90 s invece dei 3 minuti.
+- **Online e «Disponibili su invito» (ruling m10, 02/10/2026).** La lista Online dell'app tiene
+  chi è stato visto negli ultimi 2 minuti, il server negli ultimi 30 s: fra 30 s e 2 minuti chi ha
+  l'interruttore acceso compare già in «Disponibili su invito». Per non mostrarlo due volte, da
+  Online si toglie chi ha lo stesso nome di una persona in «Disponibili» **solo se non è stato
+  visto negli ultimi 30 s**: chi è attivo resta in Online anche se un'altra persona con lo stesso
+  nome è fra i disponibili. Una riga Online «in sessione» apre la scheda **senza** «Invita».
 - **Pulizia dei match in `findPartner`** (r. 1559, secondo giro): non si cancellano più i match
   creati da più di 5 minuti. Si cancellano solo quelli **chiusi** (`ended_at` valorizzato da più di
   un minuto, per lasciare il tempo alla schermata finale) o **inattivi** (`ultima_attivita` più
@@ -637,6 +725,11 @@ in `net._http_response`.
   chi è in coda scopre proprio così il match appena creato dall'altro (prima che nessuno abbia
   giocato), e saltarli romperebbe l'abbinamento. Resta vero che un match attivo e già giocato in
   cui compaio mi riprende: è il comportamento di oggi.
+  **Rischio accettato (Task 23, 01/10/2026).** Le app non ancora aggiornate cancellano ancora ogni
+  match creato da più di 5 minuti, anche un training lungo nato da un invito: dura finché le app
+  si aggiornano (~10 minuti di cache + chiudi e riapri), riguarda pochi utenti e non vale una
+  migration nuova fuori piano. Costo se va male: un training lungo interrotto da un'app vecchia
+  nei primi giorni.
 - **Il loop presenze** (r. 1470–1484) smette di leggere `telepathy_invites` e di cancellare gli
   inviti vecchi di 2 minuti: legge l'invito in arrivo da `get_my_telepathy_invites`. Lo stesso per
   **`markOneNotifRead`** (r. 2941–2948), che oggi legge direttamente la tabella. La pulizia la fa
@@ -655,10 +748,21 @@ in `net._http_response`.
   sé (il passo 1 di `findPartner` di oggi ci farebbe entrare chiunque dei due), ma con le regole
   sopra non tiene nessuno «in training», non viene preso da `findPartner` e sparisce dopo 5
   minuti.
+  **Deciso in implementazione (01/10/2026) — doppia accettazione, lato app.** Se la stessa
+  persona accetta da due telefoni o due schede, il secondo insert del match di norma fallisce già
+  sul vincolo di coppia: l'app allora chiede lo stato a `get_telepathy_invite` e dice il motivo
+  vero («L'invito è già stato accettato») invece di un errore generico. Se invece il match nasce e
+  la RPC risponde `gia_accettato`, l'app cancella il match che ha appena creato, come per ogni
+  altro rifiuto. Un errore di rete sulla risposta non vale «rifiutato»: prima di cancellare il
+  match l'app rilegge l'invito, e se risulta accettato con quel match prosegue. Se qualcosa
+  sfugge, il match orfano lo toglie la pulizia dei 5 minuti.
 - **Cambi d'identità di un ospite con l'interruttore acceso**: prima di passare al `session_id`
   dell'account — iscrizione (r. 1874), login con password (r. 1802), link magico (r. ~1998) —
   l'app chiama `set_telepathy_availability(vecchio_sid, …, false)` (per un ospite il `session_id`
-  basta). Al **logout** (r. 2047, accanto a `spegniPushAlLogout()`) fa lo stesso con il
+  basta). **Deciso in implementazione (02/10/2026):** con login e link magico si spegne solo se il
+  `session_id` dell'account è diverso da quello attuale (rientrare nello stesso account non spegne
+  la propria disponibilità), e si passa la credenziale di chi se ne va: così anche un cambio
+  account → account spegne la riga vecchia. Al **logout** (r. 2047, accanto a `spegniPushAlLogout()`) fa lo stesso con il
   `session_id` e la credenziale di chi esce, **prima** di cancellarli: il telefono smette di
   ricevere push, e restare in lista sarebbe una promessa falsa. Se una di queste chiamate fallisce,
   la riga vecchia sparisce comunque dalla lista appena muore il suo abbonamento, o dopo 14 giorni
@@ -682,7 +786,7 @@ in `net._http_response`.
 | Qualcuno scrive direttamente in `telepathy_invites` con la chiave pubblica (fra 32a e 32b) | Il trigger di guardia riporta la riga a un invito da 45 s senza push, senza `match_id` e segnato `via_diretta`; la Edge Function non manda niente per quell'invito. |
 | Accettato da un'app vecchia (senza `match_id`), fra 32a e 32b | Chi ha invitato con l'app nuova entra nel match attivo in cui è `user1_id`, creato dopo l'invito; funziona solo se ha l'app aperta (nessuna push «accettato» senza `match_id`). |
 | Il destinatario accetta dopo la scadenza | La RPC rifiuta: «L'invito è scaduto». L'app cancella il match appena creato. |
-| Due accettazioni quasi contemporanee (due telefoni) | La seconda trova `accepted` e viene rifiutata: il passaggio di stato è atomico (e l'insert del secondo match di solito fallisce già sul vincolo di coppia). |
+| Due accettazioni quasi contemporanee (due telefoni) | La seconda trova `accepted` e viene rifiutata: il passaggio di stato è atomico (e l'insert del secondo match di solito fallisce già sul vincolo di coppia). La RPC risponde `gia_accettato` senza toccare il match e l'app dice «L'invito è già stato accettato». *Deciso in implementazione (01/10/2026).* |
 | Chi accetta ha un proprio invito in uscita aperto | La RPC lo annulla sul server; chi l'aveva ricevuto trova «L'invito è stato ritirato». |
 | Chi accetta o chi ha invitato è già in un altro training | La RPC rifiuta con `in_match`: nessuno si ritrova in due sessioni. |
 | Troppe push allo stesso destinatario (6/ora, o stessa coppia entro 15 minuti) | L'invito si scrive ma senza push; il mittente lo sa. |
@@ -694,6 +798,10 @@ in `net._http_response`.
 | Un training lungo | Continua finché i due giocano: nessuno lo cancella più a 5 minuti dalla nascita. Si chiude dopo 10 minuti senza nessun aggiornamento. |
 | App vecchia in cache, fra la 32a e la 32b | Continua a funzionare come oggi con le policy aperte (vedi §8, passo 2). |
 | App vecchia in cache, dopo la 32b | Letture e scritture dirette su `telepathy_invites` falliscono o tornano vuote: l'app vecchia non vede e non manda inviti finché non si aggiorna (~10 minuti + chiudi e riapri). Accettato. |
+| Invito di un'app vecchia (`via_diretta`) accettato, rifiutato o scaduto | Nessuna push di ritorno: il service worker vecchio la mostrerebbe come un rituale. *Deciso in implementazione (01/10/2026).* |
+| Un'app vecchia prova a chiudere o riaprire un invito con una scrittura diretta | Il trigger di guardia lo rifiuta: da fuori vale solo `pending` → `accepted`/`declined`. *Deciso in implementazione (01/10/2026).* |
+| Spengo le notifiche dei rituali | Si spegne anche la disponibilità agli inviti (un solo abbonamento per telefono), e il rinnovo all'apertura non la riaccende. *Deciso in implementazione (01/10/2026).* |
+| Il telefono di chi è online ha l'orologio indietro di oltre 30 s | Il server non lo vede online: non è invitabile da «Online», resta invitabile da «Disponibili su invito» se ha l'interruttore acceso. Rischio accettato. *Deciso in implementazione (01/10/2026).* |
 | Ospite con l'interruttore acceso che crea l'account, fa login o logout | La disponibilità del `session_id` vecchio viene spenta dall'app prima del cambio; va riaccesa dall'account. I «Non voglio più inviti» impostati da ospite restano legati al vecchio `session_id` e non seguono l'account. Stesso limite già scritto per le push dei rituali. |
 
 ## 6. Sicurezza — cosa si chiude e cosa resta aperto

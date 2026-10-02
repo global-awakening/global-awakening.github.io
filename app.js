@@ -1135,6 +1135,12 @@ function GlobalAwakeningPlatform() {
   const [partnerSymbol, setPartnerSymbol] = useState(null);
   const [incomingInvite, setIncomingInvite] = useState(null);
   const [directInviteTarget, setDirectInviteTarget] = useState(null);
+  const [invitoInUscita, setInvitoInUscita] = useState(null);
+  const [scartoOrologio, setScartoOrologio] = useState(0);
+  const [adessoLocale, setAdessoLocale] = useState(Date.now());
+  const [avvisoInviti, setAvvisoInviti] = useState(null);
+  const [attesaInvitante, setAttesaInvitante] = useState(null);
+  const [giroInviti, setGiroInviti] = useState(0);
   const [currentLevel, setCurrentLevel] = useState('lvl3');
   const [roundCount, setRoundCount] = useState(0);
   const swapRole = r => r === 'sender' ? 'receiver' : 'sender';
@@ -1317,6 +1323,16 @@ function GlobalAwakeningPlatform() {
     if (id) window.history.replaceState({}, '', window.location.pathname);
     return id && /^\d+$/.test(id) ? Number(id) : null;
   });
+  const [invitoDaAprire, setInvitoDaAprire] = useState(() => {
+    if (typeof InvitiHelpers === 'undefined') return null;
+    const letto = InvitiHelpers.leggiInvitoDaUrl(window.location.search);
+    if (letto.presente) window.history.replaceState({}, '', window.location.pathname);
+    return letto.presente ? {
+      invito: letto.invito,
+      azione: letto.azione
+    } : null;
+  });
+  const [confermaBlocco, setConfermaBlocco] = useState(null);
   const [stanzaId, setStanzaId] = useState(null);
   const [presentiStanza, setPresentiStanza] = useState(null);
   const stanza = stanzaId != null ? rituals.find(r => r.id === stanzaId) : null;
@@ -1576,6 +1592,83 @@ function GlobalAwakeningPlatform() {
   React.useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
+  const passwordHashRef = React.useRef(null);
+  const invitoInUscitaRef = React.useRef(null);
+  const attesaInvitanteRef = React.useRef(null);
+  React.useEffect(() => {
+    passwordHashRef.current = passwordHash;
+  }, [passwordHash]);
+  React.useEffect(() => {
+    invitoInUscitaRef.current = invitoInUscita;
+  }, [invitoInUscita]);
+  React.useEffect(() => {
+    attesaInvitanteRef.current = attesaInvitante;
+  }, [attesaInvitante]);
+  const IH = typeof InvitiHelpers !== 'undefined' ? InvitiHelpers : null;
+  const testoInviti = (chiave, valori) => IH ? IH.testo(chiave, lang === 'it' ? 'it' : 'en', valori) : String(chiave);
+  const rpcInviti = async (fn, extra) => {
+    const {
+      data,
+      error
+    } = await supabase.rpc(fn, {
+      p_session_id: sessionIdRef.current || sessionId,
+      p_password_hash: passwordHashRef.current || null,
+      ...(extra || {})
+    });
+    if (error) return {
+      ok: false,
+      motivo: IH ? IH.chiaveDaErrore(error) : 'errore'
+    };
+    return data;
+  };
+  const aggiornaInviti = async () => {
+    const r = await rpcInviti('get_my_telepathy_invites', {});
+    if (!r || !r.ok) return null;
+    if (IH) setScartoOrologio(IH.scarto(r.adesso, Date.now()));
+    const a = r.in_arrivo;
+    setIncomingInvite(a && !isBlocked(a.nome) ? {
+      from_id: a.from_id,
+      from_name: a.nome,
+      invite_id: a.id,
+      expires_at: a.expires_at
+    } : null);
+    return r;
+  };
+  React.useEffect(() => {
+    if (giroInviti) aggiornaInviti();
+  }, [giroInviti]);
+  React.useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const ascolta = ev => {
+      const d = ev.data || {};
+      if (d.tipo === 'apri-invito') {
+        const letto = IH ? IH.leggiInvitoDaUrl('?invito=' + encodeURIComponent(String(d.invito || ''))) : null;
+        if (letto) setInvitoDaAprire({
+          invito: letto.invito,
+          azione: d.azione === 'blocca' ? 'blocca' : null
+        });
+        setGiroInviti(x => x + 1);
+        if (ev.ports && ev.ports[0]) ev.ports[0].postMessage({
+          ok: true
+        });
+        return;
+      }
+      if (['invito', 'accettato', 'rifiutato', 'scaduto'].includes(d.tipo)) setGiroInviti(x => x + 1);
+    };
+    navigator.serviceWorker.addEventListener('message', ascolta);
+    return () => navigator.serviceWorker.removeEventListener('message', ascolta);
+  }, []);
+  React.useEffect(() => {
+    if (!invitoInUscita && !attesaInvitante) return;
+    setAdessoLocale(Date.now());
+    const t = setInterval(() => setAdessoLocale(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [invitoInUscita, attesaInvitante]);
+  React.useEffect(() => {
+    if (!avvisoInviti) return;
+    const t = setTimeout(() => setAvvisoInviti(null), 6000);
+    return () => clearTimeout(t);
+  }, [avvisoInviti]);
   React.useEffect(() => {
     const handleUnload = () => {
       const opts = {
@@ -1592,7 +1685,6 @@ function GlobalAwakeningPlatform() {
         }
         if (sid) {
           fetch(`${SUPABASE_URL}/rest/v1/telepathy_queue?id=eq.${sid}`, opts);
-          fetch(`${SUPABASE_URL}/rest/v1/telepathy_invites?from_id=eq.${sid}`, opts);
         }
       } catch (e) {}
     };
@@ -1691,21 +1783,7 @@ function GlobalAwakeningPlatform() {
             status: busyIds.has(u.id) ? 'busy' : 'available'
           }));
           setOnlineUsersForTelepathy(usersWithStatus.filter(u => u.nickname !== nickname && !isBlocked(u.nickname)));
-          const {
-            data: invites
-          } = await supabase.from('telepathy_invites').select('*').eq('to_id', sessionId).eq('status', 'pending');
-          const visibili = (invites || []).filter(i => !isBlocked(i.from_name));
-          if (visibili.length > 0) {
-            const inv = visibili[0];
-            setIncomingInvite({
-              from_id: inv.from_id,
-              from_name: inv.from_name,
-              invite_id: inv.id
-            });
-          } else {
-            setIncomingInvite(null);
-          }
-          await supabase.from('telepathy_invites').delete().eq('to_id', sessionId).lt('created_at', new Date(Date.now() - 120000).toISOString());
+          await aggiornaInviti();
         }
       } catch (err) {
         console.warn('Presence update failed:', err);
@@ -1794,12 +1872,16 @@ function GlobalAwakeningPlatform() {
     if (!searchingPartner) return;
     const findPartner = async () => {
       await supabase.from('telepathy_queue').delete().lt('timestamp', Date.now() - 60000);
-      await supabase.from('telepathy_matches').delete().lt('created_at', new Date(Date.now() - 300000).toISOString());
+      const adesso = Date.now();
+      await supabase.from('telepathy_matches').delete().lt('ended_at', new Date(adesso - 60000).toISOString());
+      await supabase.from('telepathy_matches').delete().lt('ultima_attivita', new Date(adesso - 600000).toISOString());
+      await supabase.from('telepathy_matches').delete().eq('giocato', false).lt('created_at', new Date(adesso - 300000).toISOString());
+      const vivo = m => !m.ended_at && !(m.da_invito && !m.giocato);
       const {
         data: matches
       } = await supabase.from('telepathy_matches').select('*');
       if (matches) {
-        const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
+        const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && vivo(m));
         if (myMatch) {
           const amUser1 = myMatch.user1_id === sessionId;
           const altroNick = amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname;
@@ -1834,7 +1916,7 @@ function GlobalAwakeningPlatform() {
         const {
           data: precheck
         } = await supabase.from('telepathy_matches').select('*');
-        const existingForMe = (precheck || []).find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
+        const existingForMe = (precheck || []).find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && vivo(m));
         if (existingForMe) {
           const amUser1 = existingForMe.user1_id === sessionId;
           setPartner({
@@ -1847,7 +1929,7 @@ function GlobalAwakeningPlatform() {
           await supabase.from('telepathy_queue').delete().eq('id', sessionId);
           return;
         }
-        const existingForThem = (precheck || []).find(m => (m.user1_id === available.id || m.user2_id === available.id) && !m.ended_at);
+        const existingForThem = (precheck || []).find(m => (m.user1_id === available.id || m.user2_id === available.id) && vivo(m));
         if (existingForThem) {
           return;
         }
@@ -2011,6 +2093,7 @@ function GlobalAwakeningPlatform() {
       return;
     }
     const existing = esito.profilo;
+    if (existing.session_id !== sessionId) await spegniDisponibilitaDi(sessionId, passwordHash);
     setSessionId(existing.session_id);
     localStorage.setItem('ga_session_id', existing.session_id);
     setPasswordHash(effectiveHash);
@@ -2105,6 +2188,7 @@ function GlobalAwakeningPlatform() {
     }
     setPasswordHash(hash);
     localStorage.setItem('ga_pwhash', hash);
+    await spegniDisponibilitaDi(sessionId, null);
     setSessionId(newSid);
     localStorage.setItem('ga_session_id', newSid);
     setLoginSuccess(t.newAccountCreated);
@@ -2260,6 +2344,7 @@ function GlobalAwakeningPlatform() {
       const existing = esito.profilo;
       const email = existing.email;
       const credenziale = esito.password_hash;
+      if (existing.session_id !== sessionId) await spegniDisponibilitaDi(sessionId, passwordHash);
       setSessionId(existing.session_id);
       localStorage.setItem('ga_session_id', existing.session_id);
       setUserEmail(email);
@@ -2304,6 +2389,7 @@ function GlobalAwakeningPlatform() {
     loginWithMagicToken();
   }, [magicToken]);
   const handleLogout = () => {
+    spegniDisponibilitaDi(sessionId, passwordHash);
     spegniPushAlLogout();
     localStorage.removeItem('ga_nickname');
     localStorage.removeItem('ga_email');
@@ -2394,7 +2480,7 @@ function GlobalAwakeningPlatform() {
     setShowResult(false);
   };
   const sendSymbol = async () => {
-    if (!selectedSymbol || !matchId) return;
+    if (!selectedSymbol || !matchId || attesaInvitanteRef.current) return;
     setWaitingForPartner(true);
     await supabase.from('telepathy_matches').update({
       sender_symbol: selectedSymbol,
@@ -2402,7 +2488,7 @@ function GlobalAwakeningPlatform() {
     }).eq('id', matchId);
   };
   const submitGuess = async () => {
-    if (!guessedSymbol || !matchId) return;
+    if (!guessedSymbol || !matchId || attesaInvitanteRef.current) return;
     setWaitingForPartner(true);
     await supabase.from('telepathy_matches').update({
       receiver_guess: guessedSymbol
@@ -2531,7 +2617,7 @@ function GlobalAwakeningPlatform() {
         setWaitingForPartner(false);
         return;
       }
-      if (partner?.id) {
+      if (partner?.id && !attesaInvitanteRef.current) {
         const {
           data: pu
         } = await supabase.from('online_users').select('last_seen').eq('id', partner.id);
@@ -2564,36 +2650,124 @@ function GlobalAwakeningPlatform() {
     const interval = setInterval(pollLevelChange, 2000);
     return () => clearInterval(interval);
   }, [matchId, showLevelBanner, currentLevel, roundCount]);
-  useEffect(() => {
-    if (!directInviteTarget || partner) return;
-    const pollForMatch = async () => {
+  const entraNelMatchDaInvito = async (idMatch, gia) => {
+    let m = gia;
+    if (!m) {
       const {
-        data: matches
-      } = await supabase.from('telepathy_matches').select('*');
-      if (!matches) return;
-      const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && !m.ended_at);
-      if (myMatch) {
-        const amUser1 = myMatch.user1_id === sessionId;
-        setPartner({
-          id: amUser1 ? myMatch.user2_id : myMatch.user1_id,
-          nickname: amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname
-        });
-        setRole(amUser1 ? myMatch.user1_role : myMatch.user2_role);
-        setMatchId(myMatch.id);
+        data,
+        error
+      } = await supabase.from('telepathy_matches').select('*').eq('id', idMatch);
+      if (error || !Array.isArray(data)) return null;
+      m = data[0];
+    }
+    if (!m || m.ended_at) {
+      setDirectInviteTarget(null);
+      setInvitoInUscita(null);
+      setAvvisoInviti(testoInviti('non_ce_piu'));
+      return false;
+    }
+    await supabase.from('telepathy_matches').update({
+      round_count: m.round_count || 0
+    }).eq('id', m.id);
+    const amUser1 = m.user1_id === sessionId;
+    setPartner({
+      id: amUser1 ? m.user2_id : m.user1_id,
+      nickname: amUser1 ? m.user2_nickname : m.user1_nickname
+    });
+    setRole(amUser1 ? m.user1_role : m.user2_role);
+    setMatchId(m.id);
+    setSessionEnded(false);
+    setPartnerDisconnected(false);
+    setDirectInviteTarget(null);
+    setInvitoInUscita(null);
+    setActiveTab('telepathy');
+    return true;
+  };
+  useEffect(() => {
+    if (!invitoInUscita || partner) return;
+    let fermo = false;
+    let inCorso = false;
+    const giro = async () => {
+      if (inCorso) return;
+      inCorso = true;
+      try {
+        const r = await rpcInviti('get_my_telepathy_invites', {});
+        if (fermo || !r || !r.ok) return;
+        if (IH) setScartoOrologio(IH.scarto(r.adesso, Date.now()));
+        const u = r.in_uscita;
+        if (!u || u.id !== invitoInUscita.id) {
+          setDirectInviteTarget(null);
+          setInvitoInUscita(null);
+          setAvvisoInviti(testoInviti('invito_sparito'));
+          return;
+        }
+        if (u.status === 'pending') {
+          setInvitoInUscita(u);
+          return;
+        }
+        if (u.status === 'accepted') {
+          if (u.match_id) {
+            await entraNelMatchDaInvito(u.match_id);
+            return;
+          }
+          const {
+            data: miei,
+            error: errMiei
+          } = await supabase.from('telepathy_matches').select('*').eq('user1_id', sessionId);
+          if (fermo || errMiei) return;
+          const m = IH ? IH.matchDiRipiego(miei, sessionId, u.created_at) : null;
+          if (m) await entraNelMatchDaInvito(m.id, m);
+          return;
+        }
         setDirectInviteTarget(null);
+        setInvitoInUscita(null);
+        setAvvisoInviti(testoInviti(IH ? IH.motivoDaStato(u.status) : 'scaduto', {
+          nome: u.nome
+        }));
+      } finally {
+        inCorso = false;
       }
     };
-    pollForMatch();
-    const interval = setInterval(pollForMatch, 2000);
-    const expiry = setTimeout(async () => {
-      await supabase.from('telepathy_invites').delete().eq('from_id', sessionId).eq('to_id', directInviteTarget.id);
-      setDirectInviteTarget(null);
-    }, 45000);
+    giro();
+    const intervallo = setInterval(giro, 2000);
     return () => {
-      clearInterval(interval);
-      clearTimeout(expiry);
+      fermo = true;
+      clearInterval(intervallo);
     };
-  }, [directInviteTarget, partner, sessionId]);
+  }, [invitoInUscita && invitoInUscita.id, partner, sessionId, giroInviti]);
+  const rientroFattoRef = React.useRef(null);
+  useEffect(() => {
+    if (!nickname || !sessionId || partner || rientroFattoRef.current === sessionId) return;
+    rientroFattoRef.current = sessionId;
+    const sid = sessionId;
+    const prova = async restano => {
+      if (rientroFattoRef.current !== sid || matchIdRef.current) return;
+      const riprova = () => {
+        if (restano > 0) setTimeout(() => prova(restano - 1), 2000);
+      };
+      const r = await rpcInviti('get_my_telepathy_invites', {});
+      if (!r || r.ok === false && r.motivo === 'errore') {
+        riprova();
+        return;
+      }
+      if (!r.ok || !r.in_uscita || !IH) return;
+      const scarto = IH.scarto(r.adesso, Date.now());
+      setScartoOrologio(scarto);
+      const u = r.in_uscita;
+      if (u.status === 'pending') {
+        setInvitoInUscita(u);
+        setDirectInviteTarget({
+          id: null,
+          nickname: u.nome
+        });
+        return;
+      }
+      if (u.status === 'accepted' && u.match_id && !IH.attesaFinita(u.responded_at, scarto, Date.now())) {
+        if ((await entraNelMatchDaInvito(u.match_id)) === null) riprova();
+      }
+    };
+    prova(5);
+  }, [nickname, sessionId]);
   useEffect(() => {
     if (!matchId) return;
     const loadChat = async () => {
@@ -2654,8 +2828,12 @@ function GlobalAwakeningPlatform() {
     }
     if (sessionId) {
       supabase.from('telepathy_queue').delete().eq('id', sessionId);
-      supabase.from('telepathy_invites').delete().eq('from_id', sessionId);
     }
+    const uscita = invitoInUscitaRef.current;
+    if (uscita && uscita.status === 'pending') rpcInviti('cancel_telepathy_invite', {
+      p_invite_id: uscita.id
+    });
+    invitoInUscitaRef.current = null;
     lastProcessedRoundRef.current = -1;
     setMatchUser1Id(null);
     setPartner(null);
@@ -2673,6 +2851,8 @@ function GlobalAwakeningPlatform() {
     setSessionEnded(false);
     setPartnerDisconnected(false);
     setDirectInviteTarget(null);
+    setInvitoInUscita(null);
+    setAttesaInvitante(null);
     setSenderHasSent(false);
     setTelepathyChatMessages([]);
     setNewTelepathyMessage('');
@@ -2699,61 +2879,79 @@ function GlobalAwakeningPlatform() {
     resetTelepathy();
   };
   useEffect(() => {
-    const waitingOnPartner = !!matchId && !sessionEnded && !partnerDisconnected && !showResult && (waitingForPartner || showLevelBanner && !amIChooser || effectiveRole === 'receiver' && !senderHasSent);
+    const waitingOnPartner = !!matchId && !attesaInvitante && !sessionEnded && !partnerDisconnected && !showResult && (waitingForPartner || showLevelBanner && !amIChooser || effectiveRole === 'receiver' && !senderHasSent);
     if (!waitingOnPartner) return;
     const timer = setTimeout(() => {
       leaveSession();
     }, 90000);
     return () => clearTimeout(timer);
-  }, [matchId, sessionEnded, partnerDisconnected, showResult, waitingForPartner, showLevelBanner, amIChooser, effectiveRole, senderHasSent, roundCount, sessionMatches]);
+  }, [matchId, sessionEnded, partnerDisconnected, showResult, waitingForPartner, showLevelBanner, amIChooser, effectiveRole, senderHasSent, roundCount, sessionMatches, attesaInvitante]);
+  const invioInCorsoRef = React.useRef(false);
   const sendDirectInvite = async targetUser => {
-    if (directInviteTarget) {
-      console.warn('sendDirectInvite: invito gia\' pending, ignoro il secondo');
-      return;
+    if (directInviteTarget || invitoInUscitaRef.current || invioInCorsoRef.current) return;
+    invioInCorsoRef.current = true;
+    try {
+      await inviaInvito(targetUser);
+    } finally {
+      invioInCorsoRef.current = false;
     }
+  };
+  const inviaInvito = async targetUser => {
     setDirectInviteTarget(targetUser);
-    await supabase.from('telepathy_invites').delete().eq('from_id', sessionId).eq('to_id', targetUser.id);
-    const {
-      error
-    } = await supabase.from('telepathy_invites').insert({
-      from_id: sessionId,
-      from_name: nickname || 'Anonymous',
-      to_id: targetUser.id,
-      to_name: targetUser.nickname,
-      status: 'pending'
+    const r = await rpcInviti('send_telepathy_invite', {
+      p_nickname: nickname || 'Anonymous',
+      p_disponibilita_id: targetUser.disponibilita_id || null,
+      p_session_online: targetUser.disponibilita_id ? null : targetUser.id
     });
-    if (error) {
-      console.warn('Failed to send invite:', error);
+    if (!r || !r.ok) {
       setDirectInviteTarget(null);
+      setAvvisoInviti(testoInviti(r && r.motivo || 'errore', {
+        nome: targetUser.nickname
+      }));
       return;
     }
-    await supabase.from('notifications').insert({
-      user_nickname: targetUser.nickname,
-      type: 'telepathy_invite',
-      message: `${nickname} ti ha invitato a un training telepatico`
+    if (IH) setScartoOrologio(IH.scarto(r.adesso, Date.now()));
+    setAdessoLocale(Date.now());
+    setInvitoInUscita({
+      id: r.id,
+      nome: targetUser.nickname,
+      status: 'pending',
+      expires_at: r.expires_at,
+      created_at: r.created_at,
+      push_saltata: r.push_saltata,
+      match_id: null,
+      responded_at: null
     });
+    if (r.push_saltata) setAvvisoInviti(testoInviti('push_saltata'));
   };
   const cancelDirectInvite = async () => {
-    const target = directInviteTarget;
+    const uscita = invitoInUscitaRef.current;
     setDirectInviteTarget(null);
-    if (target) {
-      await supabase.from('telepathy_invites').delete().eq('from_id', sessionId).eq('to_id', target.id);
+    setInvitoInUscita(null);
+    if (uscita) await rpcInviti('cancel_telepathy_invite', {
+      p_invite_id: uscita.id
+    });
+  };
+  const accettoInCorsoRef = React.useRef(false);
+  const acceptInvite = async () => {
+    if (!incomingInvite || accettoInCorsoRef.current) return;
+    accettoInCorsoRef.current = true;
+    try {
+      await accettaInvito();
+    } finally {
+      accettoInCorsoRef.current = false;
     }
   };
-  const acceptInvite = async () => {
-    if (!incomingInvite) return;
-    if ((matchId || partner) && !sessionEnded && !partnerDisconnected) {
-      console.warn('acceptInvite: gia\' in sessione attiva, ignoro invito');
-      return;
-    }
+  const accettaInvito = async () => {
+    if ((matchId || partner) && !sessionEnded && !partnerDisconnected) return;
     if (matchId || partner) resetTelepathy();
     setSearchingPartner(false);
-    const inviterId = incomingInvite.from_id;
+    const invito = incomingInvite;
     const {
       data: staleAccept
     } = await supabase.from('telepathy_matches').select('*');
     for (const m of staleAccept || []) {
-      const isPair = m.user1_id === inviterId && m.user2_id === sessionId || m.user1_id === sessionId && m.user2_id === inviterId;
+      const isPair = m.user1_id === invito.from_id && m.user2_id === sessionId || m.user1_id === sessionId && m.user2_id === invito.from_id;
       if (isPair && m.ended_at) await supabase.from('telepathy_matches').delete().eq('id', m.id);
     }
     const myRole = Math.random() > 0.5 ? 'sender' : 'receiver';
@@ -2762,29 +2960,71 @@ function GlobalAwakeningPlatform() {
       data: matchData,
       error: matchError
     } = await supabase.from('telepathy_matches').insert({
-      user1_id: incomingInvite.from_id,
-      user1_nickname: incomingInvite.from_name,
+      user1_id: invito.from_id,
+      user1_nickname: invito.from_name,
       user1_role: theirRole,
       user2_id: sessionId,
       user2_nickname: nickname || 'Anonymous',
       user2_role: myRole,
       level: 'lvl3',
-      round_count: 0
+      round_count: 0,
+      da_invito: true
     });
     if (matchError || !matchData || matchData.length === 0) {
-      console.warn('Failed to create match:', matchError);
+      const stato = await rpcInviti('get_telepathy_invite', {
+        p_invite_id: invito.invite_id
+      });
+      let motivo = 'match_non_valido';
+      if (stato && stato.ok && stato.invito && stato.invito.status !== 'pending' && IH) motivo = IH.motivoDaStato(stato.invito.status);else if (stato && stato.ok === false && (stato.motivo === 'errore' || stato.motivo === 'auth_fallita')) motivo = stato.motivo;
+      setIncomingInvite(null);
+      setAvvisoInviti(testoInviti(motivo, {
+        nome: invito.from_name
+      }));
       return;
     }
-    await supabase.from('telepathy_invites').update({
-      status: 'accepted'
-    }).eq('id', incomingInvite.invite_id);
-    setMatchId(matchData[0].id);
+    const nuovo = matchData[0];
+    let r = await rpcInviti('respond_telepathy_invite', {
+      p_invite_id: invito.invite_id,
+      p_accept: true,
+      p_match_id: nuovo.id
+    });
+    if (r && r.ok === false && r.motivo === 'errore') {
+      const stato = await rpcInviti('get_telepathy_invite', {
+        p_invite_id: invito.invite_id
+      });
+      if (stato && stato.ok && stato.invito && stato.invito.status === 'accepted' && stato.invito.match_id === nuovo.id) {
+        r = {
+          ok: true,
+          status: 'accepted',
+          responded_at: stato.invito.responded_at,
+          adesso: stato.adesso
+        };
+      }
+    }
+    if (!r || !r.ok) {
+      await supabase.from('telepathy_matches').delete().eq('id', nuovo.id);
+      setIncomingInvite(null);
+      setAvvisoInviti(testoInviti(r && r.motivo || 'errore', {
+        nome: invito.from_name
+      }));
+      return;
+    }
+    if (IH && r.adesso) setScartoOrologio(IH.scarto(r.adesso, Date.now()));
+    invitoInUscitaRef.current = null;
+    setInvitoInUscita(null);
+    setDirectInviteTarget(null);
+    setMatchId(nuovo.id);
     setPartner({
-      id: incomingInvite.from_id,
-      nickname: incomingInvite.from_name
+      id: invito.from_id,
+      nickname: invito.from_name
     });
     setRole(myRole);
     setIncomingInvite(null);
+    setAttesaInvitante({
+      invitoId: invito.invite_id,
+      respondedAt: r.responded_at,
+      nome: invito.from_name
+    });
     setSessionEnded(false);
     setPartnerDisconnected(false);
     setShowResult(false);
@@ -2798,30 +3038,352 @@ function GlobalAwakeningPlatform() {
     setActiveTab('telepathy');
   };
   const declineInvite = async () => {
-    if (!incomingInvite) return;
-    await supabase.from('telepathy_invites').update({
-      status: 'declined'
-    }).eq('id', incomingInvite.invite_id);
-    await supabase.from('notifications').insert({
-      user_nickname: incomingInvite.from_name,
-      type: 'telepathy_declined',
-      message: `${nickname} ha rifiutato il tuo invito al training telepatico`
-    });
+    const invito = incomingInvite;
+    if (!invito) return;
     setIncomingInvite(null);
+    const r = await rpcInviti('respond_telepathy_invite', {
+      p_invite_id: invito.invite_id,
+      p_accept: false,
+      p_match_id: null
+    });
+    if (r && r.ok === false && r.motivo !== 'scaduto') setAvvisoInviti(testoInviti(r.motivo, {
+      nome: invito.from_name
+    }));
   };
+  const rispostoIlRef = React.useRef(null);
+  useEffect(() => {
+    if (!attesaInvitante || !matchId || !partner) return;
+    rispostoIlRef.current = attesaInvitante.respondedAt;
+    let fermo = false;
+    let inCorso = false;
+    const giro = async () => {
+      if (inCorso) return;
+      inCorso = true;
+      try {
+        const {
+          data: pu
+        } = await supabase.from('online_users').select('last_seen').eq('id', partner.id);
+        if (fermo) return;
+        const visto = pu && pu.length > 0 ? Date.parse(pu[0].last_seen) : NaN;
+        const risposto = Date.parse(rispostoIlRef.current);
+        if (!isNaN(visto) && !isNaN(risposto) && visto > risposto + 5000 && Date.now() - visto < 30000) {
+          setAttesaInvitante(null);
+          return;
+        }
+        const {
+          data: mm,
+          error: errM
+        } = await supabase.from('telepathy_matches').select('giocato').eq('id', matchId);
+        if (fermo) return;
+        if (!errM && Array.isArray(mm) && mm.length > 0 && mm[0].giocato === true) {
+          setAttesaInvitante(null);
+          return;
+        }
+        const r = await rpcInviti('get_telepathy_invite', {
+          p_invite_id: attesaInvitante.invitoId
+        });
+        if (fermo) return;
+        const scarto = r && r.adesso && IH ? IH.scarto(r.adesso, Date.now()) : scartoOrologio;
+        if (r && r.ok && r.invito && r.invito.responded_at) rispostoIlRef.current = r.invito.responded_at;
+        if (IH && IH.attesaFinita(rispostoIlRef.current, scarto, Date.now())) {
+          fermo = true;
+          try {
+            await supabase.rpc('end_telepathy_match', {
+              p_match_id: matchId,
+              p_ended_by: sessionId
+            });
+          } catch (_) {}
+          const nome = attesaInvitante.nome;
+          resetTelepathy();
+          setAvvisoInviti(testoInviti('non_arrivato', {
+            nome
+          }));
+        }
+      } finally {
+        inCorso = false;
+      }
+    };
+    giro();
+    const intervallo = setInterval(giro, 2000);
+    return () => {
+      fermo = true;
+      clearInterval(intervallo);
+    };
+  }, [attesaInvitante && attesaInvitante.invitoId, matchId, partner]);
+  useEffect(() => {
+    if (!invitoDaAprire || !nickname || !sessionId || !IH) return;
+    const {
+      invito,
+      azione
+    } = invitoDaAprire;
+    setInvitoDaAprire(null);
+    (async () => {
+      setActiveTab('telepathy');
+      if (!invito) {
+        setAvvisoInviti(testoInviti('non_trovato'));
+        return;
+      }
+      const r = await rpcInviti('get_telepathy_invite', {
+        p_invite_id: invito
+      });
+      if (r && r.ok === false && (r.motivo === 'errore' || r.motivo === 'auth_fallita')) {
+        setAvvisoInviti(testoInviti(r.motivo));
+        return;
+      }
+      if (r && r.adesso) setScartoOrologio(IH.scarto(r.adesso, Date.now()));
+      const esito = IH.esitoApertura(r, azione);
+      if (esito.tipo === 'conferma_blocco') {
+        setConfermaBlocco({
+          nome: esito.nome,
+          p_invite_id: invito,
+          daNotifica: true
+        });
+        return;
+      }
+      if (esito.tipo === 'rispondi') {
+        setIncomingInvite({
+          from_id: r.invito.from_id,
+          from_name: r.invito.nome,
+          invite_id: r.invito.id,
+          expires_at: r.invito.expires_at
+        });
+        return;
+      }
+      if (esito.tipo === 'entra') {
+        await entraNelMatchDaInvito(esito.matchId);
+        return;
+      }
+      if (esito.tipo === 'attesa') {
+        setInvitoInUscita(r.invito);
+        setDirectInviteTarget({
+          id: null,
+          nickname: r.invito.nome
+        });
+        return;
+      }
+      setAvvisoInviti(testoInviti(esito.motivo, {
+        nome: esito.nome
+      }));
+    })();
+  }, [invitoDaAprire, nickname, sessionId]);
+  const confermaBloccoInviti = async () => {
+    const c = confermaBlocco;
+    if (!c) return;
+    setConfermaBlocco(null);
+    setSchedaInvito(null);
+    const {
+      nome,
+      daNotifica,
+      ...chi
+    } = c;
+    const r = await rpcInviti('block_telepathy_inviter', {
+      p_invite_id: null,
+      p_disponibilita_id: null,
+      p_session_online: null,
+      ...chi
+    });
+    if (!r || !r.ok) {
+      const motivo = r && r.motivo || 'errore';
+      setAvvisoInviti(testoInviti(motivo === 'non_trovato' && !daNotifica ? 'non_trovato_scheda' : motivo));
+      return;
+    }
+    setIncomingInvite(x => x && (x.invite_id === chi.p_invite_id || x.from_name === (r.nome || nome)) ? null : x);
+    setAvvisoInviti(testoInviti('bloccato_ok', {
+      nome: r.nome || nome
+    }));
+  };
+  const [disponibileInviti, setDisponibileInviti] = useState(null);
+  const [invitabili, setInvitabili] = useState([]);
+  const [schedaInvito, setSchedaInvito] = useState(null);
+  const ultimoRinnovoRef = React.useRef(0);
+  useEffect(() => {
+    setSchedaInvito(null);
+    if (!nickname || !sessionId) {
+      setDisponibileInviti(null);
+      setInvitabili([]);
+      return;
+    }
+    let fermo = false;
+    const rinnova = async () => {
+      ultimoRinnovoRef.current = Date.now();
+      let r = await rpcInviti('renew_telepathy_availability', {});
+      if (fermo || !r || !r.ok) return;
+      if (r.stato === 'senza_abbonamento' && pushDisponibile() && Notification.permission === 'granted' && localStorage.getItem('ga_push_spento') !== '1') {
+        try {
+          await iscriviPush();
+          r = await rpcInviti('renew_telepathy_availability', {});
+        } catch (_) {}
+      }
+      if (fermo || !r || !r.ok) return;
+      setDisponibileInviti(r.stato === 'acceso');
+      if (r.stato === 'senza_abbonamento') setAvvisoInviti(testoInviti('nessun_abbonamento'));
+    };
+    rinnova();
+    const alRitorno = () => {
+      if (document.visibilityState === 'visible' && Date.now() - ultimoRinnovoRef.current >= 3600000) rinnova();
+    };
+    document.addEventListener('visibilitychange', alRitorno);
+    return () => {
+      fermo = true;
+      document.removeEventListener('visibilitychange', alRitorno);
+    };
+  }, [nickname, sessionId]);
+  const accendiDisponibilita = async () => {
+    if (!pushDisponibile()) {
+      const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      const installata = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+      setDisponibileInviti(false);
+      if (iOS && !installata) setMostraInstallaPerPush(true);else setAvvisoInviti(testoInviti('push_non_supportata'));
+      return;
+    }
+    try {
+      if (Notification.permission !== 'granted') {
+        const p = await Notification.requestPermission();
+        if (p !== 'granted') {
+          setDisponibileInviti(false);
+          setAvvisoInviti(testoInviti('permesso_negato'));
+          return;
+        }
+      }
+      await iscriviPush();
+    } catch (_) {
+      setDisponibileInviti(false);
+      setAvvisoInviti(testoInviti('errore'));
+      return;
+    }
+    const r = await rpcInviti('set_telepathy_availability', {
+      p_nickname: nickname || 'Anonymous',
+      p_enabled: true
+    });
+    const ok = !!(r && r.ok && r.acceso);
+    setDisponibileInviti(ok);
+    if (!ok) setAvvisoInviti(testoInviti(r && r.motivo || 'errore'));
+  };
+  const spegniDisponibilita = async () => {
+    const r = await rpcInviti('set_telepathy_availability', {
+      p_nickname: nickname || 'Anonymous',
+      p_enabled: false
+    });
+    if (r && r.ok) setDisponibileInviti(false);else setAvvisoInviti(testoInviti('errore'));
+  };
+  const spegniDisponibilitaDi = async (sid, hash) => {
+    if (disponibileInviti === false || !sid) return;
+    try {
+      await supabase.rpc('set_telepathy_availability', {
+        p_session_id: sid,
+        p_password_hash: hash || null,
+        p_nickname: null,
+        p_enabled: false
+      });
+    } catch (_) {}
+    setDisponibileInviti(false);
+  };
+  const renderInterruttoreInviti = dataTest => React.createElement("div", {
+    style: {
+      padding: '0.5rem 0'
+    }
+  }, React.createElement("div", {
+    className: "flex items-center justify-between",
+    style: {
+      gap: '0.75rem'
+    }
+  }, React.createElement("span", {
+    className: "text-white text-sm"
+  }, testoInviti('interruttore')), React.createElement("button", {
+    "data-test": dataTest,
+    role: "switch",
+    "aria-checked": disponibileInviti === true,
+    "aria-label": testoInviti('interruttore'),
+    onClick: () => disponibileInviti ? spegniDisponibilita() : accendiDisponibilita(),
+    style: {
+      width: '3rem',
+      height: '1.5rem',
+      flexShrink: 0,
+      borderRadius: '9999px',
+      position: 'relative',
+      cursor: 'pointer',
+      transition: 'all 0.3s',
+      background: disponibileInviti ? 'rgba(34,197,94,0.5)' : 'rgba(255,255,255,0.2)',
+      border: disponibileInviti ? '1px solid rgba(34,197,94,0.7)' : '1px solid rgba(255,255,255,0.3)'
+    }
+  }, React.createElement("div", {
+    style: {
+      width: '1.1rem',
+      height: '1.1rem',
+      borderRadius: '50%',
+      background: '#fff',
+      position: 'absolute',
+      top: '50%',
+      transform: 'translateY(-50%)',
+      left: disponibileInviti ? 'calc(100% - 1.3rem)' : '0.15rem',
+      transition: 'all 0.3s'
+    }
+  }))), React.createElement("p", {
+    className: "text-secondary text-xs",
+    style: {
+      marginTop: '0.25rem'
+    }
+  }, testoInviti('nota_nome')));
+  useEffect(() => {
+    if (activeTab !== 'telepathy' || partner || !nickname || !sessionId) return;
+    let fermo = false;
+    const giro = async () => {
+      const r = await rpcInviti('get_invitable_users', {
+        p_nickname: nickname || 'Anonymous'
+      });
+      if (!fermo && Array.isArray(r)) setInvitabili(r);
+    };
+    giro();
+    const intervallo = setInterval(giro, 15000);
+    return () => {
+      fermo = true;
+      clearInterval(intervallo);
+    };
+  }, [activeTab, partner, nickname, sessionId]);
+  const apriScheda = async chi => {
+    const r = await rpcInviti('get_invite_card', {
+      p_nickname: nickname || 'Anonymous',
+      p_disponibilita_id: chi.disponibilita_id || null,
+      p_session_online: chi.disponibilita_id ? null : chi.id
+    });
+    if (!r || !r.ok) {
+      setAvvisoInviti(testoInviti(r && r.motivo === 'non_trovato' ? 'non_disponibile' : r && r.motivo || 'errore'));
+      return;
+    }
+    setSchedaInvito({
+      chi,
+      dati: r.scheda
+    });
+  };
+  const onlineInLobby = onlineUsersForTelepathy.filter(u => {
+    const visto = Date.parse(u.last_seen);
+    const recente = !isNaN(visto) && Date.now() - visto < 30000;
+    return recente || !invitabili.some(d => d.nickname === u.nickname);
+  });
   const playAgainSamePartner = async () => {
     const savedPartner = partner;
     if (!savedPartner) return;
     const {
       data: presence
     } = await supabase.from('online_users').select('id,last_seen').eq('id', savedPartner.id);
-    const stillOnline = presence && presence.length > 0 && Date.now() - new Date(presence[0].last_seen).getTime() < 60000;
+    const stillOnline = presence && presence.length > 0 && Date.now() - new Date(presence[0].last_seen).getTime() < 30000;
     if (!stillOnline) {
       alert(`${savedPartner.nickname} ${t.telepathy.partnerOffline}`);
       return;
     }
+    if (matchId) {
+      try {
+        await supabase.rpc('end_telepathy_match', {
+          p_match_id: matchId,
+          p_ended_by: sessionId
+        });
+      } catch (_) {}
+    }
     resetTelepathy();
-    await sendDirectInvite(savedPartner);
+    await sendDirectInvite({
+      id: savedPartner.id,
+      nickname: savedPartner.nickname
+    });
   };
   useEffect(() => {
     const loadProfile = async () => {
@@ -3088,8 +3650,10 @@ function GlobalAwakeningPlatform() {
     });
     setNotifItems(prev => prev.filter(n => n.id !== notif.id));
     setShowNotifPanel(false);
-    const isExpiredInvite = notif.type === 'telepathy_invite' && notif.created_at && Date.now() - new Date(notif.created_at).getTime() > 120000;
-    if (isExpiredInvite) return;
+    if (notif.type === 'telepathy_invite') {
+      const r = await aggiornaInviti();
+      if (!r || !r.in_arrivo) return;
+    }
     if (notif.type === 'private_message') {
       try {
         if (!isGuest && passwordHash) {
@@ -3111,20 +3675,6 @@ function GlobalAwakeningPlatform() {
       const senderMatch = notif.message.match(/^(.+) ti ha inviato/);
       if (senderMatch) openProfile(senderMatch[1]);
     } else {
-      if (notif.type === 'telepathy_invite') {
-        const {
-          data: invites
-        } = await supabase.from('telepathy_invites').select('*').eq('to_id', sessionId).eq('status', 'pending');
-        const visibili = (invites || []).filter(i => !isBlocked(i.from_name));
-        if (visibili.length > 0) {
-          const inv = visibili[0];
-          setIncomingInvite({
-            from_id: inv.from_id,
-            from_name: inv.from_name,
-            invite_id: inv.id
-          });
-        }
-      }
       setActiveTab(tabTarget);
     }
   };
@@ -3348,6 +3898,7 @@ function GlobalAwakeningPlatform() {
   const spegniPush = async () => {
     localStorage.setItem('ga_push_spento', '1');
     setPushAttive(false);
+    if (disponibileInviti !== false) spegniDisponibilita();
     try {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
@@ -4365,9 +4916,10 @@ function GlobalAwakeningPlatform() {
   }, "Nessuna notifica") : React.createElement(React.Fragment, null, notifItems.map(n => {
     const tabTarget = n.type === 'telepathy_invite' ? 'telepathy' : n.type === 'comment' ? 'consciousness' : n.type === 'private_message' ? null : 'rituals';
     const icon = n.type === 'comment' || n.type === 'ritual_comment' ? '💬' : n.type === 'ritual_join' ? '🌟' : n.type === 'private_message' ? '✉️' : n.type === 'telepathy_declined' ? '❌' : '🧠';
-    const isExpiredInvite = n.type === 'telepathy_invite' && n.created_at && Date.now() - new Date(n.created_at).getTime() > 120000;
+    const isExpiredInvite = n.type === 'telepathy_invite' && !incomingInvite;
     return React.createElement("div", {
       key: n.id,
+      "data-test": "notifica",
       onClick: isExpiredInvite ? () => markOneNotifRead(n, tabTarget) : undefined,
       style: {
         padding: '0.5rem 0.25rem',
@@ -5142,18 +5694,51 @@ ${ritual.description || ''}`
     className: "text-primary text-sm"
   }, t.telepathy.step2), React.createElement("p", {
     className: "text-primary text-sm"
-  }, t.telepathy.step3)), onlineUsersForTelepathy.length > 0 && React.createElement("div", {
+  }, t.telepathy.step3)), React.createElement("div", {
+    className: "bg-glass-dark rounded-xl p-4"
+  }, renderInterruttoreInviti('interruttore-inviti')), invitoInUscita && React.createElement("div", {
+    className: "bg-glass-dark rounded-xl p-4",
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '0.5rem'
+    }
+  }, React.createElement("span", {
+    "data-test": "conto-invito",
+    className: "text-white text-sm"
+  }, t.telepathy.inviteSent, " ", testoInviti('invito_a', {
+    nome: invitoInUscita.nome,
+    tempo: (() => {
+      const s = IH ? IH.secondiRimasti(invitoInUscita.expires_at, scartoOrologio, adessoLocale) : 0;
+      return s > 0 ? testoInviti('scade_fra', {
+        tempo: IH.mmss(s)
+      }) : testoInviti('scaduto_breve');
+    })()
+  })), React.createElement("button", {
+    "data-test": "annulla-invito",
+    onClick: cancelDirectInvite,
+    className: "text-secondary text-xs",
+    style: {
+      textDecoration: 'underline',
+      background: 'none',
+      border: 'none',
+      cursor: 'pointer',
+      padding: 0
+    }
+  }, t.telepathy.cancel)), onlineInLobby.length > 0 && React.createElement("div", {
     className: "bg-glass-dark rounded-xl p-4"
   }, React.createElement("h3", {
     className: "text-white font-bold mb-3"
-  }, t.telepathy.onlineUsers, " (", onlineUsersForTelepathy.length, ")"), React.createElement("div", {
+  }, t.telepathy.onlineUsers, " (", onlineInLobby.length, ")"), React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
       gap: '0.5rem'
     }
-  }, onlineUsersForTelepathy.map(u => React.createElement("div", {
+  }, onlineInLobby.map(u => React.createElement("div", {
     key: u.id,
+    "data-test": "riga-online",
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -5182,36 +5767,65 @@ ${ritual.description || ''}`
       cursor: 'pointer',
       textDecoration: 'underline dotted'
     },
-    onClick: () => openProfile(u.nickname)
+    onClick: () => apriScheda({
+      id: u.id,
+      nickname: u.nickname,
+      busy: u.status === 'busy'
+    })
   }, u.nickname), React.createElement("span", {
     className: "text-secondary text-xs"
-  }, u.status === 'busy' ? t.telepathy.inSession : t.telepathy.available)), u.status === 'available' && directInviteTarget?.id !== u.id && React.createElement("button", {
+  }, u.status === 'busy' ? t.telepathy.inSession : t.telepathy.available)), u.status === 'available' && !invitoInUscita && !directInviteTarget && React.createElement("button", {
     onClick: () => sendDirectInvite(u),
     className: "btn-primary",
     style: {
       fontSize: '0.75rem',
       padding: '0.3rem 0.75rem'
     }
-  }, t.telepathy.propose), directInviteTarget?.id === u.id && React.createElement("span", {
+  }, t.telepathy.propose))))), invitabili.length > 0 && React.createElement("div", {
+    "data-test": "lista-disponibili",
+    className: "bg-glass-dark rounded-xl p-4"
+  }, React.createElement("h3", {
+    className: "text-white font-bold mb-3"
+  }, testoInviti('disponibili'), " (", invitabili.length, ")"), React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '0.5rem'
+    }
+  }, invitabili.map(u => React.createElement("div", {
+    key: u.id,
+    "data-test": "riga-disponibile",
     style: {
       display: 'flex',
       alignItems: 'center',
-      gap: '0.5rem'
+      justifyContent: 'space-between',
+      padding: '0.5rem 0.75rem',
+      borderRadius: '0.75rem',
+      background: 'rgba(255,255,255,0.05)'
     }
   }, React.createElement("span", {
-    className: "text-secondary text-xs"
-  }, t.telepathy.inviteSent), React.createElement("button", {
-    onClick: cancelDirectInvite,
-    className: "text-secondary text-xs",
+    className: "text-white text-sm font-medium",
     style: {
-      textDecoration: 'underline',
-      background: 'none',
-      border: 'none',
       cursor: 'pointer',
-      padding: 0
+      textDecoration: 'underline dotted'
+    },
+    onClick: () => apriScheda({
+      disponibilita_id: u.id,
+      nickname: u.nickname
+    })
+  }, u.nickname), !invitoInUscita && !directInviteTarget && React.createElement("button", {
+    onClick: () => sendDirectInvite({
+      disponibilita_id: u.id,
+      nickname: u.nickname
+    }),
+    className: "btn-primary",
+    style: {
+      fontSize: '0.75rem',
+      padding: '0.3rem 0.75rem'
     }
-  }, t.telepathy.cancel)))))), React.createElement("button", {
+  }, t.telepathy.propose))))), React.createElement("button", {
     onClick: startSearching,
+    "data-test": "btn-casuale",
     className: "btn-primary w-full",
     style: {
       fontSize: '1.125rem'
@@ -5384,6 +5998,7 @@ ${ritual.description || ''}`
   }, React.createElement("p", {
     className: "text-secondary text-xs mb-1"
   }, t.telepathy.partner), React.createElement("p", {
+    "data-test": "partner-nome",
     className: "text-white font-bold"
   }, partner?.nickname), React.createElement("p", {
     className: "text-secondary text-xs mt-2"
@@ -5550,7 +6165,7 @@ ${ritual.description || ''}`
     className: `symbol-btn ${selectedSymbol === symbol.id ? 'symbol-btn-selected' : ''}`
   }, symbol.icon))), React.createElement("button", {
     onClick: sendSymbol,
-    disabled: !selectedSymbol,
+    disabled: !selectedSymbol || !!attesaInvitante,
     className: "btn-primary w-full"
   }, t.telepathy.sendTelepathically)), !showLevelBanner && effectiveRole === 'receiver' && !waitingForPartner && React.createElement("div", null, senderHasSent ? React.createElement("p", {
     className: "text-white text-center mb-2 font-medium"
@@ -5569,7 +6184,7 @@ ${ritual.description || ''}`
     className: `symbol-btn ${guessedSymbol === symbol.id ? 'symbol-btn-selected' : ''}`
   }, symbol.icon))), React.createElement("button", {
     onClick: submitGuess,
-    disabled: !guessedSymbol || !senderHasSent,
+    disabled: !guessedSymbol || !senderHasSent || !!attesaInvitante,
     className: "btn-primary w-full"
   }, t.telepathy.confirm)), !showLevelBanner && waitingForPartner && React.createElement("div", {
     className: "text-center"
@@ -6024,7 +6639,7 @@ ${ritual.description || ''}`
       left: pushAttive ? 'calc(100% - 1.3rem)' : '0.15rem',
       transition: 'all 0.3s'
     }
-  })))), React.createElement("div", {
+  }))), renderInterruttoreInviti('interruttore-inviti-impostazioni')), React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
@@ -6825,7 +7440,136 @@ ${ritual.description || ''}`
       display: 'inline-block',
       marginTop: '0.75rem'
     }
-  }, t.moderation.reportRules))), infoToast && React.createElement("div", {
+  }, t.moderation.reportRules))), avvisoInviti && React.createElement("div", {
+    "data-test": "avviso-inviti",
+    role: "status",
+    style: {
+      position: 'fixed',
+      bottom: '4.5rem',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      width: 'min(360px, calc(100vw - 2rem))',
+      background: 'rgba(30,27,75,0.96)',
+      border: '1px solid rgba(167,139,250,0.5)',
+      borderRadius: '0.85rem',
+      padding: '0.85rem 1rem',
+      zIndex: 9999
+    }
+  }, React.createElement("p", {
+    className: "text-white",
+    style: {
+      fontSize: '0.9rem',
+      margin: 0,
+      textAlign: 'center'
+    }
+  }, avvisoInviti)), schedaInvito && React.createElement("div", {
+    "data-test": "scheda-invito",
+    role: "dialog",
+    style: {
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(0,0,0,0.6)',
+      zIndex: 9999,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '1rem'
+    }
+  }, React.createElement("div", {
+    className: "bg-glass-dark rounded-2xl",
+    style: {
+      maxWidth: '22rem',
+      width: '100%',
+      padding: '1.25rem'
+    }
+  }, React.createElement("h3", {
+    className: "text-white font-bold"
+  }, schedaInvito.dati.nickname), schedaInvito.dati.country && React.createElement("p", {
+    className: "text-secondary text-sm"
+  }, schedaInvito.dati.country), schedaInvito.dati.bio && React.createElement("p", {
+    className: "text-white text-sm",
+    style: {
+      margin: '0.5rem 0'
+    }
+  }, schedaInvito.dati.bio), schedaInvito.dati.prove != null && React.createElement("p", {
+    className: "text-secondary text-sm"
+  }, testoInviti('prove'), ": ", schedaInvito.dati.prove, IH && IH.percentuale(schedaInvito.dati.prove, schedaInvito.dati.indovinate) ? ` · ${testoInviti('indovinate')}: ${IH.percentuale(schedaInvito.dati.prove, schedaInvito.dati.indovinate)}` : ''), React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '0.5rem',
+      marginTop: '1rem'
+    }
+  }, !invitoInUscita && !directInviteTarget && !schedaInvito.chi.busy && React.createElement("button", {
+    "data-test": "btn-invita",
+    className: "btn-primary",
+    onClick: () => {
+      const chi = schedaInvito.chi;
+      setSchedaInvito(null);
+      sendDirectInvite(chi);
+    }
+  }, testoInviti('invita')), React.createElement("button", {
+    "data-test": "btn-blocca-scheda",
+    className: "btn-secondary",
+    onClick: () => setConfermaBlocco({
+      nome: schedaInvito.dati.nickname,
+      ...(schedaInvito.chi.disponibilita_id ? {
+        p_disponibilita_id: schedaInvito.chi.disponibilita_id
+      } : {
+        p_session_online: schedaInvito.chi.id
+      })
+    })
+  }, testoInviti('blocca')), React.createElement("button", {
+    "data-test": "btn-chiudi-scheda",
+    className: "btn-secondary",
+    onClick: () => setSchedaInvito(null)
+  }, testoInviti('chiudi'))))), confermaBlocco && React.createElement("div", {
+    "data-test": "conferma-blocco",
+    role: "dialog",
+    style: {
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(0,0,0,0.6)',
+      zIndex: 10000,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '1rem'
+    }
+  }, React.createElement("div", {
+    className: "bg-glass-dark rounded-2xl",
+    style: {
+      maxWidth: '22rem',
+      width: '100%',
+      padding: '1.25rem'
+    }
+  }, React.createElement("p", {
+    className: "text-white",
+    style: {
+      marginBottom: '1rem'
+    }
+  }, testoInviti('conferma_blocco', {
+    nome: confermaBlocco.nome
+  })), React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: '0.5rem'
+    }
+  }, React.createElement("button", {
+    "data-test": "btn-conferma-blocco",
+    className: "btn-primary",
+    style: {
+      flex: 1
+    },
+    onClick: confermaBloccoInviti
+  }, testoInviti('conferma')), React.createElement("button", {
+    "data-test": "btn-annulla-blocco",
+    className: "btn-secondary",
+    style: {
+      flex: 1
+    },
+    onClick: () => setConfermaBlocco(null)
+  }, testoInviti('annulla'))))), infoToast && React.createElement("div", {
     role: "status",
     style: {
       position: 'fixed',
@@ -6900,6 +7644,7 @@ ${ritual.description || ''}`
       gap: '0.5rem'
     }
   }, React.createElement("button", {
+    "data-test": "btn-accetta",
     onClick: acceptInvite,
     className: "btn-primary",
     style: {
@@ -6908,6 +7653,7 @@ ${ritual.description || ''}`
       padding: '0.4rem 0.6rem'
     }
   }, t.telepathy.acceptBtn), React.createElement("button", {
+    "data-test": "btn-rifiuta",
     onClick: declineInvite,
     className: "btn-secondary",
     style: {
@@ -6915,7 +7661,78 @@ ${ritual.description || ''}`
       fontSize: '0.85rem',
       padding: '0.4rem 0.6rem'
     }
-  }, t.telepathy.declineBtn))), partner && !sessionEnded && !partnerDisconnected && isTabHidden && React.createElement("div", {
+  }, t.telepathy.declineBtn)), React.createElement("button", {
+    "data-test": "btn-blocca-da-invito",
+    onClick: () => setConfermaBlocco({
+      nome: incomingInvite.from_name,
+      p_invite_id: incomingInvite.invite_id
+    }),
+    className: "text-white text-xs",
+    style: {
+      marginTop: '0.5rem',
+      opacity: 0.85,
+      textDecoration: 'underline',
+      background: 'none',
+      border: 'none',
+      cursor: 'pointer',
+      padding: 0
+    }
+  }, testoInviti('blocca'))), incomingInvite && partner && !sessionEnded && !partnerDisconnected && React.createElement("div", {
+    "data-test": "invito-durante-training",
+    className: "invite-toast-training",
+    style: {
+      position: 'fixed',
+      top: '1rem',
+      right: '1rem',
+      width: 'min(320px, calc(100vw - 2rem))',
+      background: 'rgba(30,27,75,0.95)',
+      border: '1px solid rgba(167,139,250,0.5)',
+      borderRadius: '0.85rem',
+      padding: '0.75rem 1rem',
+      zIndex: 9999
+    }
+  }, React.createElement("p", {
+    className: "text-white",
+    style: {
+      fontSize: '0.85rem',
+      margin: '0 0 0.5rem 0'
+    }
+  }, testoInviti('invito_durante_training', {
+    nome: incomingInvite.from_name
+  })), React.createElement("button", {
+    "data-test": "btn-rifiuta",
+    onClick: declineInvite,
+    className: "btn-secondary",
+    style: {
+      fontSize: '0.8rem',
+      padding: '0.3rem 0.75rem'
+    }
+  }, testoInviti('rifiuta'))), attesaInvitante && partner && !sessionEnded && React.createElement("div", {
+    "data-test": "attesa-invitante",
+    role: "status",
+    style: {
+      position: 'fixed',
+      top: '1rem',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      width: 'min(360px, calc(100vw - 2rem))',
+      background: 'rgba(30,27,75,0.95)',
+      border: '1px solid rgba(167,139,250,0.5)',
+      borderRadius: '0.85rem',
+      padding: '0.75rem 1rem',
+      zIndex: 9998,
+      textAlign: 'center'
+    }
+  }, React.createElement("p", {
+    className: "text-white",
+    style: {
+      fontSize: '0.9rem',
+      margin: 0
+    }
+  }, testoInviti('attesa_invitante', {
+    nome: attesaInvitante.nome,
+    tempo: IH && !isNaN(Date.parse(attesaInvitante.respondedAt)) ? IH.mmss(IH.secondiRimasti(new Date(Date.parse(attesaInvitante.respondedAt) + 180000).toISOString(), scartoOrologio, adessoLocale)) : ''
+  }))), partner && !sessionEnded && !partnerDisconnected && isTabHidden && React.createElement("div", {
     className: "training-floating-banner",
     onClick: () => setActiveTab('telepathy'),
     style: {

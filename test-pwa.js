@@ -173,7 +173,7 @@ const fail = (m) => { console.log('  ❌ ' + m); failed++; process.exitCode = 1;
     else fail(`sw.js non gestisce l'evento ${evento}`);
   }
 
-  if (swTesto.includes("importScripts('push-helpers.js')")) pass('sw.js carica push-helpers.js');
+  if (/importScripts\('push-helpers\.js(\?v=\d+)?'\)/.test(swTesto)) pass('sw.js carica push-helpers.js');
   else fail('sw.js non carica push-helpers.js');
 
   // Se push-helpers.js non è nel precache, offline il service worker non parte affatto:

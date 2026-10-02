@@ -43,14 +43,20 @@ export function decidiPush(tipo, inv, adessoMs, destinatarioDisponibile) {
     return { a: 'destinatario', kind: 'invito', nome: inv.from_name, ttl: Math.max(1, Math.floor(restano / 1000)), urgency: 'high' };
   }
   if (tipo === 'accettato') {
+    // Le app vecchie (v11) mostrano la push come «Un rituale sta iniziando ora»: non mandiamo il return.
+    if (inv.via_diretta === true) return null;
     if (inv.status !== 'accepted' || !inv.match_id) return null;
     return { a: 'mittente', kind: 'accettato', nome: inv.to_name, ttl: 180, urgency: 'high' };
   }
   if (tipo === 'rifiutato') {
+    // Le app vecchie (v11) mostrano la push come «Un rituale sta iniziando ora»: non mandiamo il return.
+    if (inv.via_diretta === true) return null;
     if (inv.status !== 'declined' || !eraDaDieciMinuti(inv)) return null;
     return { a: 'mittente', kind: 'rifiutato', nome: inv.to_name, ttl: 3600, urgency: 'normal' };
   }
   if (tipo === 'scaduto') {
+    // Le app vecchie (v11) mostrano la push come «Un rituale sta iniziando ora»: non mandiamo il return.
+    if (inv.via_diretta === true) return null;
     if (inv.status !== 'expired' || !eraDaDieciMinuti(inv)) return null;
     return { a: 'mittente', kind: 'scaduto', nome: inv.to_name, ttl: 3600, urgency: 'normal' };
   }

@@ -4,7 +4,9 @@
 // push-helpers.js contiene le funzioni pure che costruiscono titolo e testo delle notifiche.
 // Sta fuori da qui perche' dentro un service worker non si testa niente, e quella e' la parte
 // che decide cosa legge la persona sul telefono.
-importScripts('push-helpers.js');
+// ?v=12: importScripts passa dalla cache HTTP del browser (fino a max-age=600), non dal gestore
+// fetch. Con un indirizzo nuovo i telefoni prendono i testi nuovi insieme al service worker nuovo.
+importScripts('push-helpers.js?v=12');
 
 // v7: il bump non e' cosmetico. Senza, i browser che hanno gia' installato l'app tengono il
 // service worker vecchio, che non ha nessun handler push — e le notifiche non arrivano
@@ -18,9 +20,11 @@ importScripts('push-helpers.js');
 // v10: via EmailJS dal precache (28/09/2026): token ed email ora li fa il server.
 // v11: rituali che si ripetono e stanza del rituale (29/09/2026). L'app legge dalla vista nuova
 // e apre la stanza da ?ritual=: senza il bump le app installate resterebbero sul codice di prima.
-const CACHE = 'ga-pwa-v11';
+// v12: inviti a un training anche a chi non è collegato (2026-10). Testi e gestori nuovi delle
+// push d'invito: senza il bump le app installate terrebbero quelli vecchi.
+const CACHE = 'ga-pwa-v12';
 const PRECACHE = [
-  'app.html', 'app.js', 'push-helpers.js', 'music-helpers.js', 'index.html', 'manifest.webmanifest',
+  'app.html', 'app.js', 'push-helpers.js?v=12', 'music-helpers.js', 'inviti-helpers.js', 'index.html', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
   'icons/icon-any-192.png', 'icons/icon-any-512.png',
   'https://unpkg.com/react@18.3.1/umd/react.production.min.js',
@@ -63,7 +67,7 @@ self.addEventListener('fetch', (e) => {
   // music-helpers.js e' codice dell'app quanto app.js: se stesse fra i file cache-first, una
   // correzione all'avvio della musica non arriverebbe mai a chi ha gia' l'app installata.
   // Lo stesso vale per il manifest: e' da li' che Android legge icone, nome e colori dell'app.
-  const isFresh = req.mode === 'navigate' || url.pathname.endsWith('/app.html') || url.pathname.endsWith('/app.js') || url.pathname.endsWith('/music-helpers.js') || url.pathname.endsWith('/manifest.webmanifest') || url.pathname.endsWith('/');
+  const isFresh = req.mode === 'navigate' || url.pathname.endsWith('/app.html') || url.pathname.endsWith('/app.js') || url.pathname.endsWith('/music-helpers.js') || url.pathname.endsWith('/inviti-helpers.js') || url.pathname.endsWith('/manifest.webmanifest') || url.pathname.endsWith('/');
   if (isFresh) {
     e.respondWith((async () => {
       try {
@@ -94,31 +98,49 @@ self.addEventListener('fetch', (e) => {
 // Notifiche push di avvio rituale
 // ---------------------------------------------------------------------------
 
+// Tipi d'invito: scritti anche qui, perché il ripiego deve riconoscerli pure senza PushHelpers.
+const TIPI_INVITO = ['invito', 'accettato', 'rifiutato', 'scaduto'];
+
 // Il payload arriva cifrato dalla Edge Function; il browser lo decifra e ce lo consegna qui.
 // `userVisibleOnly: true`, dichiarato al momento dell'iscrizione, ci obbliga a mostrare SEMPRE
 // una notifica: se questo handler non ne mostrasse nessuna, il browser ne mostrerebbe una
 // generica di sistema al posto nostro e, a forza di quelle, ci toglierebbe il permesso.
 // Per questo costruisciNotifica ha un ripiego per ogni campo e non solleva mai.
+// Unica eccezione voluta: un invito con l'app in primo piano su Chromium (vedi sotto).
 self.addEventListener('push', (e) => {
   e.waitUntil((async () => {
     let payload = {};
     try { payload = e.data ? e.data.json() : {}; } catch (_) { payload = {}; }
+    const eInvito = !!payload && TIPI_INVITO.includes(payload.tipo);
+
+    // Invito con l'app in primo piano: niente notifica, la finestra aggiorna subito banner o
+    // attesa. Solo dove il browser lo tollera (Chromium fuori da iOS, PushHelpers.puoTacere):
+    // Safari conta le push senza notifica e può togliere il permesso, e lì la notifica si
+    // mostra sempre (lo stesso tag evita i doppioni). I rituali non passano di qui.
+    if (eInvito) {
+      try {
+        if (self.PushHelpers && self.PushHelpers.puoTacere(self.navigator && self.navigator.userAgent)) {
+          const finestre = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+          const visibile = finestre.find((f) => f.visibilityState === 'visible' && f.url.includes('app.html'));
+          if (visibile) {
+            visibile.postMessage({ tipo: payload.tipo, invito: payload.invito });
+            return;
+          }
+        }
+      } catch (_) { /* nel dubbio la notifica si mostra */ }
+    }
 
     // Ripiego assoluto. costruisciNotifica non solleva su payload storti, ma self.PushHelpers
-    // puo' essere undefined se importScripts non e' andato a buon fine (file fuori cache e
-    // rete assente, o deploy parziale). In quel caso, senza questo try, non verrebbe mostrata
-    // NESSUNA notifica — che e' esattamente la condizione che fa mostrare al browser la sua
-    // notifica generica di sistema e, a forza di quelle, revocarci il permesso.
+    // puo' essere undefined se importScripts non e' andato a buon fine. Per un invito il ripiego
+    // e' neutro: un testo di rituale sarebbe falso.
     let n;
     try {
       n = self.PushHelpers.costruisciNotifica(payload);
     } catch (_) {
-      n = {
-        titolo: 'Global Awakening',
-        corpo: payload && payload.locale === 'it' ? 'Un rituale sta iniziando.' : 'A ritual is starting.',
-        tag: 'rituale-ripiego',
-        url: 'app.html'
-      };
+      const it = payload && payload.locale === 'it';
+      n = eInvito
+        ? { titolo: 'Global Awakening', corpo: it ? "Apri l'app" : 'Open the app', tag: 'invito-ripiego', url: 'app.html', azioni: [] }
+        : { titolo: 'Global Awakening', corpo: it ? 'Un rituale sta iniziando.' : 'A ritual is starting.', tag: 'rituale-ripiego', url: 'app.html', azioni: [] };
     }
 
     try {
@@ -127,7 +149,8 @@ self.addEventListener('push', (e) => {
         tag: n.tag,
         icon: 'icons/icon-192.png',
         badge: 'icons/icon-192.png',
-        data: { url: n.url }
+        actions: n.azioni || [],
+        data: { url: n.url, tipo: payload && payload.tipo, invito: payload && payload.invito }
       });
     } catch (_) {
       // Anche showNotification puo' rigettare (opzioni non supportate su qualche browser).
@@ -137,18 +160,40 @@ self.addEventListener('push', (e) => {
   })());
 });
 
-// Toccando la notifica: se una finestra dell'app e' gia' aperta la si mette a fuoco e la si
-// porta sul rituale, invece di aprirne una seconda. Aprire sempre una finestra nuova
-// lascerebbe la persona con cinque copie dell'app dopo cinque rituali.
+// Chiede alla finestra di aprire l'invito e aspetta la conferma. Un'app vecchia (senza il
+// gestore) o una pagina bloccata non risponde: dopo attesaMs si ripiega sulla ricarica.
+function chiediAllaFinestra(finestra, messaggio, attesaMs) {
+  return new Promise((risolvi) => {
+    const canale = new MessageChannel();
+    let timer = null;
+    const fine = (esito) => { clearTimeout(timer); try { canale.port1.close(); } catch (_) {} risolvi(esito); };
+    timer = setTimeout(() => fine(false), attesaMs);
+    // addEventListener + start() invece di onmessage: funziona uguale nei browser e in Node
+    // (test-sw-inviti.js usa il MessageChannel di Node).
+    canale.port1.addEventListener('message', (ev) => fine(!!(ev.data && ev.data.ok)));
+    canale.port1.start();
+    try { finestra.postMessage(messaggio, [canale.port2]); } catch (_) { fine(false); }
+  });
+}
+
+// Toccando la notifica: se una finestra dell'app e' gia' aperta la si mette a fuoco invece di
+// aprirne una seconda (cinque rituali, cinque copie dell'app). Per un invito le si passa l'invito
+// per messaggio, senza ricaricarla (una ricarica interromperebbe un training in corso); i
+// rituali restano con navigate().
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const destinazione = (e.notification.data && e.notification.data.url) || 'app.html';
+  const dati = e.notification.data || {};
+  const base = dati.url || 'app.html';
+  const eInvito = TIPI_INVITO.includes(dati.tipo) && typeof dati.invito === 'string';
+  const azione = e.action === 'blocca' ? 'blocca' : null;
+  const destinazione = azione && self.PushHelpers ? self.PushHelpers.urlAzione(base, azione) : base;
 
   e.waitUntil((async () => {
     const finestre = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const f of finestre) {
       if (f.url.includes('app.html')) {
         await f.focus();
+        if (eInvito && await chiediAllaFinestra(f, { tipo: 'apri-invito', invito: dati.invito, azione }, 1000)) return;
         // navigate() non e' disponibile ovunque: se manca, la finestra resta dov'e' ma
         // almeno e' in primo piano, che e' meglio di una seconda copia dell'app.
         if ('navigate' in f) { try { await f.navigate(destinazione); } catch (_) {} }
