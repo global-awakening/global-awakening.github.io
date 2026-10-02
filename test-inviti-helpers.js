@@ -99,6 +99,14 @@ uguale('Auth failed ha il suo messaggio (en)', H.testo('auth_fallita', 'en') !==
 uguale('chiaveDaErrore: Auth failed', `${H.chiaveDaErrore({ message: 'Auth failed' })}|${H.chiaveDaErrore(new Error('P0001: Auth failed'))}`, 'auth_fallita|auth_fallita');
 uguale('chiaveDaErrore: altro, vuoto, stringa', `${H.chiaveDaErrore({ message: 'boom' })}|${H.chiaveDaErrore(null)}|${H.chiaveDaErrore('Auth failed')}`, 'errore|errore|auth_fallita');
 
+// C4: browser senza Push (iOS Safari non installata, ecc.): non «non sono più attive», che non
+// sono mai state attive, ma un messaggio proprio.
+for (const l of ['it', 'en']) {
+  const t = H.testo('push_non_supportata', l);
+  uguale(`push non supportata: messaggio proprio (${l})`, t !== H.testo('errore', l) && t !== H.testo('nessun_abbonamento', l), true);
+}
+uguale('push non supportata (it)', H.testo('push_non_supportata', 'it'), 'Su questo browser non si possono ricevere notifiche');
+
 // Percentuale della scheda
 uguale('percentuale', H.percentuale(40, 12), '30%');
 uguale('percentuale senza prove: niente', `${H.percentuale(0, 0)}|${H.percentuale(null, null)}`, 'null|null');

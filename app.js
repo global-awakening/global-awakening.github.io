@@ -2093,7 +2093,7 @@ function GlobalAwakeningPlatform() {
       return;
     }
     const existing = esito.profilo;
-    await spegniDisponibilitaDi(sessionId, null);
+    if (existing.session_id !== sessionId) await spegniDisponibilitaDi(sessionId, passwordHash);
     setSessionId(existing.session_id);
     localStorage.setItem('ga_session_id', existing.session_id);
     setPasswordHash(effectiveHash);
@@ -2344,7 +2344,7 @@ function GlobalAwakeningPlatform() {
       const existing = esito.profilo;
       const email = existing.email;
       const credenziale = esito.password_hash;
-      await spegniDisponibilitaDi(sessionId, null);
+      if (existing.session_id !== sessionId) await spegniDisponibilitaDi(sessionId, passwordHash);
       setSessionId(existing.session_id);
       localStorage.setItem('ga_session_id', existing.session_id);
       setUserEmail(email);
@@ -2480,7 +2480,7 @@ function GlobalAwakeningPlatform() {
     setShowResult(false);
   };
   const sendSymbol = async () => {
-    if (!selectedSymbol || !matchId) return;
+    if (!selectedSymbol || !matchId || attesaInvitanteRef.current) return;
     setWaitingForPartner(true);
     await supabase.from('telepathy_matches').update({
       sender_symbol: selectedSymbol,
@@ -2488,7 +2488,7 @@ function GlobalAwakeningPlatform() {
     }).eq('id', matchId);
   };
   const submitGuess = async () => {
-    if (!guessedSymbol || !matchId) return;
+    if (!guessedSymbol || !matchId || attesaInvitanteRef.current) return;
     setWaitingForPartner(true);
     await supabase.from('telepathy_matches').update({
       receiver_guess: guessedSymbol
@@ -2886,8 +2886,17 @@ function GlobalAwakeningPlatform() {
     }, 90000);
     return () => clearTimeout(timer);
   }, [matchId, sessionEnded, partnerDisconnected, showResult, waitingForPartner, showLevelBanner, amIChooser, effectiveRole, senderHasSent, roundCount, sessionMatches, attesaInvitante]);
+  const invioInCorsoRef = React.useRef(false);
   const sendDirectInvite = async targetUser => {
-    if (directInviteTarget || invitoInUscitaRef.current) return;
+    if (directInviteTarget || invitoInUscitaRef.current || invioInCorsoRef.current) return;
+    invioInCorsoRef.current = true;
+    try {
+      await inviaInvito(targetUser);
+    } finally {
+      invioInCorsoRef.current = false;
+    }
+  };
+  const inviaInvito = async targetUser => {
     setDirectInviteTarget(targetUser);
     const r = await rpcInviti('send_telepathy_invite', {
       p_nickname: nickname || 'Anonymous',
@@ -3223,9 +3232,8 @@ function GlobalAwakeningPlatform() {
     if (!pushDisponibile()) {
       const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
       const installata = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-      if (iOS && !installata) setMostraInstallaPerPush(true);
       setDisponibileInviti(false);
-      setAvvisoInviti(testoInviti('nessun_abbonamento'));
+      if (iOS && !installata) setMostraInstallaPerPush(true);else setAvvisoInviti(testoInviti('push_non_supportata'));
       return;
     }
     try {
@@ -3240,7 +3248,7 @@ function GlobalAwakeningPlatform() {
       await iscriviPush();
     } catch (_) {
       setDisponibileInviti(false);
-      setAvvisoInviti(testoInviti('nessun_abbonamento'));
+      setAvvisoInviti(testoInviti('errore'));
       return;
     }
     const r = await rpcInviti('set_telepathy_availability', {
@@ -3347,7 +3355,11 @@ function GlobalAwakeningPlatform() {
       dati: r.scheda
     });
   };
-  const onlineInLobby = onlineUsersForTelepathy.filter(u => !invitabili.some(d => d.nickname === u.nickname));
+  const onlineInLobby = onlineUsersForTelepathy.filter(u => {
+    const visto = Date.parse(u.last_seen);
+    const recente = !isNaN(visto) && Date.now() - visto < 30000;
+    return recente || !invitabili.some(d => d.nickname === u.nickname);
+  });
   const playAgainSamePartner = async () => {
     const savedPartner = partner;
     if (!savedPartner) return;
@@ -5757,7 +5769,8 @@ ${ritual.description || ''}`
     },
     onClick: () => apriScheda({
       id: u.id,
-      nickname: u.nickname
+      nickname: u.nickname,
+      busy: u.status === 'busy'
     })
   }, u.nickname), React.createElement("span", {
     className: "text-secondary text-xs"
@@ -6152,7 +6165,7 @@ ${ritual.description || ''}`
     className: `symbol-btn ${selectedSymbol === symbol.id ? 'symbol-btn-selected' : ''}`
   }, symbol.icon))), React.createElement("button", {
     onClick: sendSymbol,
-    disabled: !selectedSymbol,
+    disabled: !selectedSymbol || !!attesaInvitante,
     className: "btn-primary w-full"
   }, t.telepathy.sendTelepathically)), !showLevelBanner && effectiveRole === 'receiver' && !waitingForPartner && React.createElement("div", null, senderHasSent ? React.createElement("p", {
     className: "text-white text-center mb-2 font-medium"
@@ -6171,7 +6184,7 @@ ${ritual.description || ''}`
     className: `symbol-btn ${guessedSymbol === symbol.id ? 'symbol-btn-selected' : ''}`
   }, symbol.icon))), React.createElement("button", {
     onClick: submitGuess,
-    disabled: !guessedSymbol || !senderHasSent,
+    disabled: !guessedSymbol || !senderHasSent || !!attesaInvitante,
     className: "btn-primary w-full"
   }, t.telepathy.confirm)), !showLevelBanner && waitingForPartner && React.createElement("div", {
     className: "text-center"
@@ -7487,7 +7500,7 @@ ${ritual.description || ''}`
       gap: '0.5rem',
       marginTop: '1rem'
     }
-  }, !invitoInUscita && !directInviteTarget && React.createElement("button", {
+  }, !invitoInUscita && !directInviteTarget && !schedaInvito.chi.busy && React.createElement("button", {
     "data-test": "btn-invita",
     className: "btn-primary",
     onClick: () => {

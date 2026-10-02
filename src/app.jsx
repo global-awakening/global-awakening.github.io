@@ -1890,7 +1890,8 @@
             }
             const existing = esito.profilo;
 
-            await spegniDisponibilitaDi(sessionId, null);
+            // Stesso session_id (login sullo stesso account): la disponibilità resta di chi entra.
+            if (existing.session_id !== sessionId) await spegniDisponibilitaDi(sessionId, passwordHash);
             setSessionId(existing.session_id);
             localStorage.setItem('ga_session_id', existing.session_id);
             setPasswordHash(effectiveHash);
@@ -2088,7 +2089,9 @@
               const existing = esito.profilo;
               const email = existing.email;
               const credenziale = esito.password_hash;
-              await spegniDisponibilitaDi(sessionId, null);
+              // Con la credenziale di chi se ne va (un account si spegne solo così); niente se
+              // il link riapre lo stesso account.
+              if (existing.session_id !== sessionId) await spegniDisponibilitaDi(sessionId, passwordHash);
               setSessionId(existing.session_id);
               localStorage.setItem('ga_session_id', existing.session_id);
               setUserEmail(email);
@@ -2216,8 +2219,10 @@
             setShowResult(false);
           };
 
+          // Durante l'attesa di chi ha invitato non si gioca: il primo update del match accende
+          // giocato e chiuderebbe l'attesa prima che l'altro arrivi (I1).
           const sendSymbol = async () => {
-            if (!selectedSymbol || !matchId) return;
+            if (!selectedSymbol || !matchId || attesaInvitanteRef.current) return;
             setWaitingForPartner(true);
             await supabase.from('telepathy_matches').update({
               sender_symbol: selectedSymbol,
@@ -2226,7 +2231,7 @@
           };
 
           const submitGuess = async () => {
-            if (!guessedSymbol || !matchId) return;
+            if (!guessedSymbol || !matchId || attesaInvitanteRef.current) return;
             setWaitingForPartner(true);
 
             await supabase.from('telepathy_matches').update({
@@ -2705,8 +2710,15 @@
           // controlla identità, blocchi nei due sensi, tetti e disponibilità, scrive l'invito e la
           // notifica della campanella, e chiede la push. target: { id, nickname } dalla lista
           // Online oppure { disponibilita_id, nickname } dalla lista «Disponibili su invito».
+          // Un secondo tocco su «Proponi» prima del nuovo render manderebbe una seconda RPC (e un
+          // confuso «Hai già un invito in corso»): si ignora, come per «Accetta».
+          const invioInCorsoRef = React.useRef(false);
           const sendDirectInvite = async (targetUser) => {
-            if (directInviteTarget || invitoInUscitaRef.current) return;
+            if (directInviteTarget || invitoInUscitaRef.current || invioInCorsoRef.current) return;
+            invioInCorsoRef.current = true;
+            try { await inviaInvito(targetUser); } finally { invioInCorsoRef.current = false; }
+          };
+          const inviaInvito = async (targetUser) => {
             setDirectInviteTarget(targetUser);
             const r = await rpcInviti('send_telepathy_invite', {
               p_nickname: nickname || 'Anonymous',
@@ -2993,9 +3005,10 @@
             if (!pushDisponibile()) {
               const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
               const installata = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-              if (iOS && !installata) setMostraInstallaPerPush(true);
               setDisponibileInviti(false);
-              setAvvisoInviti(testoInviti('nessun_abbonamento'));
+              // Su iPhone non installata il popup «Aggiungi a Home» spiega già cosa fare.
+              if (iOS && !installata) setMostraInstallaPerPush(true);
+              else setAvvisoInviti(testoInviti('push_non_supportata'));
               return;
             }
             try {
@@ -3006,7 +3019,7 @@
               await iscriviPush();
             } catch (_) {
               setDisponibileInviti(false);
-              setAvvisoInviti(testoInviti('nessun_abbonamento'));
+              setAvvisoInviti(testoInviti('errore'));
               return;
             }
             const r = await rpcInviti('set_telepathy_availability', { p_nickname: nickname || 'Anonymous', p_enabled: true });
@@ -3075,7 +3088,13 @@
           // Ruling m10: la lista Online dell'app tiene chi è stato visto negli ultimi 2 minuti, il
           // server solo negli ultimi 30 s. Fra 30 s e 2 minuti chi ha l'interruttore acceso sta già
           // in «Disponibili su invito» (con l'invito da 10 minuti e la push): lì soltanto, non due volte.
-          const onlineInLobby = onlineUsersForTelepathy.filter((u) => !invitabili.some((d) => d.nickname === u.nickname));
+          // Si toglie solo chi non si vede da almeno 30 s: chi è attivo resta in Online anche se
+          // qualcun altro con lo stesso nome è fra i disponibili.
+          const onlineInLobby = onlineUsersForTelepathy.filter((u) => {
+            const visto = Date.parse(u.last_seen);
+            const recente = !isNaN(visto) && Date.now() - visto < 30000;
+            return recente || !invitabili.some((d) => d.nickname === u.nickname);
+          });
 
           const playAgainSamePartner = async () => {
             const savedPartner = partner;
@@ -5059,7 +5078,7 @@ ${ritual.description || ''}` })}
                                 <div key={u.id} data-test="riga-online" style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', borderRadius: '0.75rem', background: 'rgba(255,255,255,0.05)'}}>
                                   <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
                                     <span style={{width: '0.6rem', height: '0.6rem', borderRadius: '50%', background: u.status === 'available' ? '#4ade80' : '#9ca3af', display: 'inline-block'}} />
-                                    <span className="text-white text-sm font-medium" style={{cursor: 'pointer', textDecoration: 'underline dotted'}} onClick={() => apriScheda({ id: u.id, nickname: u.nickname })}>{u.nickname}</span>
+                                    <span className="text-white text-sm font-medium" style={{cursor: 'pointer', textDecoration: 'underline dotted'}} onClick={() => apriScheda({ id: u.id, nickname: u.nickname, busy: u.status === 'busy' })}>{u.nickname}</span>
                                     <span className="text-secondary text-xs">{u.status === 'busy' ? t.telepathy.inSession : t.telepathy.available}</span>
                                   </div>
                                   {u.status === 'available' && !invitoInUscita && !directInviteTarget && (
@@ -5259,7 +5278,7 @@ ${ritual.description || ''}` })}
                                       </button>
                                     ))}
                                   </div>
-                                  <button onClick={sendSymbol} disabled={!selectedSymbol} className="btn-primary w-full">{t.telepathy.sendTelepathically}</button>
+                                  <button onClick={sendSymbol} disabled={!selectedSymbol || !!attesaInvitante} className="btn-primary w-full">{t.telepathy.sendTelepathically}</button>
                                 </div>
                               )}
 
@@ -5277,7 +5296,7 @@ ${ritual.description || ''}` })}
                                       </button>
                                     ))}
                                   </div>
-                                  <button onClick={submitGuess} disabled={!guessedSymbol || !senderHasSent} className="btn-primary w-full">{t.telepathy.confirm}</button>
+                                  <button onClick={submitGuess} disabled={!guessedSymbol || !senderHasSent || !!attesaInvitante} className="btn-primary w-full">{t.telepathy.confirm}</button>
                                 </div>
                               )}
 
@@ -6075,7 +6094,7 @@ ${ritual.description || ''}` })}
                       </p>
                     )}
                     <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem'}}>
-                      {!invitoInUscita && !directInviteTarget && (
+                      {!invitoInUscita && !directInviteTarget && !schedaInvito.chi.busy && (
                         <button data-test="btn-invita" className="btn-primary"
                           onClick={() => { const chi = schedaInvito.chi; setSchedaInvito(null); sendDirectInvite(chi); }}>{testoInviti('invita')}</button>
                       )}

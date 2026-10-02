@@ -36,6 +36,8 @@
       nessun_abbonamento: 'Le notifiche di questo telefono non sono più attive: riaccendi per ricevere inviti',
       senza_abbonamento: 'Le notifiche di questo telefono non sono più attive: riaccendi per ricevere inviti',
       permesso_negato: "Senza il permesso per le notifiche non puoi ricevere inviti quando l'app è chiusa",
+      // Browser senza Push (iOS Safari non installata, ecc.): non «non sono più attive».
+      push_non_supportata: 'Su questo browser non si possono ricevere notifiche',
       push_saltata: "Non gli arriverà una notifica ora: lo vedrà se apre l'app entro la scadenza",
       // Il server risponde «Auth failed» a chi è registrato ma ha una credenziale vecchia.
       auth_fallita: 'La tua sessione non è più valida: accedi di nuovo',
@@ -76,6 +78,7 @@
       nessun_abbonamento: 'Notifications on this phone are no longer active: switch on again to receive invites',
       senza_abbonamento: 'Notifications on this phone are no longer active: switch on again to receive invites',
       permesso_negato: 'Without notification permission you cannot receive invites while the app is closed',
+      push_non_supportata: 'Notifications cannot be received on this browser',
       push_saltata: 'They will not get a notification now: they will see it if they open the app before it expires',
       auth_fallita: 'Your session is no longer valid: log in again',
       errore: 'Connection failed: try again',
