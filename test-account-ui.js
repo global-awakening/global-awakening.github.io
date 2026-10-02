@@ -211,39 +211,28 @@ async function closeEditProfile(page) {
       fail('Bio nel DB NON aggiornata: ' + JSON.stringify(rowsAfterSave));
     }
 
-    // ── Caso 3: senza ga_pwhash il salvataggio fallisce e lo dice ───────────
-    console.log('\n📋 Caso 3: salvataggio senza credenziale locale');
+    // ── Caso 3: senza ga_pwhash l'iscritto non resta dentro a metà ────────
+    // Prima restava dentro e ogni salvataggio falliva; dalla chiave scaduta (02/10/2026) l'app lo
+    // riconosce all'apertura e porta al login col riquadro del link già pronto.
+    console.log('\n📋 Caso 3: iscritto senza credenziale locale');
     await page.evaluate(() => localStorage.removeItem('ga_pwhash'));
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForSelector(':text("Registered"), :text("Registrato")', { timeout: TIMEOUT });
-    await openEditProfile(page);
-    await page.locator('.modal-content textarea').fill(`${newBio} v2`);
-    lastDialogMessage = null;
-    await page.locator('.modal-content button.btn-primary').click();
-    await page.waitForTimeout(800); // il dialog nativo è gestito da page.on('dialog') sopra
-    if (lastDialogMessage && /Could not save|Non è stato possibile salvare/.test(lastDialogMessage)) {
-      pass('Salvataggio senza credenziale mostra l\'errore atteso: ' + lastDialogMessage);
-    } else {
-      fail('Salvataggio senza credenziale NON ha mostrato l\'errore atteso (alert: ' + lastDialogMessage + ')');
+    try {
+      await page.waitForSelector('text=/sign in again|devi rientrare/', { timeout: TIMEOUT });
+      pass('Senza credenziale si torna al login con il messaggio «devi rientrare»');
+    } catch (e) {
+      fail('Senza credenziale NON torna al login con il messaggio: ' + e.message);
     }
-    const savedTextCount = await page.locator('text=/^Profile Saved!$|^Profilo Salvato!$/').count();
-    if (savedTextCount === 0) pass('Non mostra "salvato" quando il salvataggio è fallito');
-    else fail('Mostra ancora "salvato" nonostante il fallimento');
-    // Prova reale (non solo UI) che il fallimento è avvenuto anche lato server: la bio
-    // nel DB deve essere rimasta quella del Caso 1, non " v2".
-    const rowsAfterFailedSave = (await serviceFetch(`profiles?nickname=eq.${encodeURIComponent(NICK)}&select=bio`)).body;
-    if (Array.isArray(rowsAfterFailedSave) && rowsAfterFailedSave[0] && rowsAfterFailedSave[0].bio === newBio) {
-      pass('La bio nel DB NON è cambiata — il salvataggio senza credenziale non ha scritto nulla');
-    } else {
-      fail('La bio nel DB è cambiata nonostante la credenziale mancante: ' + JSON.stringify(rowsAfterFailedSave));
-    }
-    // Il pulsante Salva ha già chiuso il pannello (stesso comportamento del Caso 1b):
-    // nessuna chiusura esplicita da fare qui.
+    const valoriEmail = await page.locator('input[type="email"]').evaluateAll((els) => els.map((e) => e.value));
+    if (valoriEmail.includes(EMAIL)) pass("Il riquadro del link ha già l'email scritta");
+    else fail("Il riquadro del link non ha l'email: " + JSON.stringify(valoriEmail));
+    const rowsAfter = (await serviceFetch(`profiles?nickname=eq.${encodeURIComponent(NICK)}&select=bio`)).body;
+    if (Array.isArray(rowsAfter) && rowsAfter[0] && rowsAfter[0].bio === newBio) pass('Il profilo nel DB è intatto');
+    else fail('Il profilo nel DB è cambiato: ' + JSON.stringify(rowsAfter));
 
     // ── Caso 4a: cambio password con credenziale valida → successo ─────────
     console.log('\n📋 Caso 4: cambio password (percorso positivo)');
-    await logout(page);
-    await login(page, EMAIL, PASS); // ripristina ga_pwhash valido
+    await login(page, EMAIL, PASS); // si è già sul login (Caso 3): ripristina ga_pwhash valido
     await openEditProfile(page);
     await page.locator('input[placeholder="New password..."]').fill(NEW_PASS);
     lastDialogMessage = null;
@@ -259,21 +248,20 @@ async function closeEditProfile(page) {
     await login(page, EMAIL, NEW_PASS);
     pass('Login con la password nuova riuscito dopo il cambio');
 
-    // ── Caso 4b: cambio password senza credenziale locale → errore visibile ─
-    console.log('\n📋 Caso 4: cambio password senza credenziale locale');
-    await page.evaluate(() => localStorage.removeItem('ga_pwhash'));
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForSelector(':text("Registered"), :text("Registrato")', { timeout: TIMEOUT });
+    // ── Caso 4b: la chiave cambia sul server mentre si è dentro → al login ─
+    // Come la 27b_: il server azzera la credenziale, il telefono non lo sa. Al primo rifiuto
+    // (qui il cambio password) l'app deve portare al login, non dire «non è stato possibile».
+    console.log('\n📋 Caso 4: chiave ruotata sul server durante l\'uso');
+    await serviceFetch(`profiles?email=eq.${encodeURIComponent(EMAIL)}`, { method: 'PATCH', body: JSON.stringify({ password_hash: null }) });
     await openEditProfile(page);
     await page.locator('input[placeholder="New password..."]').fill(NEW_PASS2);
     await page.locator('.modal-content button:has-text("Change Password"), .modal-content button:has-text("Cambia Password")').click();
     try {
-      await page.waitForSelector('text=/Could not change|Non è stato possibile cambiare/', { timeout: TIMEOUT });
-      pass('Cambio password senza credenziale mostra l\'errore atteso');
+      await page.waitForSelector('text=/sign in again|devi rientrare/', { timeout: TIMEOUT });
+      pass("Chiave ruotata durante l'uso: si torna al login con il messaggio");
     } catch (e) {
-      fail('Cambio password senza credenziale NON ha mostrato l\'errore atteso: ' + e.message);
+      fail("Chiave ruotata durante l'uso: NON torna al login: " + e.message);
     }
-    await closeEditProfile(page);
   } catch (err) {
     fail('Eccezione: ' + err.message);
     console.error(err);
