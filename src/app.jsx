@@ -45,6 +45,30 @@
         const Calendar = (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>;
         const Users = (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>;
 
+        // Campo password con l'occhietto: tocchi e vedi cosa hai scritto. Sta fuori dal componente
+        // principale perché, ridefinito a ogni render, React lo ricreerebbe e il campo perderebbe il
+        // fuoco a ogni lettera. `mostra`/`nascondi` sono le etichette per i lettori di schermo.
+        const PasswordInput = ({ mostra, nascondi, wrapperStyle, style, ...props }) => {
+          const [visibile, setVisibile] = React.useState(false);
+          return (
+            <div style={{position: 'relative', width: '100%', ...wrapperStyle}}>
+              <input {...props} type={visibile ? 'text' : 'password'} autoCapitalize="none" autoCorrect="off" spellCheck={false} style={{...style, paddingRight: '3rem'}} />
+              <button
+                type="button"
+                onClick={() => setVisibile(v => !v)}
+                aria-label={visibile ? nascondi : mostra}
+                title={visibile ? nascondi : mostra}
+                style={{position: 'absolute', right: '0.25rem', top: '50%', transform: 'translateY(-50%)', width: '2.5rem', height: '2.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: '#c4b5fd', cursor: 'pointer', padding: 0}}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle>
+                  {visibile && <line x1="3" y1="3" x2="21" y2="21"></line>}
+                </svg>
+              </button>
+            </div>
+          );
+        };
+
         const telepathySymbols = [
           { id: 'star', icon: '⭐', name: 'Star' },
           { id: 'sun', name: 'Sun', icon: (
@@ -174,6 +198,8 @@
             magicLinkInvalid: "Link invalid or expired. Please request a new one.",
             sendMagicLink: "Send login link",
             magicLinkHint: "Login with magick link →",
+            showPassword: "Show password",
+            hidePassword: "Hide password",
             guestBadge: "Guest",
             registeredBadge: "Registered",
             guestCodeLabel: "Your researcher code",
@@ -545,6 +571,8 @@
             magicLinkInvalid: "Link non valido o scaduto. Richiedine uno nuovo.",
             sendMagicLink: "Invia link di accesso",
             magicLinkHint: "Login con magick link →",
+            showPassword: "Mostra password",
+            hidePassword: "Nascondi password",
             guestBadge: "Ospite",
             registeredBadge: "Registrato",
             guestCodeLabel: "Il tuo codice ricercatore",
@@ -4256,8 +4284,10 @@
                           placeholder={t.emailPlaceholder}
                           aria-label={t.emailPlaceholder}
                         />
-                        <input
-                          type="password"
+                        <PasswordInput
+                          autoComplete="current-password"
+                          mostra={t.showPassword}
+                          nascondi={t.hidePassword}
                           value={tempPassword}
                           onChange={(e) => { setTempPassword(e.target.value); setLoginError(''); }}
                           placeholder="Password"
@@ -4329,15 +4359,19 @@
                     {resetToken && (
                       <>
                         <p className="text-white font-bold text-center" style={{fontSize: '1.05rem'}}>{t.setNewPassword}</p>
-                        <input
-                          type="password"
+                        <PasswordInput
+                          autoComplete="new-password"
+                          mostra={t.showPassword}
+                          nascondi={t.hidePassword}
                           value={resetNewPassword}
                           onChange={(e) => { setResetNewPassword(e.target.value); setLoginError(''); }}
                           placeholder={t.newPasswordPlaceholder}
                           aria-label={t.newPasswordPlaceholder}
                         />
-                        <input
-                          type="password"
+                        <PasswordInput
+                          autoComplete="new-password"
+                          mostra={t.showPassword}
+                          nascondi={t.hidePassword}
                           value={resetConfirmPassword}
                           onChange={(e) => { setResetConfirmPassword(e.target.value); setLoginError(''); }}
                           placeholder={t.confirmPasswordPlaceholder}
@@ -4367,8 +4401,10 @@
                           placeholder={t.emailPlaceholder}
                           aria-label={t.emailPlaceholder}
                         />
-                        <input
-                          type="password"
+                        <PasswordInput
+                          autoComplete="new-password"
+                          mostra={t.showPassword}
+                          nascondi={t.hidePassword}
                           value={tempPassword}
                           onChange={(e) => { setTempPassword(e.target.value); setLoginError(''); }}
                           placeholder="Password"
@@ -5632,12 +5668,14 @@ ${ritual.description || ''}` })}
                         <div>
                           <label className="text-white text-sm mb-2" style={{display: 'block'}}>{t.changePassword}</label>
                           <div style={{display: 'flex', gap: '0.5rem'}}>
-                            <input
-                              type="password"
+                            <PasswordInput
+                              autoComplete="new-password"
+                              mostra={t.showPassword}
+                              nascondi={t.hidePassword}
                               value={profilePassword}
                               onChange={(e) => { setProfilePassword(e.target.value); setProfilePasswordMsg(''); }}
                               placeholder="New password..."
-                              style={{flex: 1}}
+                              wrapperStyle={{flex: 1}}
                             />
                             <button
                               className="btn-secondary px-4"

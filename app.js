@@ -120,6 +120,74 @@ const Users = props => React.createElement("svg", _extends({}, props, {
 }), React.createElement("path", {
   d: "M16 3.13a4 4 0 0 1 0 7.75"
 }));
+const PasswordInput = ({
+  mostra,
+  nascondi,
+  wrapperStyle,
+  style,
+  ...props
+}) => {
+  const [visibile, setVisibile] = React.useState(false);
+  return React.createElement("div", {
+    style: {
+      position: 'relative',
+      width: '100%',
+      ...wrapperStyle
+    }
+  }, React.createElement("input", _extends({}, props, {
+    type: visibile ? 'text' : 'password',
+    autoCapitalize: "none",
+    autoCorrect: "off",
+    spellCheck: false,
+    style: {
+      ...style,
+      paddingRight: '3rem'
+    }
+  })), React.createElement("button", {
+    type: "button",
+    onClick: () => setVisibile(v => !v),
+    "aria-label": visibile ? nascondi : mostra,
+    title: visibile ? nascondi : mostra,
+    style: {
+      position: 'absolute',
+      right: '0.25rem',
+      top: '50%',
+      transform: 'translateY(-50%)',
+      width: '2.5rem',
+      height: '2.5rem',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: 'transparent',
+      border: 'none',
+      color: '#c4b5fd',
+      cursor: 'pointer',
+      padding: 0
+    }
+  }, React.createElement("svg", {
+    xmlns: "http://www.w3.org/2000/svg",
+    width: "22",
+    height: "22",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true"
+  }, React.createElement("path", {
+    d: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"
+  }), React.createElement("circle", {
+    cx: "12",
+    cy: "12",
+    r: "3"
+  }), visibile && React.createElement("line", {
+    x1: "3",
+    y1: "3",
+    x2: "21",
+    y2: "21"
+  }))));
+};
 const telepathySymbols = [{
   id: 'star',
   icon: '⭐',
@@ -362,6 +430,8 @@ const translations = {
     magicLinkInvalid: "Link invalid or expired. Please request a new one.",
     sendMagicLink: "Send login link",
     magicLinkHint: "Login with magick link →",
+    showPassword: "Show password",
+    hidePassword: "Hide password",
     guestBadge: "Guest",
     registeredBadge: "Registered",
     guestCodeLabel: "Your researcher code",
@@ -763,6 +833,8 @@ const translations = {
     magicLinkInvalid: "Link non valido o scaduto. Richiedine uno nuovo.",
     sendMagicLink: "Invia link di accesso",
     magicLinkHint: "Login con magick link →",
+    showPassword: "Mostra password",
+    hidePassword: "Nascondi password",
     guestBadge: "Ospite",
     registeredBadge: "Registrato",
     guestCodeLabel: "Il tuo codice ricercatore",
@@ -4583,8 +4655,10 @@ function GlobalAwakeningPlatform() {
       },
       placeholder: t.emailPlaceholder,
       "aria-label": t.emailPlaceholder
-    }), React.createElement("input", {
-      type: "password",
+    }), React.createElement(PasswordInput, {
+      autoComplete: "current-password",
+      mostra: t.showPassword,
+      nascondi: t.hidePassword,
       value: tempPassword,
       onChange: e => {
         setTempPassword(e.target.value);
@@ -4702,8 +4776,10 @@ function GlobalAwakeningPlatform() {
       style: {
         fontSize: '1.05rem'
       }
-    }, t.setNewPassword), React.createElement("input", {
-      type: "password",
+    }, t.setNewPassword), React.createElement(PasswordInput, {
+      autoComplete: "new-password",
+      mostra: t.showPassword,
+      nascondi: t.hidePassword,
       value: resetNewPassword,
       onChange: e => {
         setResetNewPassword(e.target.value);
@@ -4711,8 +4787,10 @@ function GlobalAwakeningPlatform() {
       },
       placeholder: t.newPasswordPlaceholder,
       "aria-label": t.newPasswordPlaceholder
-    }), React.createElement("input", {
-      type: "password",
+    }), React.createElement(PasswordInput, {
+      autoComplete: "new-password",
+      mostra: t.showPassword,
+      nascondi: t.hidePassword,
       value: resetConfirmPassword,
       onChange: e => {
         setResetConfirmPassword(e.target.value);
@@ -4747,8 +4825,10 @@ function GlobalAwakeningPlatform() {
       },
       placeholder: t.emailPlaceholder,
       "aria-label": t.emailPlaceholder
-    }), React.createElement("input", {
-      type: "password",
+    }), React.createElement(PasswordInput, {
+      autoComplete: "new-password",
+      mostra: t.showPassword,
+      nascondi: t.hidePassword,
       value: tempPassword,
       onChange: e => {
         setTempPassword(e.target.value);
@@ -6735,15 +6815,17 @@ ${ritual.description || ''}`
       display: 'flex',
       gap: '0.5rem'
     }
-  }, React.createElement("input", {
-    type: "password",
+  }, React.createElement(PasswordInput, {
+    autoComplete: "new-password",
+    mostra: t.showPassword,
+    nascondi: t.hidePassword,
     value: profilePassword,
     onChange: e => {
       setProfilePassword(e.target.value);
       setProfilePasswordMsg('');
     },
     placeholder: "New password...",
-    style: {
+    wrapperStyle: {
       flex: 1
     }
   }), React.createElement("button", {
