@@ -871,6 +871,41 @@ sezione('F5. rilancio dopo il ritorno: gli inviti vivi restano vivi', async (db)
   check(dopo.status === 'pending' && dopo.e === prima.e && dopo.s === 600, 'il rilancio lascia pending e con lo stesso expires_at l\'invito vivo', dopo);
 });
 
+// ════ G. 32b (Task 26) ═════════════════════════════════════════════════════
+// Le policy di telepathy_invites com'erano prima della 32b (catalogo del 30/09: cat8…cat12, pol5…pol7).
+const POLICY_DAL_CATALOGO = ['Destinatario può aggiornare lo status', 'Destinatario vede i propri inviti',
+  'Mittente può cancellare il proprio invito', 'Utenti autenticati possono creare inviti',
+  'anon can delete telepathy_invites', 'anon can insert telepathy_invites',
+  'anon can select telepathy_invites', 'anon can update telepathy_invites'];
+
+sezione('G1. la 32b chiude l\'accesso diretto', async () => {
+  const db = await creaDbTelepatia({ con32a: true, con32b: false });
+  await db.query(`INSERT INTO telepathy_invites (from_id, from_name, to_id, to_name, expires_at) VALUES
+    ('w1', 'W1', 'w2', 'W2', now() + interval '1 year'), ('w3', 'W3', 'w4', 'W4', now() + interval '5 minutes')`);
+  await applicaFile(db, F32B);
+  const st = await righe(db, `SELECT from_id, status FROM telepathy_invites ORDER BY from_id`);
+  check(st[0].status === 'expired' && st[1].status === 'pending', '32b: chiude i pending con una scadenza impossibile, non quelli validi', st);
+  for (const [nome, sql] of [['select', `SELECT * FROM telepathy_invites`], ['insert', `INSERT INTO telepathy_invites (from_id, to_id) VALUES ('a', 'b')`],
+                             ['update', `UPDATE telepathy_invites SET status = 'declined'`], ['delete', `DELETE FROM telepathy_invites`]]) {
+    const m = await errore(comeAnon(db, () => db.query(sql)));
+    check(!!m && /permission denied/i.test(m), `dopo la 32b anon non fa ${nome} su telepathy_invites`, m);
+  }
+  check((await righe(db, `SELECT policyname FROM pg_policies WHERE tablename = 'telepathy_invites'`)).length === 0, 'nessuna policy rimasta');
+  await abbonamento(db, 'g1');
+  await chiama(db, 'set_telepathy_availability', { ...G('g1', 'G1'), p_enabled: true });
+  const gid = await idDisp(db, 'g1');
+  const r = await comeAnon(db, () => chiama(db, 'send_telepathy_invite', { ...G('g2', 'G2'), p_disponibilita_id: gid, p_session_online: null }));
+  check(r.ok === true, 'dopo la 32b le RPC funzionano da anon', r);
+  const letto = await comeAnon(db, () => chiama(db, 'get_my_telepathy_invites', { p_session_id: 'g1', p_password_hash: null }));
+  check(!!letto.in_arrivo && letto.in_arrivo.nome === 'G2', 'e la lettura passa dalla RPC', letto);
+  check(!(await errore(applicaFile(db, F32B))), '32b rilanciata: nessun errore');
+  await applicaFile(db, 'supabase/sql/32b_ritorno.sql');
+  check(!(await errore(comeAnon(db, () => db.query(`SELECT count(*) FROM telepathy_invites`)))), '32b_ritorno: anon torna a leggere');
+  const pol = (await righe(db, `SELECT policyname FROM pg_policies WHERE tablename = 'telepathy_invites'`)).map((x) => x.policyname).sort();
+  check(JSON.stringify(pol) === JSON.stringify([...POLICY_DAL_CATALOGO].sort()), '32b_ritorno: le stesse policy del catalogo', pol);
+  check(!(await errore(applicaFile(db, 'supabase/sql/32b_ritorno.sql'))), '32b_ritorno si applica anche due volte (idempotente)');
+}, { con32a: false });
+
 // ── esecuzione ──
 (async () => {
   for (const [nome, fn, opzioni] of sezioni) {
