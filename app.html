@@ -223,6 +223,10 @@
             transition: background 0.2s, border-color 0.2s;
             font-size: 0.95rem;
         }
+        /* Il menu della lingua: si vede «🌐 XX» come il vecchio pulsante; la select nativa sta sopra,
+           trasparente, così il telefono apre il suo selettore e l'intestazione non si allarga. */
+        .lingua-menu { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
+        .lingua-menu select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
         .btn-secondary:hover { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.3); }
         
         .container { max-width: 1280px; margin: 0 auto; padding: 0 1rem; }
@@ -696,6 +700,8 @@
          quando il browser del telefono non la lascia partire da sola. -->
     <script src="music-helpers.js"></script>
     <!-- Prima di app.js: definisce InvitiHelpers (inviti a un training, spec 2026-09-25). -->
+    <!-- Prima di app.js: definisce LingueHelpers (lingua iniziale, fusione delle traduzioni). -->
+    <script src="lingue-helpers.js"></script>
     <script src="inviti-helpers.js"></script>
     <script src="app.js"></script>
 </body>

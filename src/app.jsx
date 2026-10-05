@@ -891,6 +891,15 @@
           }
         };
 
+        // Ogni lingua nasce dall'inglese più la sua traduzione: una chiave dimenticata mostra
+        // l'inglese invece di rompere la pagina (spec lingue §3.1). Calcolato una volta sola.
+        const TRADUZIONI = (() => {
+          const LH = typeof window !== 'undefined' ? window.LingueHelpers : null;
+          const r = {};
+          ['en', 'it', 'es', 'fr'].forEach((l) => { r[l] = LH ? LH.fondi(translations.en, translations[l]) : (translations[l] || translations.en); });
+          return r;
+        })();
+
         // Durata proposta quando si crea un rituale. Tre minuti, non trenta: un rituale è
         // un'esperienza sincrona: quello che conta è esserci tutti nello stesso momento, non
         // restare mezz'ora. Mezz'ora, per chi prova l'app la prima volta, è soprattutto
@@ -902,7 +911,18 @@
         const DURATA_RITUALE_PREDEFINITA = 3;
 
         function GlobalAwakeningPlatform() {
-          const [lang, setLang] = useState('en');
+          const [lang, setLangStato] = useState(() => {
+            const LH = window.LingueHelpers;
+            if (!LH) return 'en';
+            let salvata = null;
+            try { salvata = LH.leggiLinguaSalvata(window.localStorage); } catch (e) {}
+            const tel = (navigator.languages && navigator.languages.length) ? navigator.languages : [navigator.language];
+            return LH.linguaIniziale(salvata, tel);
+          });
+          // window.localStorage solleva in alcuni browser: da qui il try.
+          const setLang = (l) => { setLangStato(l); try { window.LingueHelpers && window.LingueHelpers.salvaLingua(window.localStorage, l); } catch (e) {} };
+          // Lingua delle date: quella dell'app, non quella del telefono.
+          const LOC = window.LingueHelpers ? window.LingueHelpers.locale(lang) : 'en-GB';
           const [activeTab, setActiveTab] = useState('rituals');
           const [nickname, setNickname] = useState(() => localStorage.getItem('ga_nickname') || '');
           const [tempNickname, setTempNickname] = useState('');
@@ -1161,7 +1181,7 @@
           const stanza = stanzaId != null ? rituals.find(r => r.id === stanzaId) : null;
           const [magicLinkEmail, setMagicLinkEmail] = useState('');
           const [showMagicLink, setShowMagicLink] = useState(false);
-          const t = translations[lang];
+          const t = TRADUZIONI[lang] || TRADUZIONI.en;
           // Etichetta leggibile del livello (pannello sessione + chooser). Per la scala
           // mostra "N Simboli" (es. "3 Simboli"); Numeri/Lettere usano le label dedicate.
           const levelLabel = (level) => {
@@ -1425,7 +1445,7 @@
           React.useEffect(() => { invitoInUscitaRef.current = invitoInUscita; }, [invitoInUscita]);
           React.useEffect(() => { attesaInvitanteRef.current = attesaInvitante; }, [attesaInvitante]);
           const IH = typeof InvitiHelpers !== 'undefined' ? InvitiHelpers : null;
-          const testoInviti = (chiave, valori) => (IH ? IH.testo(chiave, lang === 'it' ? 'it' : 'en', valori) : String(chiave));
+          const testoInviti = (chiave, valori) => (IH ? IH.testo(chiave, lang, valori) : String(chiave));
           const rpcInviti = async (fn, extra) => {
             const { data, error } = await supabase.rpc(fn, {
               p_session_id: sessionIdRef.current || sessionId,
@@ -3695,7 +3715,7 @@
                 url: SUPABASE_URL,
                 key: SUPABASE_KEY,
                 sessionId,
-                locale: lang === 'it' ? 'it' : 'en',
+                locale: lang,
                 vapid: VAPID_PUBLIC_KEY
               }), { headers: { 'Content-Type': 'application/json' } }));
             } catch (_) { /* cache non disponibile: si riprova al prossimo avvio */ }
@@ -3717,7 +3737,7 @@
               p_endpoint: sub.endpoint,
               p_p256dh: j.keys.p256dh,
               p_auth: j.keys.auth,
-              p_locale: lang === 'it' ? 'it' : 'en'
+              p_locale: lang
             });
             if (error) throw new Error('registrazione push non riuscita');
 
@@ -4018,7 +4038,7 @@
             if (isNaN(istante.getTime())) return `${ritual.date} ${ritual.time}`;
             // dateStyle/timeStyle non si possono combinare con timeZoneName: Intl lancia
             // "Invalid option : option" e la pagina va in bianco. Opzioni per componenti.
-            return new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB', {
+            return new Intl.DateTimeFormat(LOC, {
               day: '2-digit', month: 'short', year: 'numeric',
               hour: '2-digit', minute: '2-digit', hour12: false,
               timeZoneName: 'short'
@@ -4033,7 +4053,7 @@
             const g = ritual.ripeti_giorni || [];
             const quando = g.length === 7 ? t.rituals.everyDay : g.map(n => t.rituals.weekdaysShort[n - 1]).join(', ');
             const istante = new Date(`${ritual.date}T${ritual.time}Z`);
-            const ora = isNaN(istante.getTime()) ? '' : new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB',
+            const ora = isNaN(istante.getTime()) ? '' : new Intl.DateTimeFormat(LOC,
               { hour: '2-digit', minute: '2-digit', hour12: false }).format(istante);
             return `${quando} ${t.rituals.atTime} ${ora}`;
           };
@@ -4289,9 +4309,14 @@
                 {renderInstallBanner('install-banner--landing')}
 
                 <div className="absolute top-4 right-4">
-                  <button onClick={() => setLang(lang === 'en' ? 'it' : 'en')} className="btn-secondary">
-                    {lang === 'en' ? '🌐 EN' : '🌐 IT'}
-                  </button>
+                  <label className="lingua-menu btn-secondary" title="Language">
+                    <span aria-hidden="true">🌐 {lang.toUpperCase()}</span>
+                    <select data-test="lingua" aria-label="Language" value={lang} onChange={(e) => setLang(e.target.value)}>
+                      {['en', 'it', 'es', 'fr'].map((l) => (
+                        <option key={l} value={l}>{window.LingueHelpers ? window.LingueHelpers.etichetta(l) : l.toUpperCase()}</option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
 
                 <div className="bg-glass rounded-3xl p-8 max-w-md w-full shadow-2xl border-glass">
@@ -4525,9 +4550,14 @@
                       </div>
                     </div>
                     <div className="header-right flex items-center gap-3">
-                      <button onClick={() => setLang(lang === 'en' ? 'it' : 'en')} className="btn-secondary px-3 py-2">
-                        {lang === 'en' ? '🌐 EN' : '🌐 IT'}
-                      </button>
+                      <label className="lingua-menu btn-secondary px-3 py-2" title="Language">
+                        <span aria-hidden="true">🌐 {lang.toUpperCase()}</span>
+                        <select data-test="lingua" aria-label="Language" value={lang} onChange={(e) => setLang(e.target.value)}>
+                          {['en', 'it', 'es', 'fr'].map((l) => (
+                            <option key={l} value={l}>{window.LingueHelpers ? window.LingueHelpers.etichetta(l) : l.toUpperCase()}</option>
+                          ))}
+                        </select>
+                      </label>
                       <div className="flex items-center gap-2">
                         <div className="text-white font-medium" style={{cursor: 'pointer'}} onClick={() => setShowEditProfile(true)} title={t.editProfile}>{profile.avatar && <span style={{marginRight: '0.25rem'}}>{profile.avatar}</span>}{nickname}</div>
                         <span style={{
@@ -4943,7 +4973,7 @@ ${ritual.description || ''}` })}
                                         style={{cursor: 'pointer', textDecoration: 'underline', textDecorationColor: 'rgba(167,139,250,0.4)'}}
                                         onClick={() => openProfile(c.author_nickname)}
                                       >{c.author_nickname}</span>
-                                      <span style={{color: '#c4b5fd'}} className="text-xs">{new Date(c.created_at).toLocaleTimeString()}</span>
+                                      <span style={{color: '#c4b5fd'}} className="text-xs">{new Date(c.created_at).toLocaleTimeString(LOC)}</span>
                                       {moderationMenu({ author: c.author_nickname, type: commentKind, id: c.id, snapshot: c.content })}
                                     </div>
                                     <p className="text-white" style={{fontSize: '0.9rem'}}>{c.content}</p>
@@ -5018,7 +5048,7 @@ ${ritual.description || ''}` })}
                                 style={{cursor: 'pointer', textDecoration: 'underline', textDecorationColor: 'rgba(167,139,250,0.4)'}}
                                 onClick={() => openProfile(post.author_nickname)}
                               >{post.author_nickname}</span>
-                              <span style={{color: '#c4b5fd'}} className="text-xs">{new Date(post.created_at).toLocaleString()}</span>
+                              <span style={{color: '#c4b5fd'}} className="text-xs">{new Date(post.created_at).toLocaleString(LOC)}</span>
                               {moderationMenu({ author: post.author_nickname, type: 'post', id: post.id, snapshot: post.content })}
                             </div>
                             <p className="text-white" style={{marginBottom: '0.75rem', lineHeight: '1.5'}}>{post.content}</p>
@@ -5050,7 +5080,7 @@ ${ritual.description || ''}` })}
                                         style={{cursor: 'pointer', textDecoration: 'underline', textDecorationColor: 'rgba(167,139,250,0.4)'}}
                                         onClick={() => openProfile(c.author_nickname)}
                                       >{c.author_nickname}</span>
-                                      <span style={{color: '#c4b5fd'}} className="text-xs">{new Date(c.created_at).toLocaleTimeString()}</span>
+                                      <span style={{color: '#c4b5fd'}} className="text-xs">{new Date(c.created_at).toLocaleTimeString(LOC)}</span>
                                       {moderationMenu({ author: c.author_nickname, type: commentKind, id: c.id, snapshot: c.content })}
                                     </div>
                                     <p className="text-white" style={{fontSize: '0.9rem'}}>{c.content}</p>
@@ -5796,7 +5826,7 @@ ${ritual.description || ''}` })}
                                 onClick={() => doUnblock(nick)}>{t.moderation.unblock}</button>
                             </div>
                           ))}
-                          <a href="regole.html" target="_blank" rel="noopener"
+                          <a href={`regole.html#${lang}`} target="_blank" rel="noopener"
                              className="text-secondary text-xs"
                              style={{display: 'inline-block', marginTop: '0.5rem'}}>{t.moderation.reportRules}</a>
                         </div>
@@ -6173,7 +6203,7 @@ ${ritual.description || ''}` })}
                       <button className="btn-primary" onClick={doReport}>{t.moderation.reportSend}</button>
                       <button className="btn-secondary" onClick={() => setReportTarget(null)}>{t.moderation.cancel}</button>
                     </div>
-                    <a href="regole.html" target="_blank" rel="noopener"
+                    <a href={`regole.html#${lang}`} target="_blank" rel="noopener"
                        className="text-secondary text-xs"
                        style={{display: 'inline-block', marginTop: '0.75rem'}}>{t.moderation.reportRules}</a>
                   </div>

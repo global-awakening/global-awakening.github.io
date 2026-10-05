@@ -26,12 +26,9 @@ function fail(msg) { console.log(`  ❌ ${msg}`); process.exitCode = 1; }
 
 async function loginAsGuest(page, nickname) {
   await page.goto(APP_URL);
-  // La UI parte in EN; il test usa selettori italiani → switcho a IT cliccando 🌐 EN
-  const langBtn = page.locator('button:has-text("🌐 EN")').first();
-  if (await langBtn.count() > 0) {
-    await langBtn.click();
-    await page.waitForSelector('button:has-text("🌐 IT")', { timeout: TIMEOUT });
-  }
+  // La UI parte in EN; il test usa selettori italiani → scelgo IT dal menu della lingua
+  await page.locator('select[data-test="lingua"]').first().selectOption('it');
+  await page.waitForSelector('select[data-test="lingua"] >> nth=0', { timeout: TIMEOUT });
   await page.waitForSelector('button:has-text("Ospite"), button:has-text("Guest")', { timeout: TIMEOUT });
   await page.locator('button:has-text("Ospite"), button:has-text("Guest")').first().click();
   await page.locator('input[placeholder*="username"], input[placeholder*="Username"], input[placeholder*="Nickname"], input[placeholder*="nickname"]').first().fill(nickname);

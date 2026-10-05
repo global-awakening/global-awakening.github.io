@@ -1182,9 +1182,33 @@ const translations = {
     }
   }
 };
+const TRADUZIONI = (() => {
+  const LH = typeof window !== 'undefined' ? window.LingueHelpers : null;
+  const r = {};
+  ['en', 'it', 'es', 'fr'].forEach(l => {
+    r[l] = LH ? LH.fondi(translations.en, translations[l]) : translations[l] || translations.en;
+  });
+  return r;
+})();
 const DURATA_RITUALE_PREDEFINITA = 3;
 function GlobalAwakeningPlatform() {
-  const [lang, setLang] = useState('en');
+  const [lang, setLangStato] = useState(() => {
+    const LH = window.LingueHelpers;
+    if (!LH) return 'en';
+    let salvata = null;
+    try {
+      salvata = LH.leggiLinguaSalvata(window.localStorage);
+    } catch (e) {}
+    const tel = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+    return LH.linguaIniziale(salvata, tel);
+  });
+  const setLang = l => {
+    setLangStato(l);
+    try {
+      window.LingueHelpers && window.LingueHelpers.salvaLingua(window.localStorage, l);
+    } catch (e) {}
+  };
+  const LOC = window.LingueHelpers ? window.LingueHelpers.locale(lang) : 'en-GB';
   const [activeTab, setActiveTab] = useState('rituals');
   const [nickname, setNickname] = useState(() => localStorage.getItem('ga_nickname') || '');
   const [tempNickname, setTempNickname] = useState('');
@@ -1412,7 +1436,7 @@ function GlobalAwakeningPlatform() {
   const stanza = stanzaId != null ? rituals.find(r => r.id === stanzaId) : null;
   const [magicLinkEmail, setMagicLinkEmail] = useState('');
   const [showMagicLink, setShowMagicLink] = useState(false);
-  const t = translations[lang];
+  const t = TRADUZIONI[lang] || TRADUZIONI.en;
   const levelLabel = level => {
     if (level === 'numbers') return t.telepathy.levelNumbers;
     if (level === 'words') return t.telepathy.levelWords;
@@ -1698,7 +1722,7 @@ function GlobalAwakeningPlatform() {
     attesaInvitanteRef.current = attesaInvitante;
   }, [attesaInvitante]);
   const IH = typeof InvitiHelpers !== 'undefined' ? InvitiHelpers : null;
-  const testoInviti = (chiave, valori) => IH ? IH.testo(chiave, lang === 'it' ? 'it' : 'en', valori) : String(chiave);
+  const testoInviti = (chiave, valori) => IH ? IH.testo(chiave, lang, valori) : String(chiave);
   const rpcInviti = async (fn, extra) => {
     const {
       data,
@@ -3976,7 +4000,7 @@ function GlobalAwakeningPlatform() {
         url: SUPABASE_URL,
         key: SUPABASE_KEY,
         sessionId,
-        locale: lang === 'it' ? 'it' : 'en',
+        locale: lang,
         vapid: VAPID_PUBLIC_KEY
       }), {
         headers: {
@@ -4000,7 +4024,7 @@ function GlobalAwakeningPlatform() {
       p_endpoint: sub.endpoint,
       p_p256dh: j.keys.p256dh,
       p_auth: j.keys.auth,
-      p_locale: lang === 'it' ? 'it' : 'en'
+      p_locale: lang
     });
     if (error) throw new Error('registrazione push non riuscita');
     await salvaConfigPush();
@@ -4269,7 +4293,7 @@ function GlobalAwakeningPlatform() {
   const formatRitualWhen = ritual => {
     const istante = new Date(`${ritual.date}T${ritual.time}Z`);
     if (isNaN(istante.getTime())) return `${ritual.date} ${ritual.time}`;
-    return new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB', {
+    return new Intl.DateTimeFormat(LOC, {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
@@ -4283,7 +4307,7 @@ function GlobalAwakeningPlatform() {
     const g = ritual.ripeti_giorni || [];
     const quando = g.length === 7 ? t.rituals.everyDay : g.map(n => t.rituals.weekdaysShort[n - 1]).join(', ');
     const istante = new Date(`${ritual.date}T${ritual.time}Z`);
-    const ora = isNaN(istante.getTime()) ? '' : new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB', {
+    const ora = isNaN(istante.getTime()) ? '' : new Intl.DateTimeFormat(LOC, {
       hour: '2-digit',
       minute: '2-digit',
       hour12: false
@@ -4646,10 +4670,20 @@ function GlobalAwakeningPlatform() {
       }
     }, renderInstallBanner('install-banner--landing'), React.createElement("div", {
       className: "absolute top-4 right-4"
-    }, React.createElement("button", {
-      onClick: () => setLang(lang === 'en' ? 'it' : 'en'),
-      className: "btn-secondary"
-    }, lang === 'en' ? '🌐 EN' : '🌐 IT')), React.createElement("div", {
+    }, React.createElement("label", {
+      className: "lingua-menu btn-secondary",
+      title: "Language"
+    }, React.createElement("span", {
+      "aria-hidden": "true"
+    }, "\uD83C\uDF10 ", lang.toUpperCase()), React.createElement("select", {
+      "data-test": "lingua",
+      "aria-label": "Language",
+      value: lang,
+      onChange: e => setLang(e.target.value)
+    }, ['en', 'it', 'es', 'fr'].map(l => React.createElement("option", {
+      key: l,
+      value: l
+    }, window.LingueHelpers ? window.LingueHelpers.etichetta(l) : l.toUpperCase()))))), React.createElement("div", {
       className: "bg-glass rounded-3xl p-8 max-w-md w-full shadow-2xl border-glass"
     }, React.createElement("div", {
       className: "text-center mb-8"
@@ -4964,10 +4998,20 @@ function GlobalAwakeningPlatform() {
     className: "text-primary text-xs"
   }, t.subtitle))), React.createElement("div", {
     className: "header-right flex items-center gap-3"
-  }, React.createElement("button", {
-    onClick: () => setLang(lang === 'en' ? 'it' : 'en'),
-    className: "btn-secondary px-3 py-2"
-  }, lang === 'en' ? '🌐 EN' : '🌐 IT'), React.createElement("div", {
+  }, React.createElement("label", {
+    className: "lingua-menu btn-secondary px-3 py-2",
+    title: "Language"
+  }, React.createElement("span", {
+    "aria-hidden": "true"
+  }, "\uD83C\uDF10 ", lang.toUpperCase()), React.createElement("select", {
+    "data-test": "lingua",
+    "aria-label": "Language",
+    value: lang,
+    onChange: e => setLang(e.target.value)
+  }, ['en', 'it', 'es', 'fr'].map(l => React.createElement("option", {
+    key: l,
+    value: l
+  }, window.LingueHelpers ? window.LingueHelpers.etichetta(l) : l.toUpperCase())))), React.createElement("div", {
     className: "flex items-center gap-2"
   }, React.createElement("div", {
     className: "text-white font-medium",
@@ -5520,7 +5564,7 @@ ${ritual.description || ''}`
           color: '#c4b5fd'
         },
         className: "text-xs"
-      }, new Date(c.created_at).toLocaleTimeString()), moderationMenu({
+      }, new Date(c.created_at).toLocaleTimeString(LOC)), moderationMenu({
         author: c.author_nickname,
         type: commentKind,
         id: c.id,
@@ -5628,7 +5672,7 @@ ${ritual.description || ''}`
         color: '#c4b5fd'
       },
       className: "text-xs"
-    }, new Date(post.created_at).toLocaleString()), moderationMenu({
+    }, new Date(post.created_at).toLocaleString(LOC)), moderationMenu({
       author: post.author_nickname,
       type: 'post',
       id: post.id,
@@ -5693,7 +5737,7 @@ ${ritual.description || ''}`
           color: '#c4b5fd'
         },
         className: "text-xs"
-      }, new Date(c.created_at).toLocaleTimeString()), moderationMenu({
+      }, new Date(c.created_at).toLocaleTimeString(LOC)), moderationMenu({
         author: c.author_nickname,
         type: commentKind,
         id: c.id,
@@ -6962,7 +7006,7 @@ ${ritual.description || ''}`
     },
     onClick: () => doUnblock(nick)
   }, t.moderation.unblock))), React.createElement("a", {
-    href: "regole.html",
+    href: `regole.html#${lang}`,
     target: "_blank",
     rel: "noopener",
     className: "text-secondary text-xs",
@@ -7589,7 +7633,7 @@ ${ritual.description || ''}`
     className: "btn-secondary",
     onClick: () => setReportTarget(null)
   }, t.moderation.cancel)), React.createElement("a", {
-    href: "regole.html",
+    href: `regole.html#${lang}`,
     target: "_blank",
     rel: "noopener",
     className: "text-secondary text-xs",
