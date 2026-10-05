@@ -49,14 +49,14 @@
       blocca: 'Non voglio più inviti da questa persona',
       conferma_blocco: 'Non riceverai più inviti da {nome}, e non potrai invitarla/o. Confermi?',
       bloccato_ok: 'Non riceverai più inviti da {nome}',
-      conferma: "Conferma', annulla: 'Annulla', chiudi: 'Chiudi', rifiuta: 'Rifiuta",
+      conferma: 'Conferma', annulla: 'Annulla', chiudi: 'Chiudi', rifiuta: 'Rifiuta',
       invito_a: 'Invito a {nome}: {tempo}',
       scade_fra: 'scade fra {tempo}',
       scaduto_breve: 'scaduto',
       attesa_invitante: 'In attesa che {nome} entri… ({tempo})',
       non_arrivato: '{nome} non è arrivato: torni alla lobby',
       invito_durante_training: '{nome} ti ha invitato: sei già in un training',
-      prove: "Prove', indovinate: 'Indovinate",
+      prove: 'Prove', indovinate: 'Indovinate',
       qualcuno: 'Qualcuno'
     },
     en: {
@@ -89,14 +89,14 @@
       blocca: 'No more invites from this person',
       conferma_blocco: 'You will no longer receive invites from {nome}, and you will not be able to invite them. Confirm?',
       bloccato_ok: 'You will no longer receive invites from {nome}',
-      conferma: "Confirm', annulla: 'Cancel', chiudi: 'Close', rifiuta: 'Decline",
+      conferma: 'Confirm', annulla: 'Cancel', chiudi: 'Close', rifiuta: 'Decline',
       invito_a: 'Invite to {nome}: {tempo}',
       scade_fra: 'expires in {tempo}',
       scaduto_breve: 'expired',
       attesa_invitante: 'Waiting for {nome} to join… ({tempo})',
       non_arrivato: '{nome} did not arrive: back to the lobby',
       invito_durante_training: '{nome} invited you: you are already in a training',
-      prove: "Trials', indovinate: 'Hits",
+      prove: 'Trials', indovinate: 'Hits',
       qualcuno: 'Someone'
     },
     es: {
@@ -129,14 +129,14 @@
       blocca: 'No quiero más invitaciones de esta persona',
       conferma_blocco: 'Ya no recibirás invitaciones de {nome} y no podrás invitarle. ¿Confirmas?',
       bloccato_ok: 'Ya no recibirás invitaciones de {nome}',
-      conferma: "Confirmar', annulla: 'Cancelar', chiudi: 'Cerrar', rifiuta: 'Rechazar",
+      conferma: 'Confirmar', annulla: 'Cancelar', chiudi: 'Cerrar', rifiuta: 'Rechazar',
       invito_a: 'Invitación a {nome}: {tempo}',
       scade_fra: 'vence en {tempo}',
       scaduto_breve: 'vencida',
       attesa_invitante: 'Esperando a que {nome} entre… ({tempo})',
       non_arrivato: '{nome} no ha llegado: vuelves al inicio',
       invito_durante_training: '{nome} te ha invitado: ya estás en un entrenamiento',
-      prove: "Pruebas', indovinate: 'Aciertos",
+      prove: 'Pruebas', indovinate: 'Aciertos',
       qualcuno: 'Alguien'
     },
     fr: {
@@ -169,14 +169,14 @@
       blocca: "Je ne veux plus d'invitations de cette personne",
       conferma_blocco: "Tu ne recevras plus d'invitations de {nome} et tu ne pourras plus l'inviter. Tu confirmes ?",
       bloccato_ok: "Tu ne recevras plus d'invitations de {nome}",
-      conferma: "Confirmer', annulla: 'Annuler', chiudi: 'Fermer', rifiuta: 'Refuser",
+      conferma: 'Confirmer', annulla: 'Annuler', chiudi: 'Fermer', rifiuta: 'Refuser',
       invito_a: 'Invitation à {nome} : {tempo}',
       scade_fra: 'expire dans {tempo}',
       scaduto_breve: 'expirée',
       attesa_invitante: 'En attente de {nome}… ({tempo})',
       non_arrivato: "{nome} n'est pas arrivé(e) : retour au salon",
       invito_durante_training: "{nome} t'a invité(e) : tu es déjà dans un entraînement",
-      prove: "Essais', indovinate: 'Réussites",
+      prove: 'Essais', indovinate: 'Réussites',
       qualcuno: "Quelqu'un"
     }
   };
@@ -268,7 +268,8 @@
 
   var api = { testo: testo, chiaveDaErrore: chiaveDaErrore, scarto: scarto, secondiRimasti: secondiRimasti, mmss: mmss,
               leggiInvitoDaUrl: leggiInvitoDaUrl, esitoApertura: esitoApertura, motivoDaStato: motivoDaStato,
-              attesaFinita: attesaFinita, percentuale: percentuale };
+              attesaFinita: attesaFinita, percentuale: percentuale,
+              chiavi: function (lingua) { return Object.keys(TESTI[lingua] || {}); } };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else globale.InvitiHelpers = api;
