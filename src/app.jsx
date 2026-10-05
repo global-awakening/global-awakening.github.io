@@ -198,6 +198,7 @@
             magicLinkInvalid: "Link invalid or expired. Please request a new one.",
             sendMagicLink: "Send login link",
             magicLinkHint: "Login with magick link →",
+            sessionExpired: "For your security, please sign in again: we'll email you a link. Your profile, messages and scores are safe.",
             showPassword: "Show password",
             hidePassword: "Hide password",
             guestBadge: "Guest",
@@ -571,6 +572,7 @@
             magicLinkInvalid: "Link non valido o scaduto. Richiedine uno nuovo.",
             sendMagicLink: "Invia link di accesso",
             magicLinkHint: "Login con magick link →",
+            sessionExpired: "Per sicurezza devi rientrare: ti mandiamo un link via email. Profilo, messaggi e punteggi sono al sicuro.",
             showPassword: "Mostra password",
             hidePassword: "Nascondi password",
             guestBadge: "Ospite",
@@ -1240,6 +1242,24 @@
             return () => clearTimeout(tmr);
           }, [infoToast]);
 
+          // Chiave scaduta: chi era dentro prima della 27b_ (29/09/2026) ha in memoria una credenziale
+          // che il server non riconosce più. L'app lo sa solo dal rifiuto esplicito del server
+          // («Auth failed», o credenziali_non_valide dalle RPC dell'account): un errore di rete non
+          // conta. A quel punto si esce e si apre il login col link via email già pronto.
+          // Passa da un ref perché la chiamano anche i giri di polling, che vedono la closure del
+          // primo render; la funzione vera la assegna il codice dopo handleLogout.
+          const eChiaveScaduta = (error) => /Auth failed/i.test((error && error.message) || '');
+          const chiaveScadutaRef = React.useRef(() => {});
+          const segnalaChiaveScaduta = () => chiaveScadutaRef.current();
+          // Mentre la chiave sta cambiando (accesso col link, cambio password) un rifiuto può
+          // portare quella di prima: in quei momenti non si fa uscire nessuno.
+          const chiaveInCambio = React.useRef(0);
+          const cambioChiave = async (promessa) => {
+            chiaveInCambio.current++;
+            try { return await promessa; }
+            finally { setTimeout(() => { chiaveInCambio.current--; }, 2000); }   // il tempo che lo stato nuovo entri
+          };
+
           // SP1 — elenco dei bloccati, ricaricato al login e dopo ogni blocco/sblocco.
           // Gli ospiti non hanno riga profiles, quindi non hanno credenziale: lista vuota.
           const reloadBlocks = useCallback(async () => {
@@ -1248,7 +1268,10 @@
               p_nickname: nickname,
               p_password_hash: passwordHash
             });
-            if (error) return;   // rete giù o auth non ancora pronta: si tiene la cache
+            if (error) {   // rete giù: si tiene la cache. Chiave scaduta: si chiede di rientrare.
+              if (eChiaveScaduta(error)) segnalaChiaveScaduta();
+              return;
+            }
             const list = (data || []).map(x => (typeof x === 'string' ? x : x.get_my_blocks)).filter(Boolean);
             setBlockedUsers(list);
             blockedUsersRef.current = list;
@@ -1308,7 +1331,7 @@
             const { error } = await supabase.rpc('block_user', {
               p_nickname: nickname, p_password_hash: passwordHash, p_blocked_nickname: nick
             });
-            if (error) { setErrorToast(error.message); return; }
+            if (error) { if (eChiaveScaduta(error)) segnalaChiaveScaduta(); else setErrorToast(error.message); return; }
             await reloadBlocks();
             setInfoToast(t.moderation.blockDone);
           };
@@ -1318,7 +1341,7 @@
             const { error } = await supabase.rpc('unblock_user', {
               p_nickname: nickname, p_password_hash: passwordHash, p_blocked_nickname: nick
             });
-            if (error) { setErrorToast(error.message); return; }
+            if (error) { if (eChiaveScaduta(error)) segnalaChiaveScaduta(); else setErrorToast(error.message); return; }
             await reloadBlocks();
             setInfoToast(t.moderation.unblockDone);
           };
@@ -1339,7 +1362,7 @@
             setReportTarget(null);
             setReportNotes('');
             setReportReason('spam');
-            if (error) setErrorToast(error.message);
+            if (error) { if (eChiaveScaduta(error)) segnalaChiaveScaduta(); else setErrorToast(error.message); }
             else setInfoToast(t.moderation.reportDone);
           };
 
@@ -1411,7 +1434,12 @@
             });
             // Il client fatto a mano non solleva: un errore (rete, Auth failed) torna qui.
             // «Auth failed» (credenziale vecchia) ha un messaggio suo: «accedi di nuovo».
-            if (error) return { ok: false, motivo: IH ? IH.chiaveDaErrore(error) : 'errore' };
+            if (error) {
+              // Solo se la chiamata portava una credenziale: subito dopo l'uscita una chiamata
+              // in volo parte senza, e quel rifiuto non dice niente della chiave.
+              if (eChiaveScaduta(error) && passwordHashRef.current) segnalaChiaveScaduta();
+              return { ok: false, motivo: IH ? IH.chiaveDaErrore(error) : 'errore' };
+            }
             return data;
           };
           // L'invito in arrivo lo dice solo il server (ce n'è al massimo uno): loop delle presenze,
@@ -2160,7 +2188,7 @@
                 }
               }
             };
-            loginWithMagicToken();
+            cambioChiave(loginWithMagicToken());   // tutto l'accesso, non solo il link: lo stato nuovo arriva dopo altre attese
           }, [magicToken]);
 
           const handleLogout = () => {
@@ -2200,6 +2228,49 @@
             setRoundCount(0);
             setShowNicknamePrompt(true);
           };
+
+          // Una volta sola anche se più chiamate rifiutano insieme (blocchi, messaggi, inviti
+          // partono quasi tutti all'avvio). L'email si tiene: handleLogout la cancella, e chi
+          // rientra la trova già scritta nel riquadro del link.
+          const chiaveScadutaInCorso = React.useRef(false);
+          const nicknameRef = React.useRef(nickname);
+          nicknameRef.current = nickname;
+          chiaveScadutaRef.current = async () => {
+            // Vale solo per chi è ancora dentro come iscritto: un rifiuto che arriva dopo l'uscita,
+            // o a un ospite, non è una chiave scaduta.
+            if (chiaveScadutaInCorso.current || chiaveInCambio.current > 0 || isGuest || !userEmail) return;
+            chiaveScadutaInCorso.current = true;
+            const email = userEmail || '';
+            // Prima di far uscire qualcuno si richiede con la chiave di ADESSO: una chiamata partita
+            // un attimo prima di un cambio password porta la chiave vecchia e viene rifiutata, ma
+            // la chiave nuova è buona. Si esce solo se il server rifiuta anche questa.
+            // Un secondo e mezzo di attesa: se il rifiuto è arrivato prima della risposta del cambio
+            // password, la chiave nuova fa in tempo a entrare in memoria.
+            await new Promise((r) => setTimeout(r, 1500));
+            const chiaveOra = passwordHashRef.current;
+            if (chiaveInCambio.current > 0) { chiaveScadutaInCorso.current = false; return; }
+            if (chiaveOra) {
+              // Nickname dal ref, non dalla closure: dopo un accesso col link può essere cambiato.
+              const { error } = await supabase.rpc('get_my_blocks', { p_nickname: nicknameRef.current, p_password_hash: chiaveOra });
+              if (!eChiaveScaduta(error)) { chiaveScadutaInCorso.current = false; return; }
+            }
+            handleLogout();
+            // handleLogout porta sulla linguetta Ospite: si torna sul login dopo, come a «Registrati».
+            setTimeout(() => {
+              setAuthTab('login');
+              setShowResetForm(false);
+              setMagicLinkEmail(email);
+              setShowMagicLink(true);
+              setLoginError(t.sessionExpired);
+              chiaveScadutaInCorso.current = false;
+            }, 100);
+          };
+          // Iscritto senza nessuna credenziale in memoria: non può usare niente di protetto, ed è
+          // lo stesso caso della chiave scaduta. Non durante l'accesso col link (?magic=), che la crea.
+          useEffect(() => {
+            if (!isGuest && userEmail && !passwordHash && !magicToken) segnalaChiaveScaduta();
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+          }, []);
 
           // Export GDPR: chiama la RPC, scarica il risultato come file JSON.
           const exportMyData = async () => {
@@ -3190,6 +3261,7 @@
                 show_telepathy_score: showTelepathyScore !== false
               }
             });
+            if (esito && esito.motivo === 'credenziali_non_valide') { segnalaChiaveScaduta(); return; }
             if (error || !esito || !esito.ok) {
               // Prima l'upsert falliva in silenzio e lo schermo diceva «salvato» lo stesso.
               alert(t.profileSaveFailed);
@@ -3372,7 +3444,8 @@
                 p_nickname: nickname,
                 p_password_hash: passwordHash
               });
-              if (error || !Array.isArray(data)) return;  // auth fallita / rete: non tocca lo stato
+              if (eChiaveScaduta(error)) { segnalaChiaveScaduta(); return; }
+              if (error || !Array.isArray(data)) return;  // rete: non tocca lo stato
               const all = [...data].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
               setPrivateMessages(all);
               setUnreadCount(all.filter(m => m.receiver_name === nickname && !m.is_read).length);
@@ -3796,8 +3869,11 @@
           // Chi è registrato ma ha la password azzerata (27b_, la falla account) ha ancora in
           // memoria una credenziale vecchia: il database risponde «Auth failed» e un generico
           // «non è stato possibile» la lascerebbe senza sapere cosa fare. Le si dice come uscirne.
-          const messaggioErroreRituale = (error, generico) =>
-            ((error && error.message) || '').includes('Auth failed') ? t.rituals.reloginNeeded : generico;
+          const messaggioErroreRituale = (error, generico) => {
+            if (!eChiaveScaduta(error)) return generico;
+            segnalaChiaveScaduta();
+            return t.rituals.reloginNeeded;
+          };
 
           // Lasciare un rituale a cui ci si era iscritti (il creatore non può: deve cancellarlo o fermarlo).
           const leaveRitual = async (ritualId) => {
@@ -5517,6 +5593,7 @@ ${ritual.description || ''}` })}
                               if (error || !esito || !esito.ok) {
                                 setShowTelepathyScore(oldVal);
                                 localStorage.setItem('ga_show_telepathy', String(oldVal));
+                                if (esito && esito.motivo === 'credenziali_non_valide') { segnalaChiaveScaduta(); return; }
                                 alert(t.profileSaveFailed);
                               }
                             }
@@ -5675,9 +5752,10 @@ ${ritual.description || ''}` })}
                               disabled={!profilePassword.trim()}
                               onClick={async () => {
                                 const hash = await deriveStrongHash(profilePassword.trim());
-                                const { data: esito, error } = await supabase.rpc('change_password', {
+                                const { data: esito, error } = await cambioChiave(supabase.rpc('change_password', {
                                   p_nickname: nickname, p_old_hash: passwordHash, p_new_hash: hash
-                                });
+                                }));
+                                if (esito && esito.motivo === 'credenziali_non_valide') { segnalaChiaveScaduta(); return; }
                                 if (error || !esito || !esito.ok) {
                                   setProfilePasswordMsg(t.passwordChangeFailed);
                                   return;

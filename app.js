@@ -430,6 +430,7 @@ const translations = {
     magicLinkInvalid: "Link invalid or expired. Please request a new one.",
     sendMagicLink: "Send login link",
     magicLinkHint: "Login with magick link →",
+    sessionExpired: "For your security, please sign in again: we'll email you a link. Your profile, messages and scores are safe.",
     showPassword: "Show password",
     hidePassword: "Hide password",
     guestBadge: "Guest",
@@ -833,6 +834,7 @@ const translations = {
     magicLinkInvalid: "Link non valido o scaduto. Richiedine uno nuovo.",
     sendMagicLink: "Invia link di accesso",
     magicLinkHint: "Login con magick link →",
+    sessionExpired: "Per sicurezza devi rientrare: ti mandiamo un link via email. Profilo, messaggi e punteggi sono al sicuro.",
     showPassword: "Mostra password",
     hidePassword: "Nascondi password",
     guestBadge: "Ospite",
@@ -1496,6 +1498,20 @@ function GlobalAwakeningPlatform() {
     const tmr = setTimeout(() => setInfoToast(null), 4000);
     return () => clearTimeout(tmr);
   }, [infoToast]);
+  const eChiaveScaduta = error => /Auth failed/i.test(error && error.message || '');
+  const chiaveScadutaRef = React.useRef(() => {});
+  const segnalaChiaveScaduta = () => chiaveScadutaRef.current();
+  const chiaveInCambio = React.useRef(0);
+  const cambioChiave = async promessa => {
+    chiaveInCambio.current++;
+    try {
+      return await promessa;
+    } finally {
+      setTimeout(() => {
+        chiaveInCambio.current--;
+      }, 2000);
+    }
+  };
   const reloadBlocks = useCallback(async () => {
     if (!nickname || isGuest || !passwordHash) {
       setBlockedUsers([]);
@@ -1508,7 +1524,10 @@ function GlobalAwakeningPlatform() {
       p_nickname: nickname,
       p_password_hash: passwordHash
     });
-    if (error) return;
+    if (error) {
+      if (eChiaveScaduta(error)) segnalaChiaveScaduta();
+      return;
+    }
     const list = (data || []).map(x => typeof x === 'string' ? x : x.get_my_blocks).filter(Boolean);
     setBlockedUsers(list);
     blockedUsersRef.current = list;
@@ -1559,7 +1578,7 @@ function GlobalAwakeningPlatform() {
       p_blocked_nickname: nick
     });
     if (error) {
-      setErrorToast(error.message);
+      if (eChiaveScaduta(error)) segnalaChiaveScaduta();else setErrorToast(error.message);
       return;
     }
     await reloadBlocks();
@@ -1575,7 +1594,7 @@ function GlobalAwakeningPlatform() {
       p_blocked_nickname: nick
     });
     if (error) {
-      setErrorToast(error.message);
+      if (eChiaveScaduta(error)) segnalaChiaveScaduta();else setErrorToast(error.message);
       return;
     }
     await reloadBlocks();
@@ -1602,7 +1621,9 @@ function GlobalAwakeningPlatform() {
     setReportTarget(null);
     setReportNotes('');
     setReportReason('spam');
-    if (error) setErrorToast(error.message);else setInfoToast(t.moderation.reportDone);
+    if (error) {
+      if (eChiaveScaduta(error)) segnalaChiaveScaduta();else setErrorToast(error.message);
+    } else setInfoToast(t.moderation.reportDone);
   };
   const moderationMenu = ({
     author,
@@ -1687,10 +1708,13 @@ function GlobalAwakeningPlatform() {
       p_password_hash: passwordHashRef.current || null,
       ...(extra || {})
     });
-    if (error) return {
-      ok: false,
-      motivo: IH ? IH.chiaveDaErrore(error) : 'errore'
-    };
+    if (error) {
+      if (eChiaveScaduta(error) && passwordHashRef.current) segnalaChiaveScaduta();
+      return {
+        ok: false,
+        motivo: IH ? IH.chiaveDaErrore(error) : 'errore'
+      };
+    }
     return data;
   };
   const aggiornaInviti = async () => {
@@ -2458,7 +2482,7 @@ function GlobalAwakeningPlatform() {
         }
       }
     };
-    loginWithMagicToken();
+    cambioChiave(loginWithMagicToken());
   }, [magicToken]);
   const handleLogout = () => {
     spegniDisponibilitaDi(sessionId, passwordHash);
@@ -2497,6 +2521,44 @@ function GlobalAwakeningPlatform() {
     setRoundCount(0);
     setShowNicknamePrompt(true);
   };
+  const chiaveScadutaInCorso = React.useRef(false);
+  const nicknameRef = React.useRef(nickname);
+  nicknameRef.current = nickname;
+  chiaveScadutaRef.current = async () => {
+    if (chiaveScadutaInCorso.current || chiaveInCambio.current > 0 || isGuest || !userEmail) return;
+    chiaveScadutaInCorso.current = true;
+    const email = userEmail || '';
+    await new Promise(r => setTimeout(r, 1500));
+    const chiaveOra = passwordHashRef.current;
+    if (chiaveInCambio.current > 0) {
+      chiaveScadutaInCorso.current = false;
+      return;
+    }
+    if (chiaveOra) {
+      const {
+        error
+      } = await supabase.rpc('get_my_blocks', {
+        p_nickname: nicknameRef.current,
+        p_password_hash: chiaveOra
+      });
+      if (!eChiaveScaduta(error)) {
+        chiaveScadutaInCorso.current = false;
+        return;
+      }
+    }
+    handleLogout();
+    setTimeout(() => {
+      setAuthTab('login');
+      setShowResetForm(false);
+      setMagicLinkEmail(email);
+      setShowMagicLink(true);
+      setLoginError(t.sessionExpired);
+      chiaveScadutaInCorso.current = false;
+    }, 100);
+  };
+  useEffect(() => {
+    if (!isGuest && userEmail && !passwordHash && !magicToken) segnalaChiaveScaduta();
+  }, []);
   const exportMyData = async () => {
     if (gdprBusy) return;
     setGdprBusy(true);
@@ -3509,6 +3571,10 @@ function GlobalAwakeningPlatform() {
         show_telepathy_score: showTelepathyScore !== false
       }
     });
+    if (esito && esito.motivo === 'credenziali_non_valide') {
+      segnalaChiaveScaduta();
+      return;
+    }
     if (error || !esito || !esito.ok) {
       alert(t.profileSaveFailed);
       return;
@@ -3682,6 +3748,10 @@ function GlobalAwakeningPlatform() {
         p_nickname: nickname,
         p_password_hash: passwordHash
       });
+      if (eChiaveScaduta(error)) {
+        segnalaChiaveScaduta();
+        return;
+      }
       if (error || !Array.isArray(data)) return;
       const all = [...data].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
       setPrivateMessages(all);
@@ -4054,7 +4124,11 @@ function GlobalAwakeningPlatform() {
       return prev.some(r => r.id === id) ? prev.map(r => r.id === id ? riga : r) : [riga, ...prev];
     });
   };
-  const messaggioErroreRituale = (error, generico) => (error && error.message || '').includes('Auth failed') ? t.rituals.reloginNeeded : generico;
+  const messaggioErroreRituale = (error, generico) => {
+    if (!eChiaveScaduta(error)) return generico;
+    segnalaChiaveScaduta();
+    return t.rituals.reloginNeeded;
+  };
   const leaveRitual = async ritualId => {
     const {
       error
@@ -6654,6 +6728,10 @@ ${ritual.description || ''}`
         if (error || !esito || !esito.ok) {
           setShowTelepathyScore(oldVal);
           localStorage.setItem('ga_show_telepathy', String(oldVal));
+          if (esito && esito.motivo === 'credenziali_non_valide') {
+            segnalaChiaveScaduta();
+            return;
+          }
           alert(t.profileSaveFailed);
         }
       }
@@ -6829,11 +6907,15 @@ ${ritual.description || ''}`
       const {
         data: esito,
         error
-      } = await supabase.rpc('change_password', {
+      } = await cambioChiave(supabase.rpc('change_password', {
         p_nickname: nickname,
         p_old_hash: passwordHash,
         p_new_hash: hash
-      });
+      }));
+      if (esito && esito.motivo === 'credenziali_non_valide') {
+        segnalaChiaveScaduta();
+        return;
+      }
       if (error || !esito || !esito.ok) {
         setProfilePasswordMsg(t.passwordChangeFailed);
         return;
