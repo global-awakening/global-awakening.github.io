@@ -5446,7 +5446,7 @@
                                   }}>
                                     <span style={{fontSize: '1rem'}}>{icon}</span>
                                     <span style={{flex: 1, color: '#e5e7eb', fontSize: '0.82rem'}}>
-                                      {n.message}
+                                      {window.NotificheHelpers ? window.NotificheHelpers.testoNotifica(n, lang) : n.message}
                                       {isExpiredInvite && (
                                         <span style={{
                                           marginLeft: '0.4rem',

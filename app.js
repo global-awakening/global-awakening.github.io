@@ -6015,7 +6015,7 @@ function GlobalAwakeningPlatform() {
         color: '#e5e7eb',
         fontSize: '0.82rem'
       }
-    }, n.message, isExpiredInvite && React.createElement("span", {
+    }, window.NotificheHelpers ? window.NotificheHelpers.testoNotifica(n, lang) : n.message, isExpiredInvite && React.createElement("span", {
       style: {
         marginLeft: '0.4rem',
         background: 'rgba(239,68,68,0.2)',
