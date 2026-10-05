@@ -173,18 +173,6 @@
     return { tipo: 'messaggio', motivo: motivoDaStato(i.status), nome: i.nome };
   }
 
-  // Solo fra la 32a e la 32b: un'app vecchia accetta senza match_id, creando il match con
-  // user1_id = chi ha invitato. Si entra nel match attivo in cui sono user1, nato dopo l'invito.
-  function matchDiRipiego(matches, mioSid, invitoCreatoIl) {
-    var t0 = Date.parse(invitoCreatoIl);
-    if (isNaN(t0) || !matches || !matches.length) return null;
-    var buoni = matches.filter(function (m) {
-      return m && m.user1_id === mioSid && !m.ended_at && Date.parse(m.created_at) >= t0;
-    });
-    buoni.sort(function (a, b) { return Date.parse(a.created_at) - Date.parse(b.created_at); });
-    return buoni[0] || null;
-  }
-
   function attesaFinita(respondedAtIso, scartoMs, adessoLocaleMs, limiteMs) {
     var t = Date.parse(respondedAtIso);
     if (isNaN(t)) return true;
@@ -198,7 +186,7 @@
 
   var api = { testo: testo, chiaveDaErrore: chiaveDaErrore, scarto: scarto, secondiRimasti: secondiRimasti, mmss: mmss,
               leggiInvitoDaUrl: leggiInvitoDaUrl, esitoApertura: esitoApertura, motivoDaStato: motivoDaStato,
-              matchDiRipiego: matchDiRipiego, attesaFinita: attesaFinita, percentuale: percentuale };
+              attesaFinita: attesaFinita, percentuale: percentuale };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else globale.InvitiHelpers = api;

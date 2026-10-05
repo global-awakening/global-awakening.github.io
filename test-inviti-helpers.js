@@ -48,17 +48,7 @@ uguale('il nome del messaggio arriva fino al testo', H.testo(rif.motivo, 'it', {
 // motivoDaStato come il server (telepatia_motivo_stato)
 uguale('motivoDaStato', ['accepted', 'declined', 'cancelled', 'expired', 'pending', 'boh'].map(H.motivoDaStato).join(','), 'gia_accettato,rifiutato,annullato,scaduto,scaduto,scaduto');
 
-// Ripiego della tenuta (accettato da un'app vecchia, senza match_id)
-const creato = iso(adessoTel - 30000);
-const matches = [
-  { id: 'vecchio', user1_id: 'io', user2_id: 'x', created_at: iso(adessoTel - 60000) },
-  { id: 'finito', user1_id: 'io', user2_id: 'y', created_at: iso(adessoTel - 10000), ended_at: iso(adessoTel) },
-  { id: 'altrui', user1_id: 'z', user2_id: 'io', created_at: iso(adessoTel - 5000) },
-  { id: 'giusto', user1_id: 'io', user2_id: 'w', created_at: iso(adessoTel - 20000) },
-];
-uguale('ripiego: il match attivo in cui sono user1, creato dopo l\'invito', (H.matchDiRipiego(matches, 'io', creato) || {}).id, 'giusto');
-uguale('ripiego: niente se non c\'è', H.matchDiRipiego(matches.slice(0, 3), 'io', creato), null);
-uguale('ripiego: lista vuota o nulla', `${H.matchDiRipiego([], 'io', creato)}|${H.matchDiRipiego(null, 'io', creato)}`, 'null|null');
+uguale('dopo la 32b il ripiego della tenuta non esiste più', typeof H.matchDiRipiego, 'undefined');
 
 // Attesa di chi ha accettato: 3 minuti dall'ora del server
 uguale('attesa: 179 s (telefono avanti di 5 minuti) non è finita', H.attesaFinita(iso(serverIndietro - 179000), s, adessoTel), false);

@@ -2538,14 +2538,7 @@
                 if (u.status === 'pending') { setInvitoInUscita(u); return; }
                 if (u.status === 'accepted') {
                   if (u.match_id) { await entraNelMatchDaInvito(u.match_id); return; }
-                  // TENUTA (fra la 32a e la 32b; si toglie con la 32b): un'app vecchia accetta senza
-                  // match_id e crea il match con user1_id = chi ha invitato. Funziona solo con
-                  // quest'app aperta: senza match_id non parte nessuna push «accettato».
-                  const { data: miei, error: errMiei } = await supabase.from('telepathy_matches').select('*').eq('user1_id', sessionId);
-                  // Errore di rete: si riprova al giro dopo, senza concludere niente.
-                  if (fermo || errMiei) return;
-                  const m = IH ? IH.matchDiRipiego(miei, sessionId, u.created_at) : null;
-                  if (m) await entraNelMatchDaInvito(m.id, m);
+                  // Dalla 32b un'accettazione ha sempre il match_id (solo le RPC scrivono gli inviti).
                   return;
                 }
                 setDirectInviteTarget(null);

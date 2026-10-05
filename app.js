@@ -2782,13 +2782,6 @@ function GlobalAwakeningPlatform() {
             await entraNelMatchDaInvito(u.match_id);
             return;
           }
-          const {
-            data: miei,
-            error: errMiei
-          } = await supabase.from('telepathy_matches').select('*').eq('user1_id', sessionId);
-          if (fermo || errMiei) return;
-          const m = IH ? IH.matchDiRipiego(miei, sessionId, u.created_at) : null;
-          if (m) await entraNelMatchDaInvito(m.id, m);
           return;
         }
         setDirectInviteTarget(null);
