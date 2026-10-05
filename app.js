@@ -409,7 +409,16 @@ const translations = {
     passwordSet: "Password set!",
     profileSaveFailed: "Could not save your profile. Please log in again.",
     passwordChangeFailed: "Could not change the password. Please log in again.",
-    registrationError: "Registration failed. Please try again.",
+    registrationFailed: "Registration failed. Please try again.",
+    fillNameDateTime: "Please fill in name, date and time.",
+    noNotifications: "No notifications",
+    go: "Go",
+    ok: "OK",
+    seeOnlineUsers: "See online users (Community)",
+    mainSections: "Main sections",
+    worldMapAlt: "World map",
+    password: "Password",
+    newPasswordPh: "New password...",
     newAccountCreated: "Account created! Welcome!",
     tabGuest: "Guest",
     tabLogin: "Login",
@@ -514,8 +523,17 @@ const translations = {
       until: "Until",
       weekdaysShort: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
       everyDay: "Every day",
-      atTime: "at",
+      whenAt: (quando, ora) => `${quando} at ${ora}`,
       dayOf: (n, m) => `day ${n} of ${m}`,
+      namePh: "e.g., Full Moon Meditation",
+      descPh: "Describe the ritual...",
+      types: {
+        consciousness: "Consciousness Elevation",
+        dna: "DNA Activation",
+        lightbody: "Light Body Activation",
+        unity: "Unity Consciousness",
+        ascension: "Ascension Portal"
+      },
       leave: "Leave",
       leaveFailed: "Could not leave the ritual.",
       stop: "Stop",
@@ -664,14 +682,14 @@ const translations = {
       randomMatch: "Random Match",
       searching: "Searching for partner...",
       queuePosition: "Queue position",
-      starseedWaiting: "starseed waiting",
-      starseedsWaiting: "starseeds waiting",
+      waiting: n => `${n} ${n > 1 ? "starseeds" : "starseed"} waiting`,
       cancel: "Cancel",
       partnerLeftSuffix: "ended the session",
       yourPartnerFallback: "Your partner",
       backToLobby: "Back to lobby",
       differentChoices: "Different choices — continuing with",
       levelShapes: "Symbols",
+      levelShapesN: n => `${n} Symbols`,
       levelNumbers: "Numbers",
       levelWords: "Letters",
       you: "You",
@@ -738,7 +756,7 @@ const translations = {
       statusWaitingResult: "Waiting for result...",
       statusSent: "has sent! Guess.",
       statusChoosing: "is choosing...",
-      partnerOffline: "is no longer online — go back to the lobby and pick another partner.",
+      partnerOfflineN: nick => `${nick} is no longer online — go back to the lobby and pick another partner.`,
       inviteModalTitle: "Telepathy Training Invite",
       inviteModalBody: "wants to do telepathy training with you!",
       acceptBtn: "Accept",
@@ -813,7 +831,16 @@ const translations = {
     passwordSet: "Password impostata!",
     profileSaveFailed: "Non è stato possibile salvare il profilo. Rientra e riprova.",
     passwordChangeFailed: "Non è stato possibile cambiare la password. Rientra e riprova.",
-    registrationError: "Registrazione non riuscita. Riprova.",
+    registrationFailed: "Registrazione non riuscita. Riprova.",
+    fillNameDateTime: "Compila nome, data e ora.",
+    noNotifications: "Nessuna notifica",
+    go: "Vai",
+    ok: "OK",
+    seeOnlineUsers: "Vedi gli utenti online (Community)",
+    mainSections: "Sezioni principali",
+    worldMapAlt: "Mappa del mondo",
+    password: "Password",
+    newPasswordPh: "Nuova password...",
     newAccountCreated: "Account creato! Benvenuto!",
     tabGuest: "Ospite",
     tabLogin: "Accedi",
@@ -918,8 +945,17 @@ const translations = {
       until: "Fino al",
       weekdaysShort: ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"],
       everyDay: "Ogni giorno",
-      atTime: "alle",
+      whenAt: (quando, ora) => `${quando} alle ${ora}`,
       dayOf: (n, m) => `giorno ${n} di ${m}`,
+      namePh: "es. Meditazione della Luna Piena",
+      descPh: "Descrivi il rituale...",
+      types: {
+        consciousness: "Elevazione della Coscienza",
+        dna: "Attivazione del DNA",
+        lightbody: "Attivazione del Corpo di Luce",
+        unity: "Coscienza di Unità",
+        ascension: "Portale dell'Ascensione"
+      },
       leave: "Lascia",
       leaveFailed: "Non è stato possibile lasciare il rituale.",
       stop: "Ferma",
@@ -1068,14 +1104,14 @@ const translations = {
       randomMatch: "Abbinamento Random",
       searching: "Cerco un partner...",
       queuePosition: "Posizione in coda",
-      starseedWaiting: "starseed in attesa",
-      starseedsWaiting: "starseed in attesa",
+      waiting: n => `${n} starseed in attesa`,
       cancel: "Annulla",
       partnerLeftSuffix: "ha terminato la sessione",
       yourPartnerFallback: "Il tuo partner",
       backToLobby: "Torna alla lobby",
       differentChoices: "Scelte diverse — si continua con",
       levelShapes: "Simboli",
+      levelShapesN: n => `${n} Simboli`,
       levelNumbers: "Numeri",
       levelWords: "Lettere",
       you: "Tu",
@@ -1142,7 +1178,7 @@ const translations = {
       statusWaitingResult: "In attesa del risultato...",
       statusSent: "ha inviato! Indovina.",
       statusChoosing: "sta scegliendo...",
-      partnerOffline: "non e' piu' online — torna alla lobby e scegli un altro partner.",
+      partnerOfflineN: nick => `${nick} non e' piu' online — torna alla lobby e scegli un altro partner.`,
       inviteModalTitle: "Invito all'Allenamento Telepatico",
       inviteModalBody: "ti vuole fare training telepatico!",
       acceptBtn: "Accetta",
@@ -1441,7 +1477,7 @@ function GlobalAwakeningPlatform() {
     if (level === 'numbers') return t.telepathy.levelNumbers;
     if (level === 'words') return t.telepathy.levelWords;
     const m = /^lvl(\d+)$/.exec(level || '');
-    return m ? `${m[1]} ${t.telepathy.levelShapes}` : t.telepathy.levelShapes;
+    return m ? t.telepathy.levelShapesN(m[1]) : t.telepathy.levelShapes;
   };
   const avatarEmojis = ['🌟', '✨', '🔮', '🧿', '💫', '⭐', '🌙', '☀️', '🌈', '🦋', '🕊️', '🐉', '🧬', '👁️', '💜', '🔥', '🌸', '🍃', '💎', '🪷'];
   const starseedTypes = ['pleiadian', 'sirian', 'arcturian', 'andromedan', 'lyran', 'orion', 'universal'];
@@ -2302,7 +2338,7 @@ function GlobalAwakeningPlatform() {
         nickname_in_uso: t.usernameAlreadyUsed,
         troppi_tentativi: t.tooManyAttempts
       }[reg.motivo];
-      setLoginError(msg || t.registrationError || 'Registration failed. Please try again.');
+      setLoginError(msg || t.registrationFailed);
       setAuthLoading(false);
       return;
     }
@@ -3519,7 +3555,7 @@ function GlobalAwakeningPlatform() {
     } = await supabase.from('online_users').select('id,last_seen').eq('id', savedPartner.id);
     const stillOnline = presence && presence.length > 0 && Date.now() - new Date(presence[0].last_seen).getTime() < 30000;
     if (!stillOnline) {
-      alert(`${savedPartner.nickname} ${t.telepathy.partnerOffline}`);
+      alert(t.telepathy.partnerOfflineN(savedPartner.nickname));
       return;
     }
     if (matchId) {
@@ -3889,12 +3925,12 @@ function GlobalAwakeningPlatform() {
   };
   const createRitual = async () => {
     if (!newRitual.name || !newRitual.date || !newRitual.time) {
-      alert('Please fill in name, date and time.');
+      alert(t.fillNameDateTime);
       return;
     }
     const istanteLocale = new Date(`${newRitual.date}T${newRitual.time}`);
     if (isNaN(istanteLocale.getTime())) {
-      alert('Please fill in name, date and time.');
+      alert(t.fillNameDateTime);
       return;
     }
     const dataUtc = istanteLocale.toISOString().slice(0, 10);
@@ -4312,7 +4348,7 @@ function GlobalAwakeningPlatform() {
       minute: '2-digit',
       hour12: false
     }).format(istante);
-    return `${quando} ${t.rituals.atTime} ${ora}`;
+    return t.rituals.whenAt(quando, ora);
   };
   const MUSIC_SRC = 'assets/meditation-music-rockot.mp3';
   const MUSIC_VOLUME = 0.35;
@@ -4765,8 +4801,8 @@ function GlobalAwakeningPlatform() {
         setTempPassword(e.target.value);
         setLoginError('');
       },
-      placeholder: "Password",
-      "aria-label": "Password"
+      placeholder: t.password,
+      "aria-label": t.password
     }), React.createElement("button", {
       onClick: handleLogin,
       className: "btn-primary",
@@ -4935,8 +4971,8 @@ function GlobalAwakeningPlatform() {
         setTempPassword(e.target.value);
         setLoginError('');
       },
-      placeholder: "Password",
-      "aria-label": "Password"
+      placeholder: t.password,
+      "aria-label": t.password
     }), React.createElement("button", {
       onClick: handleRegister,
       className: "btn-primary",
@@ -5104,7 +5140,7 @@ function GlobalAwakeningPlatform() {
       textAlign: 'center',
       padding: '0.5rem'
     }
-  }, "Nessuna notifica") : React.createElement(React.Fragment, null, notifItems.map(n => {
+  }, t.noNotifications) : React.createElement(React.Fragment, null, notifItems.map(n => {
     const tabTarget = n.type === 'telepathy_invite' ? 'telepathy' : n.type === 'comment' ? 'consciousness' : n.type === 'private_message' ? null : 'rituals';
     const icon = n.type === 'comment' || n.type === 'ritual_comment' ? '💬' : n.type === 'ritual_join' ? '🌟' : n.type === 'private_message' ? '✉️' : n.type === 'telepathy_declined' ? '❌' : '🧠';
     const isExpiredInvite = n.type === 'telepathy_invite' && !incomingInvite;
@@ -5155,7 +5191,7 @@ function GlobalAwakeningPlatform() {
         padding: '0.2rem 0.6rem',
         whiteSpace: 'nowrap'
       }
-    }, isExpiredInvite ? 'OK' : 'Vai'));
+    }, isExpiredInvite ? t.ok : t.go));
   })))), React.createElement("button", {
     onClick: () => setShowLogoutConfirm(true),
     className: "btn-secondary px-3 py-2",
@@ -5201,7 +5237,7 @@ function GlobalAwakeningPlatform() {
     style: {
       cursor: 'pointer'
     },
-    title: "Vedi gli utenti online (Community)"
+    title: t.seeOnlineUsers
   }, React.createElement("div", {
     className: "text-2xl font-bold",
     style: {
@@ -5252,7 +5288,7 @@ function GlobalAwakeningPlatform() {
     "aria-hidden": "true"
   }))))), React.createElement("nav", {
     className: "main-nav-bottom",
-    "aria-label": "Sezioni principali"
+    "aria-label": t.mainSections
   }, ['rituals', 'telepathy', 'consciousness'].map(tab => React.createElement("button", {
     key: tab,
     onClick: () => setActiveTab(tab),
@@ -5362,7 +5398,7 @@ function GlobalAwakeningPlatform() {
     style: {
       marginTop: '0.75rem'
     }
-  }, "OK")), React.createElement("div", {
+  }, t.ok)), React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
@@ -5784,7 +5820,7 @@ ${ritual.description || ''}`
     className: "map-container"
   }, React.createElement("img", {
     src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 500'%3E%3Crect fill='%23111827' width='1000' height='500'/%3E%3Cpath fill='%231f2937' d='M0 250 Q 250 200 500 250 T 1000 250 L 1000 500 L 0 500 Z'/%3E%3C/svg%3E",
-    alt: "World map",
+    alt: t.worldMapAlt,
     style: {
       width: '100%',
       height: '100%',
@@ -6123,7 +6159,7 @@ ${ritual.description || ''}`
     className: "text-white font-bold"
   }, queuePosition), " / ", queueSize), React.createElement("p", {
     className: "text-secondary text-sm mt-2"
-  }, queueSize - 1, " ", queueSize > 2 ? t.telepathy.starseedsWaiting : t.telepathy.starseedWaiting)), React.createElement("button", {
+  }, t.telepathy.waiting(queueSize - 1))), React.createElement("button", {
     onClick: () => setSearchingPartner(false),
     className: "btn-secondary"
   }, t.telepathy.cancel)), (partner || sessionEnded) && React.createElement("div", {
@@ -6939,7 +6975,7 @@ ${ritual.description || ''}`
       setProfilePassword(e.target.value);
       setProfilePasswordMsg('');
     },
-    placeholder: "New password...",
+    placeholder: t.newPasswordPh,
     wrapperStyle: {
       flex: 1
     }
@@ -8114,7 +8150,7 @@ ${ritual.description || ''}`
       ...newRitual,
       name: e.target.value
     }),
-    placeholder: "e.g., Full Moon Meditation",
+    placeholder: t.rituals.namePh,
     maxLength: 80
   })), React.createElement("div", null, React.createElement("label", {
     className: "text-white text-sm mb-2",
@@ -8127,7 +8163,7 @@ ${ritual.description || ''}`
       ...newRitual,
       description: e.target.value
     }),
-    placeholder: "Describe the ritual...",
+    placeholder: t.rituals.descPh,
     rows: "5",
     maxLength: 5000
   }), 5000 - newRitual.description.length < 500 && React.createElement("div", {
@@ -8148,7 +8184,7 @@ ${ritual.description || ''}`
   }, ritualTypes.map(type => React.createElement("option", {
     key: type.id,
     value: type.id
-  }, type.icon, " ", type.name)))), React.createElement("div", null, React.createElement("label", {
+  }, type.icon, " ", t.rituals.types[type.id])))), React.createElement("div", null, React.createElement("label", {
     className: "text-white text-sm mb-2",
     style: {
       display: 'block'

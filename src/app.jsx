@@ -177,7 +177,16 @@
             passwordSet: "Password set!",
             profileSaveFailed: "Could not save your profile. Please log in again.",
             passwordChangeFailed: "Could not change the password. Please log in again.",
-            registrationError: "Registration failed. Please try again.",
+            registrationFailed: "Registration failed. Please try again.",
+            fillNameDateTime: "Please fill in name, date and time.",
+            noNotifications: "No notifications",
+            go: "Go",
+            ok: "OK",
+            seeOnlineUsers: "See online users (Community)",
+            mainSections: "Main sections",
+            worldMapAlt: "World map",
+            password: "Password",
+            newPasswordPh: "New password...",
             newAccountCreated: "Account created! Welcome!",
             tabGuest: "Guest",
             tabLogin: "Login",
@@ -273,7 +282,9 @@
               title: "Global Rituals",
               repeat: "Repeats", repeatNever: "Just once", repeatDaily: "Every day", repeatDays: "Chosen days",
               until: "Until", weekdaysShort: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-              everyDay: "Every day", atTime: "at", dayOf: (n, m) => `day ${n} of ${m}`,
+              everyDay: "Every day", whenAt: (quando, ora) => `${quando} at ${ora}`, dayOf: (n, m) => `day ${n} of ${m}`,
+              namePh: "e.g., Full Moon Meditation", descPh: "Describe the ritual...",
+              types: { consciousness: "Consciousness Elevation", dna: "DNA Activation", lightbody: "Light Body Activation", unity: "Unity Consciousness", ascension: "Ascension Portal" },
               leave: "Leave", leaveFailed: "Could not leave the ritual.",
               stop: "Stop", stopTitle: "Stop the cycle?",
               stopBody: "The cycle stops: there will be no more sessions. The current one, if any, ends normally.",
@@ -402,14 +413,13 @@
               randomMatch: "Random Match",
               searching: "Searching for partner...",
               queuePosition: "Queue position",
-              starseedWaiting: "starseed waiting",
-              starseedsWaiting: "starseeds waiting",
+              waiting: (n) => `${n} ${n > 1 ? "starseeds" : "starseed"} waiting`,
               cancel: "Cancel",
               partnerLeftSuffix: "ended the session",
               yourPartnerFallback: "Your partner",
               backToLobby: "Back to lobby",
               differentChoices: "Different choices — continuing with",
-              levelShapes: "Symbols",
+              levelShapes: "Symbols", levelShapesN: (n) => `${n} Symbols`,
               levelNumbers: "Numbers",
               levelWords: "Letters",
               you: "You",
@@ -476,7 +486,7 @@
               statusWaitingResult: "Waiting for result...",
               statusSent: "has sent! Guess.",
               statusChoosing: "is choosing...",
-              partnerOffline: "is no longer online — go back to the lobby and pick another partner.",
+              partnerOfflineN: (nick) => `${nick} is no longer online — go back to the lobby and pick another partner.`,
               inviteModalTitle: "Telepathy Training Invite",
               inviteModalBody: "wants to do telepathy training with you!",
               acceptBtn: "Accept",
@@ -551,7 +561,16 @@
             passwordSet: "Password impostata!",
             profileSaveFailed: "Non è stato possibile salvare il profilo. Rientra e riprova.",
             passwordChangeFailed: "Non è stato possibile cambiare la password. Rientra e riprova.",
-            registrationError: "Registrazione non riuscita. Riprova.",
+            registrationFailed: "Registrazione non riuscita. Riprova.",
+            fillNameDateTime: "Compila nome, data e ora.",
+            noNotifications: "Nessuna notifica",
+            go: "Vai",
+            ok: "OK",
+            seeOnlineUsers: "Vedi gli utenti online (Community)",
+            mainSections: "Sezioni principali",
+            worldMapAlt: "Mappa del mondo",
+            password: "Password",
+            newPasswordPh: "Nuova password...",
             newAccountCreated: "Account creato! Benvenuto!",
             tabGuest: "Ospite",
             tabLogin: "Accedi",
@@ -647,7 +666,9 @@
               title: "Rituali Globali",
               repeat: "Si ripete", repeatNever: "Una volta sola", repeatDaily: "Ogni giorno", repeatDays: "Giorni scelti",
               until: "Fino al", weekdaysShort: ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"],
-              everyDay: "Ogni giorno", atTime: "alle", dayOf: (n, m) => `giorno ${n} di ${m}`,
+              everyDay: "Ogni giorno", whenAt: (quando, ora) => `${quando} alle ${ora}`, dayOf: (n, m) => `giorno ${n} di ${m}`,
+              namePh: "es. Meditazione della Luna Piena", descPh: "Descrivi il rituale...",
+              types: { consciousness: "Elevazione della Coscienza", dna: "Attivazione del DNA", lightbody: "Attivazione del Corpo di Luce", unity: "Coscienza di Unità", ascension: "Portale dell'Ascensione" },
               leave: "Lascia", leaveFailed: "Non è stato possibile lasciare il rituale.",
               stop: "Ferma", stopTitle: "Fermare il ciclo?",
               stopBody: "Il ciclo si ferma: non ci saranno altri appuntamenti. Quello in corso, se c'è, finisce normalmente.",
@@ -776,14 +797,13 @@
               randomMatch: "Abbinamento Random",
               searching: "Cerco un partner...",
               queuePosition: "Posizione in coda",
-              starseedWaiting: "starseed in attesa",
-              starseedsWaiting: "starseed in attesa",
+              waiting: (n) => `${n} starseed in attesa`,
               cancel: "Annulla",
               partnerLeftSuffix: "ha terminato la sessione",
               yourPartnerFallback: "Il tuo partner",
               backToLobby: "Torna alla lobby",
               differentChoices: "Scelte diverse — si continua con",
-              levelShapes: "Simboli",
+              levelShapes: "Simboli", levelShapesN: (n) => `${n} Simboli`,
               levelNumbers: "Numeri",
               levelWords: "Lettere",
               you: "Tu",
@@ -850,7 +870,7 @@
               statusWaitingResult: "In attesa del risultato...",
               statusSent: "ha inviato! Indovina.",
               statusChoosing: "sta scegliendo...",
-              partnerOffline: "non e' piu' online — torna alla lobby e scegli un altro partner.",
+              partnerOfflineN: (nick) => `${nick} non e' piu' online — torna alla lobby e scegli un altro partner.`,
               inviteModalTitle: "Invito all'Allenamento Telepatico",
               inviteModalBody: "ti vuole fare training telepatico!",
               acceptBtn: "Accetta",
@@ -1188,7 +1208,7 @@
             if (level === 'numbers') return t.telepathy.levelNumbers;
             if (level === 'words') return t.telepathy.levelWords;
             const m = /^lvl(\d+)$/.exec(level || '');
-            return m ? `${m[1]} ${t.telepathy.levelShapes}` : t.telepathy.levelShapes;
+            return m ? t.telepathy.levelShapesN(m[1]) : t.telepathy.levelShapes;
           };
 
           const avatarEmojis = ['🌟', '✨', '🔮', '🧿', '💫', '⭐', '🌙', '☀️', '🌈', '🦋', '🕊️', '🐉', '🧬', '👁️', '💜', '🔥', '🌸', '🍃', '💎', '🪷'];
@@ -2048,7 +2068,7 @@
             if (!reg.ok) {
               const msg = { email_in_uso: t.emailAlreadyUsed, nickname_in_uso: t.usernameAlreadyUsed,
                             troppi_tentativi: t.tooManyAttempts }[reg.motivo];
-              setLoginError(msg || t.registrationError || 'Registration failed. Please try again.');
+              setLoginError(msg || t.registrationFailed);
               setAuthLoading(false);
               return;
             }
@@ -3218,7 +3238,7 @@
             const stillOnline = presence && presence.length > 0 &&
               (Date.now() - new Date(presence[0].last_seen).getTime() < 30000);
             if (!stillOnline) {
-              alert(`${savedPartner.nickname} ${t.telepathy.partnerOffline}`);
+              alert(t.telepathy.partnerOfflineN(savedPartner.nickname));
               return;
             }
             // Prima si chiude il match appena finito, ASPETTANDO la risposta: la cancellazione di
@@ -3587,7 +3607,7 @@
 
           const createRitual = async () => {
             if (!newRitual.name || !newRitual.date || !newRitual.time) {
-              alert('Please fill in name, date and time.');
+              alert(t.fillNameDateTime);
               return;
             }
 
@@ -3596,7 +3616,7 @@
             // le 23:00 locali — e lo scarto cambiava da solo al cambio dell'ora legale.
             const istanteLocale = new Date(`${newRitual.date}T${newRitual.time}`);
             if (isNaN(istanteLocale.getTime())) {
-              alert('Please fill in name, date and time.');
+              alert(t.fillNameDateTime);
               return;
             }
             const dataUtc = istanteLocale.toISOString().slice(0, 10);
@@ -4055,7 +4075,7 @@
             const istante = new Date(`${ritual.date}T${ritual.time}Z`);
             const ora = isNaN(istante.getTime()) ? '' : new Intl.DateTimeFormat(LOC,
               { hour: '2-digit', minute: '2-digit', hour12: false }).format(istante);
-            return `${quando} ${t.rituals.atTime} ${ora}`;
+            return t.rituals.whenAt(quando, ora);
           };
 
           // Musica di sottofondo. Suona solo quando una sessione è davvero in corso: un rituale
@@ -4386,8 +4406,8 @@
                           nascondi={t.hidePassword}
                           value={tempPassword}
                           onChange={(e) => { setTempPassword(e.target.value); setLoginError(''); }}
-                          placeholder="Password"
-                          aria-label="Password"
+                          placeholder={t.password}
+                          aria-label={t.password}
                         />
                         <button onClick={handleLogin} className="btn-primary" style={{width: '100%', fontSize: '1.125rem'}} disabled={!tempEmail.trim() || !tempPassword.trim() || authLoading}>
                           {authLoading ? '…' : t.login}
@@ -4503,8 +4523,8 @@
                           nascondi={t.hidePassword}
                           value={tempPassword}
                           onChange={(e) => { setTempPassword(e.target.value); setLoginError(''); }}
-                          placeholder="Password"
-                          aria-label="Password"
+                          placeholder={t.password}
+                          aria-label={t.password}
                         />
                         <button onClick={handleRegister} className="btn-primary" style={{width: '100%', fontSize: '1.125rem'}} disabled={!tempNickname.trim() || !tempEmail.trim() || !tempPassword.trim() || authLoading}>
                           {authLoading ? '…' : t.register}
@@ -4628,7 +4648,7 @@
                             zIndex: 200, boxShadow: '0 8px 32px rgba(0,0,0,0.5)'
                           }}>
                             {notifItems.length === 0 ? (
-                              <p style={{color: '#a78bfa', fontSize: '0.85rem', textAlign: 'center', padding: '0.5rem'}}>Nessuna notifica</p>
+                              <p style={{color: '#a78bfa', fontSize: '0.85rem', textAlign: 'center', padding: '0.5rem'}}>{t.noNotifications}</p>
                             ) : (
                               <>
                                 {notifItems.map(n => {
@@ -4670,7 +4690,7 @@
                                       onClick={(e) => { e.stopPropagation(); markOneNotifRead(n, tabTarget); }}
                                       className="btn-primary"
                                       style={{fontSize: '0.75rem', padding: '0.2rem 0.6rem', whiteSpace: 'nowrap'}}
-                                    >{isExpiredInvite ? 'OK' : 'Vai'}</button>
+                                    >{isExpiredInvite ? t.ok : t.go}</button>
                                   </div>);
                                 })}
                               </>
@@ -4710,7 +4730,7 @@
                         }, 100);
                       }}
                       style={{cursor: 'pointer'}}
-                      title="Vedi gli utenti online (Community)"
+                      title={t.seeOnlineUsers}
                     >
                       <div className="text-2xl font-bold" style={{color: '#4ade80', textDecoration: 'underline', textDecorationColor: 'rgba(74,222,128,0.4)', textUnderlineOffset: '0.2rem'}}>{onlineUsers.length}</div>
                       <div className="text-secondary text-xs">{t.stats.onlineNow}</div>
@@ -4753,7 +4773,7 @@
               </div>
 
               {/* Navigazione principale in basso — visibile solo su mobile (via CSS .main-nav-bottom) */}
-              <nav className="main-nav-bottom" aria-label="Sezioni principali">
+              <nav className="main-nav-bottom" aria-label={t.mainSections}>
                 {['rituals', 'telepathy', 'consciousness'].map((tab) => (
                   <button key={tab} onClick={() => setActiveTab(tab)} className={`nav-item ${activeTab === tab ? 'on' : ''}`} aria-current={activeTab === tab ? 'page' : undefined}>
                     <span className="nav-ic" aria-hidden="true">{ {rituals: '🕯️', telepathy: '🔮', consciousness: '🌌'}[tab] }</span>
@@ -4807,7 +4827,7 @@
                     {mostraInstallaPerPush && (
                       <div data-test="push-installa-ios" className="bg-glass rounded-2xl border-glass" style={{padding: '1rem 1.25rem', marginBottom: '1rem'}}>
                         <p className="text-white text-sm" style={{margin: 0}}>{t.pushIosInstalla}</p>
-                        <button onClick={() => setMostraInstallaPerPush(false)} className="btn-secondary" style={{marginTop: '0.75rem'}}>OK</button>
+                        <button onClick={() => setMostraInstallaPerPush(false)} className="btn-secondary" style={{marginTop: '0.75rem'}}>{t.ok}</button>
                       </div>
                     )}
 
@@ -5117,7 +5137,7 @@ ${ritual.description || ''}` })}
                       <div className="map-container">
                         <img
                           src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 500'%3E%3Crect fill='%23111827' width='1000' height='500'/%3E%3Cpath fill='%231f2937' d='M0 250 Q 250 200 500 250 T 1000 250 L 1000 500 L 0 500 Z'/%3E%3C/svg%3E"
-                          alt="World map"
+                          alt={t.worldMapAlt}
                           style={{width: '100%', height: '100%', objectFit: 'cover'}}
                         />
                         {onlineUsers.map(user => {
@@ -5291,7 +5311,7 @@ ${ritual.description || ''}` })}
                         {queueSize > 1 && (
                           <div className="bg-glass-dark rounded-xl p-4">
                             <p className="text-primary">{t.telepathy.queuePosition}: <span className="text-white font-bold">{queuePosition}</span> / {queueSize}</p>
-                            <p className="text-secondary text-sm mt-2">{queueSize - 1} {queueSize > 2 ? t.telepathy.starseedsWaiting : t.telepathy.starseedWaiting}</p>
+                            <p className="text-secondary text-sm mt-2">{t.telepathy.waiting(queueSize - 1)}</p>
                           </div>
                         )}
                         <button onClick={() => setSearchingPartner(false)} className="btn-secondary">{t.telepathy.cancel}</button>
@@ -5776,7 +5796,7 @@ ${ritual.description || ''}` })}
                               nascondi={t.hidePassword}
                               value={profilePassword}
                               onChange={(e) => { setProfilePassword(e.target.value); setProfilePasswordMsg(''); }}
-                              placeholder="New password..."
+                              placeholder={t.newPasswordPh}
                               wrapperStyle={{flex: 1}}
                             />
                             <button
@@ -6472,7 +6492,7 @@ ${ritual.description || ''}` })}
                           type="text"
                           value={newRitual.name}
                           onChange={(e) => setNewRitual({...newRitual, name: e.target.value})}
-                          placeholder="e.g., Full Moon Meditation"
+                          placeholder={t.rituals.namePh}
                           maxLength={80}
                         />
                       </div>
@@ -6482,7 +6502,7 @@ ${ritual.description || ''}` })}
                         <textarea
                           value={newRitual.description}
                           onChange={(e) => setNewRitual({...newRitual, description: e.target.value})}
-                          placeholder="Describe the ritual..."
+                          placeholder={t.rituals.descPh}
                           rows="5"
                           maxLength={5000}
                         />
@@ -6496,7 +6516,7 @@ ${ritual.description || ''}` })}
                           <label className="text-white text-sm mb-2" style={{display: 'block'}}>{t.rituals.type}</label>
                           <select value={newRitual.type} onChange={(e) => setNewRitual({...newRitual, type: e.target.value})}>
                             {ritualTypes.map(type => (
-                              <option key={type.id} value={type.id}>{type.icon} {type.name}</option>
+                              <option key={type.id} value={type.id}>{type.icon} {t.rituals.types[type.id]}</option>
                             ))}
                           </select>
                         </div>
