@@ -138,10 +138,18 @@ self.addEventListener('push', (e) => {
     try {
       n = self.PushHelpers.costruisciNotifica(payload);
     } catch (_) {
-      const it = payload && payload.locale === 'it';
+      // La tabella sta qui e non in push-helpers.js perche' questo ramo scatta proprio quando
+      // push-helpers.js non si e' caricato: non si puo' chiedere i testi a lui.
+      const RIPIEGO = {
+        it: ["Apri l'app", 'Un rituale sta iniziando.'],
+        en: ['Open the app', 'A ritual is starting.'],
+        es: ['Abre la app', 'Un ritual está empezando.'],
+        fr: ["Ouvre l'app", 'Un rituel commence.']
+      };
+      const r = RIPIEGO[payload && payload.locale] || RIPIEGO.en;
       n = eInvito
-        ? { titolo: 'Global Awakening', corpo: it ? "Apri l'app" : 'Open the app', tag: 'invito-ripiego', url: 'app.html', azioni: [] }
-        : { titolo: 'Global Awakening', corpo: it ? 'Un rituale sta iniziando.' : 'A ritual is starting.', tag: 'rituale-ripiego', url: 'app.html', azioni: [] };
+        ? { titolo: 'Global Awakening', corpo: r[0], tag: 'invito-ripiego', url: 'app.html', azioni: [] }
+        : { titolo: 'Global Awakening', corpo: r[1], tag: 'rituale-ripiego', url: 'app.html', azioni: [] };
     }
 
     try {

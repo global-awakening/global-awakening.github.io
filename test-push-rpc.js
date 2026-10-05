@@ -121,6 +121,14 @@ async function pulisci() {
     });
     rifiutatoDavvero('locale non previsto rifiutato', r);
 
+    // 6a. Spagnolo e francese accettati (dalla 33_: prima della migration questo fallisce).
+    for (const l of ['es', 'fr']) {
+      r = await rpc('register_push_subscription', {
+        p_session_id: SID, p_endpoint: ENDPOINT + '_' + l, p_p256dh: 'a', p_auth: 'b', p_locale: l
+      });
+      r.status < 400 ? ok(l + ' accettato') : ko(l + ' accettato', r.status + ' ' + r.testo);
+    }
+
     // 6b. Host sconosciuto rifiutato. Senza questo controllo la tabella diventa una lista di
     //     URL arbitrari che il server chiama da solo ogni minuto: un trampolino verso host
     //     scelti da un estraneo.

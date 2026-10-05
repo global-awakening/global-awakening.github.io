@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
       }
 
       // 2. Invio.
-      const lingua = ab.locale === 'it' ? 'it' : 'en';
+      const lingua = ['it', 'en', 'es', 'fr'].includes(ab.locale) ? ab.locale : 'en';
       try {
         await webpush.sendNotification(
           { endpoint: ab.endpoint, keys: { p256dh: ab.p256dh, auth: ab.auth } },
