@@ -402,12 +402,11 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
       log('TestUserA', 'Invito diretto inviato a TestUserB');
       await pageA.waitForTimeout(2000);
 
-      // Debug: verifica invito nel DB
-      const invResp = await fetch(`${SUPABASE_URL}/rest/v1/telepathy_invites?select=*&status=eq.pending&order=created_at.desc&limit=5`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      const invites = await invResp.json();
-      log('DEBUG', `Inviti pending nel DB: ${JSON.stringify(invites.map(i => ({ from: i.from_name, to: i.to_name, to_id: i.to_id })))}`);
+      // Debug: verifica invito nel DB (dalla 32b solo con la chiave di servizio; il to_id non si
+      // stampa più: è un session_id).
+      const { body: invites } = await serviceFetch('telepathy_invites?select=from_name,to_name,status&status=eq.pending&order=created_at.desc&limit=5')
+        .catch(() => ({ body: [] }));
+      log('DEBUG', `Inviti pending nel DB: ${JSON.stringify(Array.isArray(invites) ? invites : [])}`);
 
       // Debug: sessionId di TestUserB dal browser B
       const sessionIdB = await pageB.evaluate(() => localStorage.getItem('ga_session_id') || 'no_ga_session_id');

@@ -2784,16 +2784,13 @@ function GlobalAwakeningPlatform() {
     const interval = setInterval(pollLevelChange, 2000);
     return () => clearInterval(interval);
   }, [matchId, showLevelBanner, currentLevel, roundCount]);
-  const entraNelMatchDaInvito = async (idMatch, gia) => {
-    let m = gia;
-    if (!m) {
-      const {
-        data,
-        error
-      } = await supabase.from('telepathy_matches').select('*').eq('id', idMatch);
-      if (error || !Array.isArray(data)) return null;
-      m = data[0];
-    }
+  const entraNelMatchDaInvito = async idMatch => {
+    const {
+      data,
+      error
+    } = await supabase.from('telepathy_matches').select('*').eq('id', idMatch);
+    if (error || !Array.isArray(data)) return null;
+    const m = data[0];
     if (!m || m.ended_at) {
       setDirectInviteTarget(null);
       setInvitoInUscita(null);
@@ -2844,13 +2841,9 @@ function GlobalAwakeningPlatform() {
             await entraNelMatchDaInvito(u.match_id);
             return;
           }
-          const {
-            data: miei,
-            error: errMiei
-          } = await supabase.from('telepathy_matches').select('*').eq('user1_id', sessionId);
-          if (fermo || errMiei) return;
-          const m = IH ? IH.matchDiRipiego(miei, sessionId, u.created_at) : null;
-          if (m) await entraNelMatchDaInvito(m.id, m);
+          setDirectInviteTarget(null);
+          setInvitoInUscita(null);
+          setAvvisoInviti(testoInviti('non_ce_piu'));
           return;
         }
         setDirectInviteTarget(null);

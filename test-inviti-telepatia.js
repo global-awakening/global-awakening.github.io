@@ -15,6 +15,7 @@
  */
 
 const { chromium } = require('playwright');
+const { purge } = require('./test-helpers');
 
 const APP_URL      = 'http://localhost:4321/app.html';
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
@@ -73,8 +74,11 @@ async function cleanup() {
     await sbFetch(`online_users?nickname=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
     await sbFetch(`notifications?user_nickname=eq.${encodeURIComponent(NICK_A)}`, { method: 'DELETE' });
     await sbFetch(`notifications?user_nickname=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
-    await sbFetch(`telepathy_invites?from_name=eq.${encodeURIComponent(NICK_A)}`, { method: 'DELETE' });
-    await sbFetch(`telepathy_invites?from_name=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
+    // Dalla 32b la tabella non è più scrivibile con la chiave pubblica: pulizia con la chiave di servizio.
+    await purge(SUPABASE_URL, [
+      `telepathy_invites?from_name=eq.${encodeURIComponent(NICK_A)}`,
+      `telepathy_invites?from_name=eq.${encodeURIComponent(NICK_B)}`,
+    ], { label: 'inviti-telepatia' });
   } catch (e) {
     console.warn('  Cleanup parzialmente fallito:', e.message);
   }
