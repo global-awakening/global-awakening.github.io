@@ -903,6 +903,28 @@ sezione('G1. la 32b chiude l\'accesso diretto', async () => {
   check(!(await errore(comeAnon(db, () => db.query(`SELECT count(*) FROM telepathy_invites`)))), '32b_ritorno: anon torna a leggere');
   const pol = (await righe(db, `SELECT policyname FROM pg_policies WHERE tablename = 'telepathy_invites'`)).map((x) => x.policyname).sort();
   check(JSON.stringify(pol) === JSON.stringify([...POLICY_DAL_CATALOGO].sort()), '32b_ritorno: le stesse policy del catalogo', pol);
+  // Voce per voce (comando, ruoli, USING, WITH CHECK), non solo i nomi: un «TO public» al posto
+  // di «TO anon» deve far fallire il test. Forme come le stampa pg_policies (catalogo cat8…pol7).
+  const DEF_DAL_CATALOGO = {
+    'Destinatario può aggiornare lo status': ['UPDATE', '{public}', '((auth.uid())::text = to_id)', null],
+    'Destinatario vede i propri inviti': ['SELECT', '{public}', '((auth.uid())::text = to_id)', null],
+    'Mittente può cancellare il proprio invito': ['DELETE', '{public}', '((auth.uid())::text = from_id)', null],
+    'Utenti autenticati possono creare inviti': ['INSERT', '{public}', null, '((auth.uid())::text = from_id)'],
+    'anon can delete telepathy_invites': ['DELETE', '{anon}', 'true', null],
+    'anon can insert telepathy_invites': ['INSERT', '{anon}', null, 'true'],
+    'anon can select telepathy_invites': ['SELECT', '{anon}', 'true', null],
+    'anon can update telepathy_invites': ['UPDATE', '{anon}', 'true', 'true'],
+  };
+  const defs = await righe(db, `SELECT policyname, cmd, roles::text AS ruoli, qual, with_check FROM pg_policies WHERE tablename = 'telepathy_invites'`);
+  for (const d of defs) {
+    const atteso = DEF_DAL_CATALOGO[d.policyname];
+    check(!!atteso && JSON.stringify([d.cmd, d.ruoli, d.qual, d.with_check]) === JSON.stringify(atteso),
+      `32b_ritorno: «${d.policyname}» uguale al catalogo (comando, ruoli, USING, WITH CHECK)`, [d, atteso]);
+  }
+  const priv = (await righe(db, `SELECT grantee || ':' || privilege_type AS g FROM information_schema.role_table_grants
+    WHERE table_name = 'telepathy_invites' AND grantee IN ('anon', 'authenticated') ORDER BY 1`)).map((x) => x.g);
+  const PRIV_CAT13 = ['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE'];
+  check(PRIV_CAT13.every((p) => priv.includes('anon:' + p) && priv.includes('authenticated:' + p)), '32b_ritorno: i sette privilegi di cat13 ad anon e authenticated', priv);
   check(!(await errore(applicaFile(db, 'supabase/sql/32b_ritorno.sql'))), '32b_ritorno si applica anche due volte (idempotente)');
 }, { con32a: false });
 
