@@ -146,7 +146,8 @@ self.addEventListener('push', (e) => {
         es: ['Abre la app', 'Un ritual está empezando.'],
         fr: ["Ouvre l'app", 'Un rituel commence.']
       };
-      const r = RIPIEGO[payload && payload.locale] || RIPIEGO.en;
+      const l = payload && payload.locale;
+      const r = Object.prototype.hasOwnProperty.call(RIPIEGO, l) ? RIPIEGO[l] : RIPIEGO.en;
       n = eInvito
         ? { titolo: 'Global Awakening', corpo: r[0], tag: 'invito-ripiego', url: 'app.html', azioni: [] }
         : { titolo: 'Global Awakening', corpo: r[1], tag: 'rituale-ripiego', url: 'app.html', azioni: [] };

@@ -128,6 +128,8 @@ uguale('it: nome rituale vuoto, «Un rituale»', costruisciNotifica({ tipo: 'sta
 uguale('en: nome rituale vuoto, «A ritual»', costruisciNotifica({ tipo: 'start', rituale: '', ritualeId: 3, locale: 'en' }).titolo, 'A ritual is starting now');
 uguale('de ripiega su en anche per i rituali', costruisciNotifica({ tipo: 'reminder', rituale: 'X', ritualeId: 1, locale: 'de' }).titolo, 'X is about to begin');
 uguale('de ripiega su en anche per gli inviti', costruisciNotifica({ tipo: 'invito', invito: ID, nome: 'A', locale: 'de' }).titolo, 'A invites you to a telepathy training');
+uguale('locale «constructor» ripiega su en (rituali)', costruisciNotifica({ tipo: 'start', rituale: 'X', ritualeId: 1, locale: 'constructor' }).titolo, 'X is starting now');
+uguale('locale «constructor» ripiega su en (inviti)', costruisciNotifica({ tipo: 'invito', invito: ID, nome: 'A', locale: 'constructor' }).titolo, 'A invites you to a telepathy training');
 uguale('locale mancante ripiega su en', costruisciNotifica({ tipo: 'invito', invito: ID, nome: 'A' }).titolo, 'A invites you to a telepathy training');
 
 console.log(`\n${passati} passati, ${falliti} falliti`);

@@ -23,6 +23,7 @@ const H = {
 
 const TS = Date.now();
 const SID = `push_test_${TS}`;
+const SID_LINGUE = `push_lingue_${TS}`;
 const ENDPOINT = `https://fcm.googleapis.com/fcm/send/test_${TS}`;
 
 let passati = 0, falliti = 0, saltati = 0;
@@ -69,6 +70,7 @@ async function pulisciSessione(sid) {
 
 async function pulisci() {
   await pulisciSessione(SID);
+  await pulisciSessione(SID_LINGUE);
 }
 
 (async () => {
@@ -122,12 +124,14 @@ async function pulisci() {
     rifiutatoDavvero('locale non previsto rifiutato', r);
 
     // 6a. Spagnolo e francese accettati (dalla 33_: prima della migration questo fallisce).
+    //     SID dedicato, ripulito subito: il punto 7 si aspetta zero righe sotto SID.
     for (const l of ['es', 'fr']) {
       r = await rpc('register_push_subscription', {
-        p_session_id: SID, p_endpoint: ENDPOINT + '_' + l, p_p256dh: 'a', p_auth: 'b', p_locale: l
+        p_session_id: SID_LINGUE, p_endpoint: ENDPOINT + '_' + l, p_p256dh: 'a', p_auth: 'b', p_locale: l
       });
       r.status < 400 ? ok(l + ' accettato') : ko(l + ' accettato', r.status + ' ' + r.testo);
     }
+    await pulisciSessione(SID_LINGUE);
 
     // 6b. Host sconosciuto rifiutato. Senza questo controllo la tabella diventa una lista di
     //     URL arbitrari che il server chiama da solo ogni minuto: un trampolino verso host

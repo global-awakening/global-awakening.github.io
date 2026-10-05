@@ -112,7 +112,7 @@ const invito = { tipo: 'invito', invito: ID, nome: 'Aurora', locale: 'it' };
   // Ripiego (push-helpers non caricato): il testo segue la lingua del payload, en se è sconosciuta.
   const attesi = {
     it: ["Apri l'app", 'Un rituale sta iniziando.'], en: ['Open the app', 'A ritual is starting.'],
-    es: ['Abre la app', 'Un ritual está empezando.'], fr: ["Ouvre l'app", 'Un rituel commence.'], de: ['Open the app', 'A ritual is starting.']
+    es: ['Abre la app', 'Un ritual está empezando.'], fr: ["Ouvre l'app", 'Un rituel commence.'], constructor: ['Open the app', 'A ritual is starting.'], de: ['Open the app', 'A ritual is starting.']
   };
   for (const l of Object.keys(attesi)) {
     sw = caricaSW({ userAgent: UA_CHROME, finestre: [finestra({ visibile: false })] });
