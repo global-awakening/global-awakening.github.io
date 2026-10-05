@@ -568,6 +568,7 @@ const translations = {
       thresholdHint: "The music will start with your touch",
       deleteFailed: "The ritual could not be deleted.",
       createRitual: "Propose Ritual",
+      testRitual: "⚡ Test (3 min)",
       noRituals: "No rituals yet. Be the first to propose one!",
       participants: "participants",
       startsIn: "Starts in",
@@ -990,6 +991,7 @@ const translations = {
       thresholdHint: "La musica partirà con il tuo tocco",
       deleteFailed: "Non è stato possibile cancellare il rituale.",
       createRitual: "Proponi Rituale",
+      testRitual: "⚡ Prova (3 min)",
       noRituals: "Nessun rituale ancora. Sii il primo a proporne uno!",
       participants: "partecipanti",
       startsIn: "Inizia tra",
@@ -1232,9 +1234,9 @@ const translations = {
     emailAlreadyUsed: "Este correo ya está registrado",
     usernameAlreadyUsed: "Este nombre de usuario ya está en uso",
     fillAllFields: "Completa todos los campos",
-    invalidEmail: "Introduce un correo electrónico válido",
+    invalidEmail: "Ingresa un correo electrónico válido",
     connectionError: "Problema de conexión. Revisa la red y vuelve a intentarlo.",
-    reportIssue: "Informar de un problema",
+    reportIssue: "Reportar un problema",
     pwaInstall: "📲 Instalar app",
     pwaIosTitle: "Instalar en iPhone",
     pwaIosBody: "Toca Compartir ⬆️ y luego \"Añadir a pantalla de inicio\".",
@@ -1251,9 +1253,9 @@ const translations = {
     setPassword: "Crear Contraseña",
     changePassword: "Cambiar Contraseña",
     passwordSet: "¡Contraseña guardada!",
-    profileSaveFailed: "No se ha podido guardar el perfil. Vuelve a entrar e inténtalo de nuevo.",
-    passwordChangeFailed: "No se ha podido cambiar la contraseña. Vuelve a entrar e inténtalo de nuevo.",
-    registrationFailed: "No se ha podido completar el registro. Inténtalo de nuevo.",
+    profileSaveFailed: "No se pudo guardar el perfil. Vuelve a entrar e inténtalo de nuevo.",
+    passwordChangeFailed: "No se pudo cambiar la contraseña. Vuelve a entrar e inténtalo de nuevo.",
+    registrationFailed: "No se pudo completar el registro. Inténtalo de nuevo.",
     fillNameDateTime: "Completa el nombre, la fecha y la hora.",
     noNotifications: "No hay notificaciones",
     go: "Ir",
@@ -1276,11 +1278,11 @@ const translations = {
     confirmPasswordPlaceholder: "Confirma la nueva contraseña",
     passwordsNoMatch: "Las contraseñas no coinciden",
     resetEmailSent: "Si la dirección está registrada, te hemos escrito. Haz clic en el enlace del correo.",
-    resetTokenInvalid: "Enlace no válido o caducado. Pide uno nuevo.",
+    resetTokenInvalid: "Enlace no válido o vencido. Pide uno nuevo.",
     resetSuccess: "¡Contraseña actualizada! Ya puedes iniciar sesión.",
     setNewPassword: "Crear nueva contraseña",
     magicLinkSent: "Si la dirección está registrada, te hemos enviado un enlace para entrar.",
-    magicLinkInvalid: "Enlace no válido o caducado. Pide uno nuevo.",
+    magicLinkInvalid: "Enlace no válido o vencido. Pide uno nuevo.",
     sendMagicLink: "Enviar enlace de acceso",
     magicLinkHint: "Entrar con enlace mágico →",
     sessionExpired: "Por seguridad tienes que volver a entrar: te enviamos un enlace por correo. Tu perfil, tus mensajes y tus puntuaciones están a salvo.",
@@ -1301,13 +1303,13 @@ const translations = {
     gdprExporting: "Preparando…",
     gdprDelete: "Eliminar cuenta",
     gdprDeleteTitle: "¿Quieres eliminar la cuenta?",
-    gdprDeleteBody: "Esto elimina para siempre tu perfil, tus mensajes privados y tus puntuaciones. Tus publicaciones y comentarios públicos se quedan, pero aparecerán como \"Utente eliminato\". No se puede deshacer.",
+    gdprDeleteBody: "Esto elimina para siempre tu perfil, tus mensajes privados y tus puntuaciones. Tus publicaciones y comentarios públicos se mantienen, pero aparecerán como \"Utente eliminato\". No se puede deshacer.",
     gdprDeleteConfirmLabel: "Escribe tu nickname para confirmar:",
     gdprDeleteConfirmBtn: "Eliminar para siempre",
     gdprDeleteCancel: "Cancelar",
     gdprDeleting: "Eliminando…",
-    gdprExportError: "No se ha podido exportar. Inténtalo de nuevo.",
-    gdprDeleteError: "No se ha podido eliminar. Inténtalo de nuevo.",
+    gdprExportError: "No se pudo exportar. Inténtalo de nuevo.",
+    gdprDeleteError: "No se pudo eliminar. Inténtalo de nuevo.",
     tabs: {
       rituals: "Rituales",
       telepathy: "Telepatía",
@@ -1322,7 +1324,7 @@ const translations = {
     editProfile: "Editar Perfil",
     profile: {
       title: "Tu Perfil",
-      subtitle: "Cuéntale a la comunidad sobre ti",
+      subtitle: "Háblale de ti a la comunidad",
       bio: "Bio",
       bioPlaceholder: "Cuéntanos tu camino espiritual...",
       starseedType: "Tipo de Starseed",
@@ -1379,13 +1381,13 @@ const translations = {
         ascension: "Portal de la Ascensión"
       },
       leave: "Salir",
-      leaveFailed: "No se ha podido salir del ritual.",
+      leaveFailed: "No se pudo salir del ritual.",
       stop: "Detener",
       stopTitle: "¿Detener el ciclo?",
       stopBody: "El ciclo se detiene: no habrá más encuentros. El que está en curso, si lo hay, termina con normalidad.",
       stopYes: "Detener",
       stopNo: "Déjalo seguir",
-      stopFailed: "No se ha podido detener el ciclo.",
+      stopFailed: "No se pudo detener el ciclo.",
       reloginNeeded: "Para continuar, vuelve a iniciar sesión: usa «¿Olvidaste la contraseña?» para elegir una nueva.",
       room: "Sala del ritual",
       peopleHere: n => n === 1 ? "1 persona aquí ahora" : `${n} personas aquí ahora`,
@@ -1409,13 +1411,14 @@ const translations = {
       deleteNo: "Mantenerlo",
       deleteStarted: "Demasiado tarde: el ritual ya ha empezado.",
       thresholdTap: "Toca para entrar en el ritual",
-      thresholdHint: "La música empezará con tu toque",
-      deleteFailed: "No se ha podido eliminar el ritual.",
+      thresholdHint: "La música empezará cuando toques la pantalla",
+      deleteFailed: "No se pudo eliminar el ritual.",
       createRitual: "Proponer Ritual",
+      testRitual: "⚡ Prueba (3 min)",
       noRituals: "Todavía no hay rituales. ¡Sé el primero en proponer uno!",
       participants: "participantes",
       startsIn: "Empieza en",
-      live: "EN DIRECTO",
+      live: "EN VIVO",
       ended: "Terminado",
       join: "Unirme",
       joined: "Unido",
@@ -1475,7 +1478,7 @@ const translations = {
       intro: "Global Awakening es un proyecto personal y no comercial. Esta página explica, con palabras sencillas, qué datos tratamos y por qué.",
       sections: [{
         heading: "Qué datos recogemos",
-        body: "Cuando creas una cuenta: tu correo electrónico, una contraseña (guardada solo como hash criptográfico, nunca en texto claro) y el nickname, la breve bio y el país que decidas compartir. Mientras usas la app guardamos tu actividad: puntuaciones de telepatía, mensajes privados, rituales, publicaciones y comentarios, y tu estado en línea. Además, el navegador guarda tu nickname y tus preferencias en el local storage. No usamos cookies, analítica ni rastreadores externos."
+        body: "Cuando creas una cuenta: tu correo electrónico, una contraseña (guardada solo como hash criptográfico, nunca en texto plano) y el nickname, la breve bio y el país que decidas compartir. Mientras usas la app guardamos tu actividad: puntuaciones de telepatía, mensajes privados, rituales, publicaciones y comentarios, y tu estado en línea. Además, el navegador guarda tu nickname y tus preferencias en el local storage. No usamos cookies, analítica ni rastreadores externos."
       }, {
         heading: "Para qué los usamos",
         body: "Solo para que la app funcione: acceso, funciones de telepatía, rituales y comunidad, y notificaciones dentro de la app. Nunca vendemos tus datos ni los usamos para publicidad."
@@ -1487,10 +1490,10 @@ const translations = {
         body: "Los datos de la cuenta y de actividad se conservan mientras tu cuenta esté activa. Los tokens de restablecimiento de contraseña y de enlace mágico caducan en un máximo de 15 minutos."
       }, {
         heading: "Tus derechos",
-        body: "Según el RGPD puedes acceder a tus datos, rectificarlos, suprimirlos o exportarlos, o bien oponerte a su uso. Puedes exportar tus datos y eliminar tu cuenta por tu cuenta desde tu perfil (abre el perfil → \"Tus datos (RGPD)\"). Para la rectificación o la oposición, abre una issue en nuestro repositorio público de GitHub (github.com/global-awakening/global-awakening.github.io)."
+        body: "Según el RGPD puedes acceder a tus datos, rectificarlos, suprimirlos o exportarlos, o bien oponerte a su uso. Puedes exportar tus datos y eliminar tu cuenta directamente desde tu perfil (abre el perfil → \"Tus datos (RGPD)\"). Para la rectificación o la oposición, abre una issue en nuestro repositorio público de GitHub (github.com/global-awakening/global-awakening.github.io)."
       }, {
         heading: "Seguridad",
-        body: "Los datos se guardan en Supabase y las contraseñas se almacenan en forma de hash, nunca en texto claro. Al tratarse de un pequeño proyecto personal, no podemos garantizar una seguridad de nivel empresarial: te invitamos a no compartir nada que no quieras que puedan ver otras personas."
+        body: "Los datos se guardan en Supabase y las contraseñas se almacenan en forma de hash, nunca en texto plano. Al tratarse de un pequeño proyecto personal, no podemos garantizar una seguridad de nivel empresarial: te invitamos a no compartir nada que no quieras que puedan ver otras personas."
       }, {
         heading: "Cambios",
         body: "La versión que se muestra aquí es siempre la vigente. Si cambia algo importante, actualizaremos esta página."
@@ -1530,8 +1533,8 @@ const translations = {
       cancel: "Cancelar",
       partnerLeftSuffix: "ha terminado la sesión",
       yourPartnerFallback: "Tu compañero",
-      backToLobby: "Volver a la sala",
-      differentChoices: "Elecciones distintas — se sigue con",
+      backToLobby: "Volver al inicio",
+      differentChoices: "Opciones distintas — se sigue con",
       levelShapes: "Símbolos",
       levelShapesN: n => `${n} Símbolos`,
       levelNumbers: "Números",
@@ -1550,7 +1553,7 @@ const translations = {
       accuracyLabel: "Precisión",
       statusLabel: "Estado",
       changeLevelPrompt: "¿Quieres cambiar el tipo de telepatía?",
-      youChose: "Has elegido",
+      youChose: "Elegiste",
       waitingDots: "Esperando...",
       continueLevel: "Continuar",
       levelChooseTitle: "Elige la nueva modalidad",
@@ -1588,7 +1591,7 @@ const translations = {
       correctMatches: "Aciertos",
       accuracyColon: "Precisión:",
       playAgainWith: "Otra sesión con",
-      backToLobbyCap: "Volver a la Sala",
+      backToLobbyCap: "Volver al Inicio",
       leaveSession: "Salir de la sesión",
       chatWith: "Chat con",
       noMessages: "Todavía no hay mensajes",
@@ -1600,12 +1603,12 @@ const translations = {
       statusWaitingResult: "Esperando el resultado...",
       statusSent: "¡ha enviado! Adivina.",
       statusChoosing: "está eligiendo...",
-      partnerOfflineN: nick => `${nick} ya no está en línea: vuelve a la sala y elige otro compañero.`,
+      partnerOfflineN: nick => `${nick} ya no está en línea: vuelve al inicio y elige otro compañero.`,
       inviteModalTitle: "Invitación al Entrenamiento Telepático",
       inviteModalBody: "¡quiere hacer entrenamiento telepático contigo!",
       acceptBtn: "Aceptar",
       declineBtn: "Rechazar",
-      inviteExpired: "Caducada",
+      inviteExpired: "Vencida",
       trainingFloatingPrefix: "Entrenamiento en curso con",
       trainingFloatingCta: "Volver"
     },
@@ -1641,7 +1644,7 @@ const translations = {
   },
   fr: {
     title: "Global Awakening",
-    subtitle: "Unis dans la Lumière, Éveillés comme Un",
+    subtitle: "Unis dans la Lumière, Éveillés, ne faisant qu'Un",
     enterPlatform: "Entrer",
     enterAsGuest: "Entrer en tant qu'Invité",
     login: "Se connecter",
@@ -1651,7 +1654,7 @@ const translations = {
     usernamePlaceholder: "Choisis un nom d'utilisateur...",
     invalidCredentials: "E-mail ou mot de passe incorrect",
     tooManyAttempts: "Trop de tentatives, réessaie dans quelques minutes",
-    emailAlreadyUsed: "Cet e-mail est déjà inscrit",
+    emailAlreadyUsed: "Cette adresse e-mail est déjà utilisée",
     usernameAlreadyUsed: "Ce nom d'utilisateur est déjà pris",
     fillAllFields: "Remplis tous les champs",
     invalidEmail: "Saisis une adresse e-mail valide",
@@ -1791,7 +1794,7 @@ const translations = {
       everyDay: "Tous les jours",
       whenAt: (quando, ora) => `${quando} à ${ora}`,
       dayOf: (n, m) => `jour ${n} sur ${m}`,
-      namePh: "ex. Méditation de la Pleine Lune",
+      namePh: "Ex. : Méditation de la Pleine Lune",
       descPh: "Décris le rituel...",
       types: {
         consciousness: "Élévation de la Conscience",
@@ -1804,9 +1807,9 @@ const translations = {
       leaveFailed: "Impossible de quitter le rituel.",
       stop: "Arrêter",
       stopTitle: "Arrêter le cycle ?",
-      stopBody: "Le cycle s'arrête : il n'y aura plus d'autres rendez-vous. Celui en cours, s'il y en a un, se termine normalement.",
+      stopBody: "Le cycle s'arrête : il n'y aura plus de rendez-vous. Celui en cours, s'il y en a un, se termine normalement.",
       stopYes: "Arrêter",
-      stopNo: "Le laisser continuer",
+      stopNo: "Laisse-le continuer",
       stopFailed: "Impossible d'arrêter le cycle.",
       reloginNeeded: "Pour continuer, reconnecte-toi : utilise « Mot de passe oublié ? » pour choisir un nouveau mot de passe.",
       room: "Salle du rituel",
@@ -1831,16 +1834,17 @@ const translations = {
       deleteNo: "Le garder",
       deleteStarted: "Trop tard : le rituel a déjà commencé.",
       thresholdTap: "Touche pour entrer dans le rituel",
-      thresholdHint: "La musique commencera avec ton toucher",
+      thresholdHint: "La musique démarrera dès que tu toucheras l'écran",
       deleteFailed: "Impossible de supprimer le rituel.",
       createRitual: "Proposer un Rituel",
+      testRitual: "⚡ Test (3 min)",
       noRituals: "Aucun rituel pour l'instant. Sois le premier à en proposer un !",
       participants: "participants",
       startsIn: "Commence dans",
       live: "EN DIRECT",
       ended: "Terminé",
       join: "Rejoindre",
-      joined: "Rejoint",
+      joined: "Tu participes",
       sendEnergy: "Envoyer de l'Énergie",
       candleLight: "Allume une bougie",
       candleExtinguish: "Éteins ta bougie",
@@ -1909,10 +1913,10 @@ const translations = {
         body: "Les données du compte et d'activité sont conservées tant que ton compte est actif. Les jetons de réinitialisation du mot de passe et de lien magique expirent dans un délai de 15 minutes."
       }, {
         heading: "Tes droits",
-        body: "En vertu du RGPD, tu peux accéder à tes données, les rectifier, les effacer ou les exporter, ou t'opposer à leur utilisation. L'export et la suppression du compte sont disponibles en autonomie depuis ton profil (ouvre ton profil → « Tes données (RGPD) »). Pour une rectification ou une opposition, ouvre une issue sur notre dépôt GitHub public (github.com/global-awakening/global-awakening.github.io)."
+        body: "En vertu du RGPD, tu peux accéder à tes données, les rectifier, les effacer ou les exporter, ou t'opposer à leur utilisation. Tu peux exporter tes données et supprimer ton compte directement depuis ton profil (ouvre ton profil → « Tes données (RGPD) »). Pour une rectification ou une opposition, ouvre une issue sur notre dépôt GitHub public (github.com/global-awakening/global-awakening.github.io)."
       }, {
         heading: "Sécurité",
-        body: "Les données sont conservées sur Supabase et les mots de passe sont enregistrés sous forme de hash, jamais en clair. S'agissant d'un petit projet personnel, nous ne pouvons pas garantir une sécurité de niveau professionnel : nous t'invitons à ne rien partager que tu ne voudrais pas voir lu par d'autres."
+        body: "Les données sont conservées sur Supabase et les mots de passe sont enregistrés sous forme de hash, jamais en clair. S'agissant d'un petit projet personnel, nous ne pouvons pas garantir une sécurité de niveau entreprise : nous t'invitons à ne rien partager que tu ne voudrais pas que d'autres puissent voir."
       }, {
         heading: "Modifications",
         body: "La version affichée ici est toujours la version en vigueur. Si quelque chose d'important change, nous mettrons cette page à jour."
@@ -1991,7 +1995,7 @@ const translations = {
       symbolSentGuess: "✨ Symbole envoyé ! Lequel reçois-tu ?",
       waitingForSend: "choisit le symbole… attends qu'il s'allume",
       confirm: "Confirmer",
-      senderWaiting: "Symbole envoyé ! En attente que le récepteur devine...",
+      senderWaiting: "Symbole envoyé ! En attendant que le récepteur devine...",
       receiverWaiting: "Réponse envoyée ! En attente de l'émetteur...",
       matchResult: "✨ CONNEXION TÉLÉPATHIQUE ! ✨",
       noMatch: "Pas cette fois. Continue !",
@@ -2049,7 +2053,7 @@ const translations = {
       reportSend: "Envoyer le signalement",
       reportDone: "Signalement envoyé. Nous l'examinerons sous 48 heures.",
       reportRules: "Règles de contenu",
-      guestOnly: "Il faut un compte inscrit pour signaler ou bloquer.",
+      guestOnly: "Il faut être inscrit pour signaler ou bloquer.",
       reasons: {
         spam: "Spam ou publicité",
         harassment: "Harcèlement ou insultes",
@@ -6176,7 +6180,7 @@ function GlobalAwakeningPlatform() {
     style: {
       fontSize: '0.8rem'
     }
-  }, "\u26A1 Test (3 min)"), React.createElement("button", {
+  }, t.rituals.testRitual), React.createElement("button", {
     onClick: () => setShowCreateRitual(true),
     className: "btn-primary"
   }, t.rituals.createRitual))), rituals.length === 0 && React.createElement("div", {
