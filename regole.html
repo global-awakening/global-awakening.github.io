@@ -31,7 +31,7 @@
   h2 { font-size: 1.15rem; margin: 2.25rem 0 .75rem; color: var(--accent); }
   h3 { font-size: 1rem; margin: 1.75rem 0 .5rem; }
   .sub { color: var(--muted); font-size: .9rem; margin: 0; }
-  section {
+  .card {
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 1rem;
@@ -43,6 +43,7 @@
   strong { color: #fff; }
   a { color: var(--accent); }
   .muted { color: var(--muted); font-size: .88rem; }
+  section.lingua:not([hidden]) ~ section.lingua:not([hidden]) { margin-top: 3rem; padding-top: 2rem; border-top: 1px solid rgba(255,255,255,0.1); }
   hr { border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 3rem 0 2rem; }
   footer { text-align: center; color: var(--muted); font-size: .82rem; margin-top: 2.5rem; }
   @media (max-width: 480px) {
@@ -54,20 +55,22 @@
 <body>
 <div class="wrap">
 
+<section lang="it" id="it" class="lingua">
+
   <header>
     <span class="star">⭐</span>
     <h1>Regolamento dei contenuti</h1>
     <p class="sub">Global Awakening — ultimo aggiornamento: 17 settembre 2026</p>
   </header>
 
-  <section>
+  <div class="card">
     <p>Global Awakening è uno spazio di ricerca interiore condivisa. Perché resti un posto
     in cui ci si sente al sicuro, ci sono alcune cose che non sono ammesse, e due strumenti
     a disposizione di chiunque: <strong>segnalare</strong> un contenuto e <strong>bloccare</strong> una persona.</p>
-  </section>
+  </div>
 
   <h2>Che cosa non è ammesso</h2>
-  <section>
+  <div class="card">
     <ul>
       <li><strong>Molestie e insulti.</strong> Attacchi personali, umiliazioni, comportamenti persecutori verso qualcuno.</li>
       <li><strong>Odio e discriminazione.</strong> Contenuti che attaccano una persona o un gruppo per etnia, religione, nazionalità, disabilità, orientamento sessuale, identità di genere o età.</li>
@@ -78,92 +81,284 @@
       <li><strong>Impersonazione.</strong> Spacciarsi per un'altra persona reale.</li>
       <li><strong>Promesse di guarigione.</strong> Presentare pratiche spirituali come cure mediche o invitare qualcuno a interrompere terapie in corso.</li>
     </ul>
-  </section>
+  </div>
 
   <h2>Come si segnala un contenuto</h2>
-  <section>
+  <div class="card">
     <ul>
       <li>Su ogni post, commento, rituale, messaggio privato e messaggio della chat telepatica scritto da un'altra persona compare il pulsante <strong>⋯</strong>: toccalo e scegli <strong>Segnala</strong>.</li>
       <li>Per segnalare una persona nel suo insieme (nickname o descrizione del profilo), apri il suo profilo e usa <strong>Segnala</strong>.</li>
       <li>Scegli una motivazione e, se vuoi, aggiungi due righe di contesto. Il testo segnalato viene conservato insieme alla segnalazione, così resta leggibile anche se nel frattempo viene cancellato.</li>
       <li>La segnalazione è <strong>anonima</strong>: la persona segnalata non sa chi l'ha fatta.</li>
     </ul>
-  </section>
+  </div>
 
   <h2>Come si blocca una persona</h2>
-  <section>
+  <div class="card">
     <ul>
       <li>Dallo stesso menu <strong>⋯</strong>, oppure dal profilo della persona, scegli <strong>Blocca</strong>.</li>
       <li>Da quel momento <strong>non vedi più i suoi contenuti</strong> — post, commenti, rituali, chat — e <strong>non può più scriverti</strong> in privato.</li>
       <li>La persona bloccata non riceve alcuna notifica.</li>
       <li>Puoi annullare quando vuoi: l'elenco di chi hai bloccato è nel tuo profilo, con il pulsante <strong>Sblocca</strong>.</li>
     </ul>
-  </section>
+  </div>
 
   <h2>Che cosa succede dopo una segnalazione</h2>
-  <section>
+  <div class="card">
     <ul>
       <li>Ogni segnalazione viene <strong>esaminata entro 48 ore</strong>.</li>
       <li>Se il contenuto viola questo regolamento viene <strong>rimosso</strong>.</li>
       <li>Nei casi gravi o ripetuti l'<strong>account viene chiuso</strong>.</li>
       <li>Segnalare ripetutamente contenuti che non violano nulla, per colpire qualcuno, è a sua volta un abuso e viene trattato come tale.</li>
     </ul>
-  </section>
+  </div>
 
   <h2>Contatti</h2>
-  <section>
+  <div class="card">
     <p>Per qualsiasi cosa riguardi moderazione, contenuti o il tuo account:
     <a href="mailto:global.awakening.app@gmail.com">global.awakening.app@gmail.com</a></p>
     <p class="muted">Per la gestione dei dati personali e i tuoi diritti, vedi l'informativa privacy
     disponibile nell'app. Puoi esportare i tuoi dati o eliminare l'account in qualsiasi momento
     dalla sezione «I tuoi dati» del tuo profilo.</p>
-  </section>
+  </div>
 
-  <hr>
+  <footer>
+    <p><a href="app.html">← Torna all'app</a></p>
+  </footer>
+
+</section>
+
+
+<section lang="en" id="en" class="lingua">
 
   <header>
     <h1>Content rules</h1>
     <p class="sub">Global Awakening — last updated: 17 September 2026</p>
   </header>
 
-  <section>
+  <div class="card">
     <p>Global Awakening is a space for shared inner exploration. To keep it a place where people
     feel safe, some things are not allowed, and everyone has two tools available:
     <strong>reporting</strong> content and <strong>blocking</strong> a person.</p>
-  </section>
+  </div>
 
-  <h3>What is not allowed</h3>
-  <section>
+  <h2>What is not allowed</h2>
+  <div class="card">
     <ul>
-      <li><strong>Harassment and insults</strong> — personal attacks, humiliation, stalking behaviour.</li>
-      <li><strong>Hate and discrimination</strong> — attacks based on ethnicity, religion, nationality, disability, sexual orientation, gender identity or age.</li>
-      <li><strong>Sexual content</strong> — sexually explicit material or unwanted sexual advances.</li>
-      <li><strong>Violence and threats</strong> — threats, incitement to violence, gratuitous violent content.</li>
-      <li><strong>Self-harm and suicide</strong> — encouragement or instructions to harm oneself.</li>
-      <li><strong>Spam and advertising</strong> — repeated messages, promotion, chain messages, deceptive links.</li>
-      <li><strong>Impersonation</strong> — pretending to be another real person.</li>
-      <li><strong>Healing claims</strong> — presenting spiritual practices as medical treatment, or urging anyone to stop ongoing therapy.</li>
+      <li><strong>Harassment and insults.</strong> Personal attacks, humiliation, stalking behaviour towards someone.</li>
+      <li><strong>Hate and discrimination.</strong> Content that attacks a person or a group based on ethnicity, religion, nationality, disability, sexual orientation, gender identity or age.</li>
+      <li><strong>Sexual content.</strong> Sexually explicit material or unwanted sexual advances.</li>
+      <li><strong>Violence and threats.</strong> Threats, incitement to violence, gratuitous violent content.</li>
+      <li><strong>Self-harm and suicide.</strong> Encouragement or instructions to harm oneself. If you are going through a difficult time, talk to someone: in Italy, <strong>Telefono Amico</strong> answers at <strong>02 2327 2327</strong>.</li>
+      <li><strong>Spam and advertising.</strong> Repeated messages, promotion of products or services, chain messages, deceptive links.</li>
+      <li><strong>Impersonation.</strong> Pretending to be another real person.</li>
+      <li><strong>Healing claims.</strong> Presenting spiritual practices as medical treatment, or urging anyone to stop ongoing therapy.</li>
     </ul>
-  </section>
+  </div>
 
-  <h3>Reporting and blocking</h3>
-  <section>
+  <h2>How to report content</h2>
+  <div class="card">
     <ul>
-      <li>Tap the <strong>⋯</strong> button on any post, comment, ritual, private message or telepathy chat message written by someone else, then choose <strong>Report</strong> or <strong>Block</strong>. Both actions are also available on a person's profile.</li>
-      <li>Reports are <strong>anonymous</strong> and the reported text is stored alongside the report, so it stays readable even if the content is later deleted.</li>
-      <li>Blocking hides that person's content from you and prevents them from messaging you. They are not notified, and you can undo it anytime from your profile.</li>
-      <li>Every report is <strong>reviewed within 48 hours</strong>. Violating content is removed; serious or repeated violations lead to account closure.</li>
+      <li>The <strong>⋯</strong> button appears on every post, comment, ritual, private message and telepathy chat message written by someone else: tap it and choose <strong>Report</strong>.</li>
+      <li>To report a person as a whole (nickname or profile description), open their profile and use <strong>Report</strong>.</li>
+      <li>Choose a reason and, if you like, add a couple of lines of context. The reported text is stored alongside the report, so it stays readable even if it is deleted in the meantime.</li>
+      <li>Reports are <strong>anonymous</strong>: the person reported does not know who made the report.</li>
     </ul>
-  </section>
+  </div>
 
-  <section>
-    <p>Contact: <a href="mailto:global.awakening.app@gmail.com">global.awakening.app@gmail.com</a></p>
-  </section>
+  <h2>How to block a person</h2>
+  <div class="card">
+    <ul>
+      <li>From the same <strong>⋯</strong> menu, or from the person's profile, choose <strong>Block</strong>.</li>
+      <li>From then on <strong>you no longer see their content</strong> — posts, comments, rituals, chat — and <strong>they can no longer message you</strong> privately.</li>
+      <li>The blocked person is not notified in any way.</li>
+      <li>You can undo it whenever you like: the list of people you have blocked is in your profile, with the <strong>Unblock</strong> button.</li>
+    </ul>
+  </div>
+
+  <h2>What happens after a report</h2>
+  <div class="card">
+    <ul>
+      <li>Every report is <strong>reviewed within 48 hours</strong>.</li>
+      <li>If the content breaks these rules it is <strong>removed</strong>.</li>
+      <li>In serious or repeated cases the <strong>account is closed</strong>.</li>
+      <li>Repeatedly reporting content that breaks no rule, in order to target someone, is itself an abuse and is treated as such.</li>
+    </ul>
+  </div>
+
+  <h2>Contact</h2>
+  <div class="card">
+    <p>For anything concerning moderation, content or your account:
+    <a href="mailto:global.awakening.app@gmail.com">global.awakening.app@gmail.com</a></p>
+    <p class="muted">For how your personal data is handled and your rights, see the privacy notice
+    available in the app. You can export your data or delete your account at any time
+    from the “Your data” section of your profile.</p>
+  </div>
 
   <footer>
-    <p><a href="app.html">← Torna all'app / Back to the app</a></p>
+    <p><a href="app.html">← Back to the app</a></p>
   </footer>
 
+</section>
+
+
+<section lang="es" id="es" class="lingua">
+
+  <header>
+    <h1>Normas de contenido</h1>
+    <p class="sub">Global Awakening — última actualización: 17 de septiembre de 2026</p>
+  </header>
+
+  <div class="card">
+    <p>Global Awakening es un espacio de búsqueda interior compartida. Para que siga siendo un lugar
+    en el que sentirse a salvo, hay algunas cosas que no están permitidas, y dos herramientas
+    al alcance de cualquiera: <strong>reportar</strong> un contenido y <strong>bloquear</strong> a una persona.</p>
+  </div>
+
+  <h2>Qué no está permitido</h2>
+  <div class="card">
+    <ul>
+      <li><strong>Acoso e insultos.</strong> Ataques personales, humillaciones, comportamientos de hostigamiento hacia alguien.</li>
+      <li><strong>Odio y discriminación.</strong> Contenidos que atacan a una persona o a un grupo por su etnia, religión, nacionalidad, discapacidad, orientación sexual, identidad de género o edad.</li>
+      <li><strong>Contenido sexual.</strong> Material sexualmente explícito o insinuaciones sexuales no deseadas.</li>
+      <li><strong>Violencia y amenazas.</strong> Amenazas, incitación a la violencia, contenidos violentos gratuitos.</li>
+      <li><strong>Autolesión y suicidio.</strong> Animar a hacerse daño o dar instrucciones para ello. Si estás pasando por un momento difícil, habla con alguien: en Italia, el <strong>Telefono Amico</strong> atiende en el <strong>02 2327 2327</strong>.</li>
+      <li><strong>Spam y publicidad.</strong> Mensajes repetidos, promoción de productos o servicios, cadenas, enlaces engañosos.</li>
+      <li><strong>Suplantación de identidad.</strong> Hacerse pasar por otra persona real.</li>
+      <li><strong>Promesas de curación.</strong> Presentar prácticas espirituales como tratamientos médicos o animar a alguien a dejar una terapia en curso.</li>
+    </ul>
+  </div>
+
+  <h2>Cómo se reporta un contenido</h2>
+  <div class="card">
+    <ul>
+      <li>En cada publicación, comentario, ritual, mensaje privado y mensaje del chat telepático escrito por otra persona aparece el botón <strong>⋯</strong>: tócalo y elige <strong>Reportar</strong>.</li>
+      <li>Para reportar a una persona en su conjunto (apodo o descripción del perfil), abre su perfil y usa <strong>Reportar</strong>.</li>
+      <li>Elige un motivo y, si quieres, añade un par de líneas de contexto. El texto reportado se guarda junto con el reporte, así que sigue siendo legible aunque mientras tanto se borre.</li>
+      <li>El reporte es <strong>anónimo</strong>: la persona reportada no sabe quién lo ha hecho.</li>
+    </ul>
+  </div>
+
+  <h2>Cómo se bloquea a una persona</h2>
+  <div class="card">
+    <ul>
+      <li>Desde el mismo menú <strong>⋯</strong>, o desde el perfil de la persona, elige <strong>Bloquear</strong>.</li>
+      <li>A partir de ese momento <strong>ya no ves sus contenidos</strong> — publicaciones, comentarios, rituales, chat — y <strong>ya no puede escribirte</strong> en privado.</li>
+      <li>La persona bloqueada no recibe ninguna notificación.</li>
+      <li>Puedes deshacerlo cuando quieras: la lista de las personas que has bloqueado está en tu perfil, con el botón <strong>Desbloquear</strong>.</li>
+    </ul>
+  </div>
+
+  <h2>Qué pasa después de un reporte</h2>
+  <div class="card">
+    <ul>
+      <li>Cada reporte se <strong>revisa en un plazo de 48 horas</strong>.</li>
+      <li>Si el contenido infringe estas normas, se <strong>elimina</strong>.</li>
+      <li>En los casos graves o reiterados se <strong>cierra la cuenta</strong>.</li>
+      <li>Reportar repetidamente contenidos que no infringen nada, para perjudicar a alguien, es a su vez un abuso y se trata como tal.</li>
+    </ul>
+  </div>
+
+  <h2>Contacto</h2>
+  <div class="card">
+    <p>Para cualquier asunto relacionado con la moderación, los contenidos o tu cuenta:
+    <a href="mailto:global.awakening.app@gmail.com">global.awakening.app@gmail.com</a></p>
+    <p class="muted">Para saber cómo se gestionan tus datos personales y cuáles son tus derechos, consulta la política de privacidad
+    disponible en la app. Puedes exportar tus datos o eliminar tu cuenta en cualquier momento
+    desde la sección «Tus datos» de tu perfil.</p>
+  </div>
+
+  <footer>
+    <p><a href="app.html">← Volver a la app</a></p>
+  </footer>
+
+</section>
+
+
+<section lang="fr" id="fr" class="lingua">
+
+  <header>
+    <h1>Règles de contenu</h1>
+    <p class="sub">Global Awakening — dernière mise à jour : 17 septembre 2026</p>
+  </header>
+
+  <div class="card">
+    <p>Global Awakening est un espace de recherche intérieure partagée. Pour que ça reste un lieu
+    où l’on se sent en sécurité, certaines choses ne sont pas admises, et deux outils sont
+    à la disposition de tous : <strong>signaler</strong> un contenu et <strong>bloquer</strong> une personne.</p>
+  </div>
+
+  <h2>Ce qui n’est pas admis</h2>
+  <div class="card">
+    <ul>
+      <li><strong>Harcèlement et insultes.</strong> Attaques personnelles, humiliations, comportements de harcèlement envers quelqu’un.</li>
+      <li><strong>Haine et discrimination.</strong> Contenus qui attaquent une personne ou un groupe en raison de son origine ethnique, de sa religion, de sa nationalité, d’un handicap, de son orientation sexuelle, de son identité de genre ou de son âge.</li>
+      <li><strong>Contenu sexuel.</strong> Matériel sexuellement explicite ou avances sexuelles non désirées.</li>
+      <li><strong>Violence et menaces.</strong> Menaces, incitation à la violence, contenus violents gratuits.</li>
+      <li><strong>Automutilation et suicide.</strong> Encouragement ou instructions pour se faire du mal. Si tu traverses un moment difficile, parles-en à quelqu’un : en Italie, le <strong>Telefono Amico</strong> répond au <strong>02 2327 2327</strong>.</li>
+      <li><strong>Spam et publicité.</strong> Messages répétés, promotion de produits ou de services, chaînes, liens trompeurs.</li>
+      <li><strong>Usurpation d’identité.</strong> Se faire passer pour une autre personne réelle.</li>
+      <li><strong>Promesses de guérison.</strong> Présenter des pratiques spirituelles comme des soins médicaux ou inciter quelqu’un à interrompre un traitement en cours.</li>
+    </ul>
+  </div>
+
+  <h2>Comment signaler un contenu</h2>
+  <div class="card">
+    <ul>
+      <li>Sur chaque publication, commentaire, rituel, message privé et message du chat télépathique écrit par une autre personne apparaît le bouton <strong>⋯</strong> : touche-le et choisis <strong>Signaler</strong>.</li>
+      <li>Pour signaler une personne dans son ensemble (pseudo ou description du profil), ouvre son profil et utilise <strong>Signaler</strong>.</li>
+      <li>Choisis un motif et, si tu veux, ajoute deux lignes de contexte. Le texte signalé est conservé avec le signalement, il reste donc lisible même s’il est supprimé entre-temps.</li>
+      <li>Le signalement est <strong>anonyme</strong> : la personne signalée ne sait pas qui l’a fait.</li>
+    </ul>
+  </div>
+
+  <h2>Comment bloquer une personne</h2>
+  <div class="card">
+    <ul>
+      <li>Depuis le même menu <strong>⋯</strong>, ou depuis le profil de la personne, choisis <strong>Bloquer</strong>.</li>
+      <li>À partir de ce moment, <strong>tu ne vois plus ses contenus</strong> — publications, commentaires, rituels, chat — et <strong>elle ne peut plus t’écrire</strong> en privé.</li>
+      <li>La personne bloquée ne reçoit aucune notification.</li>
+      <li>Tu peux annuler quand tu veux : la liste des personnes que tu as bloquées se trouve dans ton profil, avec le bouton <strong>Débloquer</strong>.</li>
+    </ul>
+  </div>
+
+  <h2>Ce qui se passe après un signalement</h2>
+  <div class="card">
+    <ul>
+      <li>Chaque signalement est <strong>examiné sous 48 heures</strong>.</li>
+      <li>Si le contenu enfreint ces règles, il est <strong>supprimé</strong>.</li>
+      <li>Dans les cas graves ou répétés, le <strong>compte est fermé</strong>.</li>
+      <li>Signaler à répétition des contenus qui n’enfreignent rien, pour s’en prendre à quelqu’un, est à son tour un abus et est traité comme tel.</li>
+    </ul>
+  </div>
+
+  <h2>Contact</h2>
+  <div class="card">
+    <p>Pour toute question concernant la modération, les contenus ou ton compte :
+    <a href="mailto:global.awakening.app@gmail.com">global.awakening.app@gmail.com</a></p>
+    <p class="muted">Pour savoir comment tes données personnelles sont gérées et quels sont tes droits, consulte la politique de confidentialité
+    disponible dans l’app. Tu peux exporter tes données ou supprimer ton compte à tout moment
+    depuis la section « Tes données » de ton profil.</p>
+  </div>
+
+  <footer>
+    <p><a href="app.html">← Retour à l’app</a></p>
+  </footer>
+
+</section>
+
 </div>
+<script>
+  // Mostra solo la lingua chiesta dall'app (regole.html#es); ripiego sull'inglese.
+  (function () {
+    var l = (location.hash || '').slice(1);
+    if (!document.getElementById(l)) l = 'en';
+    var s = document.querySelectorAll('section.lingua');
+    for (var i = 0; i < s.length; i++) s[i].hidden = s[i].id !== l;
+    document.documentElement.lang = l;
+    var h = document.querySelector('#' + l + ' h1');
+    if (h) document.title = h.textContent;
+  })();
+</script>
 </body>
 </html>

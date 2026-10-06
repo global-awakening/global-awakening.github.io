@@ -18,6 +18,7 @@
 
   var TESTI = {
     it: {
+      unRituale: 'Un rituale',
       // Nessun numero di minuti: chi si iscrive cinque minuti prima dell'inizio è ancora
       // dentro la soglia del promemoria, e «inizia tra 15 minuti» sarebbe falso.
       reminder: function (n) {
@@ -28,11 +29,30 @@
       }
     },
     en: {
+      unRituale: 'A ritual',
       reminder: function (n) {
         return { titolo: n + ' is about to begin', corpo: 'Get ready: the ritual is about to start.' };
       },
       start: function (n) {
         return { titolo: n + ' is starting now', corpo: 'The ritual has begun. Join now.' };
+      }
+    },
+    es: {
+      unRituale: 'Un ritual',
+      reminder: function (n) {
+        return { titolo: n + ' está a punto de empezar', corpo: 'Prepárate: el ritual empieza en un momento.' };
+      },
+      start: function (n) {
+        return { titolo: n + ' está empezando ahora', corpo: 'El ritual ha comenzado. Únete ahora.' };
+      }
+    },
+    fr: {
+      unRituale: 'Un rituel',
+      reminder: function (n) {
+        return { titolo: n + ' va bientôt commencer', corpo: 'Prépare-toi : le rituel commence dans un instant.' };
+      },
+      start: function (n) {
+        return { titolo: n + ' commence maintenant', corpo: 'Le rituel a commencé. Rejoins-le maintenant.' };
       }
     }
   };
@@ -57,6 +77,24 @@
       blocca: 'No more invites from this person',
       qualcuno: 'Someone',
       neutro: { titolo: 'Global Awakening', corpo: 'Open the app' }
+    },
+    es: {
+      invito: function (n) { return { titolo: n + ' te invita a un entrenamiento telepático', corpo: 'Toca para responder.' }; },
+      accettato: function (n) { return { titolo: n + ' ha aceptado, ¡entra!', corpo: 'El entrenamiento te espera.' }; },
+      rifiutato: function (n) { return { titolo: n + ' no puede ahora', corpo: 'Puedes invitar a otra persona.' }; },
+      scaduto: function (n) { return { titolo: 'La invitación a ' + n + ' ha vencido', corpo: 'Puedes intentarlo cuando quieras.' }; },
+      blocca: 'No quiero más invitaciones de esta persona',
+      qualcuno: 'Alguien',
+      neutro: { titolo: 'Global Awakening', corpo: 'Abre la app' }
+    },
+    fr: {
+      invito: function (n) { return { titolo: n + " t'invite à un entraînement télépathique", corpo: 'Touche pour répondre.' }; },
+      accettato: function (n) { return { titolo: n + ' a accepté, entre !', corpo: "L'entraînement t'attend." }; },
+      rifiutato: function (n) { return { titolo: n + ' ne peut pas pour le moment', corpo: "Tu peux inviter quelqu'un d'autre." }; },
+      scaduto: function (n) { return { titolo: "L'invitation à " + n + ' a expiré', corpo: 'Tu peux réessayer quand tu veux.' }; },
+      blocca: "Je ne veux plus d'invitations de cette personne",
+      qualcuno: "Quelqu'un",
+      neutro: { titolo: 'Global Awakening', corpo: "Ouvre l'app" }
     }
   };
 
@@ -75,11 +113,14 @@
    */
   function costruisciNotifica(payload) {
     var p = payload || {};
-    var lingua = TESTI[p.locale] ? p.locale : 'en';
+    // Le due tabelle hanno le stesse lingue; si controllano entrambe perché una lingua a metà
+    // (rituali sì, inviti no) farebbe sollevare l'eccezione che questa funzione promette di evitare.
+    var ha = Object.prototype.hasOwnProperty;
+    var lingua = ha.call(TESTI, p.locale) && ha.call(TESTI_INVITO, p.locale) ? p.locale : 'en';
 
     if (p.tipo === 'reminder' || p.tipo === 'start') {
       var tipo = p.tipo;
-      var nome = typeof p.rituale === 'string' && p.rituale.length > 0 ? p.rituale : (lingua === 'it' ? 'Un rituale' : 'A ritual');
+      var nome = typeof p.rituale === 'string' && p.rituale.length > 0 ? p.rituale : TESTI[lingua].unRituale;
       var rid = typeof p.ritualeId === 'number' ? p.ritualeId : '';
       var t = TESTI[lingua][tipo](nome);
       return {

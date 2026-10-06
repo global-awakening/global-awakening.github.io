@@ -68,13 +68,35 @@ uguale('senza nome: «Qualcuno»', H.testo('rifiutato', 'it'), 'Qualcuno non pu�
 const MOTIVI = ['invito_in_corso', 'gia_invitato', 'troppi_inviti', 'non_disponibile', 'in_match', 'dati_non_validi',
   'non_trovato', 'scaduto', 'rifiutato', 'annullato', 'gia_accettato', 'non_ce_piu', 'match_non_valido',
   'nessun_abbonamento', 'senza_abbonamento', 'permesso_negato', 'push_saltata'];
-for (const l of ['it', 'en']) {
+for (const l of ['it', 'en', 'es', 'fr']) {
   const senza = MOTIVI.filter((m) => H.testo(m, l, { nome: 'X' }) === H.testo('errore', l));
   uguale(`ogni motivo del server ha il suo messaggio (${l})`, senza.join(','), '');
 }
 uguale('non_trovato dalla scheda/Online è un messaggio neutro, diverso da quello della notifica',
   H.testo('non_trovato_scheda', 'it') !== H.testo('non_trovato', 'it') && H.testo('non_trovato_scheda', 'it') !== H.testo('errore', 'it'), true);
 uguale('non_trovato dalla scheda: neutro anche in inglese', H.testo('non_trovato_scheda', 'en') !== H.testo('errore', 'en') && !/device/i.test(H.testo('non_trovato_scheda', 'en')), true);
+
+// Quattro lingue (Task 7): ogni lingua ha ESATTAMENTE le chiavi di EN (H.chiavi legge TESTI), nessun testo
+// è il messaggio d'errore al posto suo, e nessuno ha apici spaiati (guasto da stringhe spezzate).
+const ordinate = (l) => H.chiavi(l).slice().sort().join(',');
+for (const l of ['it', 'es', 'fr']) uguale(`${l}: stesse chiavi di en`, ordinate(l), ordinate('en'));
+const V = { nome: 'ZZ', tempo: '1:00' };
+for (const l of ['it', 'en', 'es', 'fr']) {
+  const chiavi = H.chiavi('en').filter((k) => k !== 'errore');
+  uguale(`${l}: nessuna chiave ripiega sul messaggio d'errore`, chiavi.filter((k) => H.testo(k, l) === H.testo('errore', l)).join(','), '');
+  uguale(`${l}: nessun apice spaiato`, chiavi.filter((k) => /', |: '|", |: "/.test(H.testo(k, l, V))).join(','), '');
+  if (l === 'it' || l === 'en') continue;
+  uguale(`${l}: nessuna chiave resta uguale all'inglese (= non tradotta)`, chiavi.filter((k) => H.testo(k, l, V) === H.testo(k, 'en', V)).join(','), '');
+  uguale(`${l}: parità di segnaposto con en`, H.chiavi('en').filter((k) => ['nome', 'tempo'].some((p) => {
+    const w = { nome: p === 'nome' ? 'ZZ' : '', tempo: p === 'tempo' ? 'ZZ' : '' };
+    return H.testo(k, 'en', w).includes('ZZ') !== H.testo(k, l, w).includes('ZZ');
+  })).join(','), '');
+}
+uguale('es: testo spagnolo diverso dall\'inglese', H.testo('non_disponibile', 'es', {}) !== H.testo('non_disponibile', 'en', {}), true);
+uguale('chiave sconosciuta → errore della lingua', H.testo('chiave_che_non_esiste', 'fr', {}), H.testo('errore', 'fr', {}));
+// Lingua sconosciuta → inglese. Il ripiego per chiave (chiave presente solo in en) non si può simulare senza
+// toccare TESTI: è coperto dalla parità delle chiavi qui sopra, che lo rende oggi non raggiungibile.
+uguale('lingua sconosciuta: inglese', H.testo('chiudi', 'xx'), H.testo('chiudi', 'en'));
 
 // Ruling M1 (Task 19): l'invito in uscita sparito dal server (le app vecchie cancellano gli inviti
 // ricevuti dopo 2 minuti) ha un messaggio suo: non è «scaduto» né «non trovato su questo dispositivo».

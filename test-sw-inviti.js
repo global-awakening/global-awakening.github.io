@@ -109,5 +109,19 @@ const invito = { tipo: 'invito', invito: ID, nome: 'Aurora', locale: 'it' };
   check(sw.mostrate.length === 1 && sw.mostrate[0].titolo === 'Global Awakening' && !/rituale/i.test(sw.mostrate[0].opzioni.body),
     'senza PushHelpers, per un invito il ripiego è neutro (non parla di rituali)', sw.mostrate);
 
+  // Ripiego (push-helpers non caricato): il testo segue la lingua del payload, en se è sconosciuta.
+  const attesi = {
+    it: ["Apri l'app", 'Un rituale sta iniziando.'], en: ['Open the app', 'A ritual is starting.'],
+    es: ['Abre la app', 'Un ritual está empezando.'], fr: ["Ouvre l'app", 'Un rituel commence.'], constructor: ['Open the app', 'A ritual is starting.'], de: ['Open the app', 'A ritual is starting.']
+  };
+  for (const l of Object.keys(attesi)) {
+    sw = caricaSW({ userAgent: UA_CHROME, finestre: [finestra({ visibile: false })] });
+    delete sw.self.PushHelpers;
+    await push(sw, { tipo: 'invito', invito: ID, nome: 'A', locale: l });
+    await push(sw, { tipo: 'start', rituale: 'Luna', ritualeId: 4, locale: l });
+    check(sw.mostrate[0] && sw.mostrate[0].opzioni.body === attesi[l][0], 'ripiego invito in ' + l, sw.mostrate[0]);
+    check(sw.mostrate[1] && sw.mostrate[1].opzioni.body === attesi[l][1], 'ripiego rituale in ' + l, sw.mostrate[1]);
+  }
+
   console.log(`\n${passati} passati, ${falliti} falliti`);
 })();

@@ -25,7 +25,7 @@ async function run() {
     await titleEn.waitFor({ state: 'hidden', timeout: 4000 });
     check(!(await titleEn.isVisible()), 'Esc chiude il modale');
 
-    await page.locator('button', { hasText: '🌐 EN' }).first().click();
+    await page.locator('select[data-test="lingua"]').first().selectOption('it');
     await page.locator('footer button', { hasText: /Privacy/i }).click();
     const titleIt = page.locator('text=Informativa sulla privacy');
     await titleIt.waitFor({ state: 'visible', timeout: 4000 });

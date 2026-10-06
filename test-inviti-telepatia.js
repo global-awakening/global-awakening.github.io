@@ -358,7 +358,7 @@ async function cleanup() {
     log(NICK_A, `Aspetto notifica rifiuto (max ${POLL_WAIT / 1000}s)...`);
     try {
       await pageA.waitForFunction(
-        () => document.body.innerText.includes('rifiutato'),
+        () => /rifiutato|declined/.test(document.body.innerText),
         { timeout: POLL_WAIT }
       );
       pass('A riceve notifica "ha rifiutato il tuo invito"');

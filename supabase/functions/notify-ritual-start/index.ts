@@ -29,16 +29,8 @@ import { decidiDopoErrore } from '../_shared/esito.mjs';
 
 type Tipo = 'reminder' | 'start';
 
-const TESTI: Record<string, Record<Tipo, (n: string) => { titolo: string; corpo: string }>> = {
-  it: {
-    reminder: (n) => ({ titolo: `${n} sta per iniziare`, corpo: 'Preparati: il rituale sta per cominciare.' }),
-    start:    (n) => ({ titolo: `${n} sta iniziando ora`, corpo: 'Il rituale è iniziato. Unisciti adesso.' })
-  },
-  en: {
-    reminder: (n) => ({ titolo: `${n} is about to begin`, corpo: 'Get ready: the ritual is about to start.' }),
-    start:    (n) => ({ titolo: `${n} is starting now`,   corpo: 'The ritual has begun. Join now.' })
-  }
-};
+// Il testo lo compone il telefono (push-helpers.js): qui la lingua serve solo come filtro.
+const LINGUE = ['it', 'en', 'es', 'fr'];
 
 // `.in()` finisce nella query string: con qualche centinaio di partecipanti l'URL supera i
 // limiti dei proxy e la richiesta muore con un 414, in silenzio, proprio sui rituali più
@@ -143,8 +135,7 @@ Deno.serve(async () => {
       }
 
       // 2. Invio.
-      const lingua = TESTI[ab.locale] ? ab.locale : 'en';
-      const t = TESTI[lingua][tipo](rituale.name);
+      const lingua = LINGUE.includes(ab.locale) ? ab.locale : 'en';
 
       try {
         await webpush.sendNotification(

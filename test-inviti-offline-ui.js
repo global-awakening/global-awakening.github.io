@@ -308,7 +308,7 @@ scenario('campanella_e_scaduto', async (browser) => {
   await B.page.locator('button[aria-label="Notifications"], button[aria-label="Notifiche"]').first().dispatchEvent('click');
   const riga = B.page.locator('[data-test="notifica"]').filter({ hasText: A.nick });
   await riga.waitFor({ timeout: 20000 });
-  check(await riga.locator('button').filter({ hasText: 'Vai' }).count() === 1, 'invito aperto sul server: la campanella mostra «Vai»');
+  check(await riga.locator('button').filter({ hasText: /^(Vai|Go)$/ }).count() === 1, 'invito aperto sul server: la campanella mostra «Vai»');
   await sposta('telepathy_invites', `id=eq.${inv.id}`, { expires_at: faSecondi(1) });
   await A.page.locator('[data-test="avviso-inviti"]').filter({ hasText: /scaduto|expired/ }).waitFor({ timeout: 10000 });
   ok('chi invita legge «L\'invito è scaduto»');

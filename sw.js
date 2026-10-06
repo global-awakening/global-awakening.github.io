@@ -4,9 +4,9 @@
 // push-helpers.js contiene le funzioni pure che costruiscono titolo e testo delle notifiche.
 // Sta fuori da qui perche' dentro un service worker non si testa niente, e quella e' la parte
 // che decide cosa legge la persona sul telefono.
-// ?v=12: importScripts passa dalla cache HTTP del browser (fino a max-age=600), non dal gestore
+// ?v=13: importScripts passa dalla cache HTTP del browser (fino a max-age=600), non dal gestore
 // fetch. Con un indirizzo nuovo i telefoni prendono i testi nuovi insieme al service worker nuovo.
-importScripts('push-helpers.js?v=12');
+importScripts('push-helpers.js?v=13');
 
 // v7: il bump non e' cosmetico. Senza, i browser che hanno gia' installato l'app tengono il
 // service worker vecchio, che non ha nessun handler push — e le notifiche non arrivano
@@ -22,9 +22,10 @@ importScripts('push-helpers.js?v=12');
 // e apre la stanza da ?ritual=: senza il bump le app installate resterebbero sul codice di prima.
 // v12: inviti a un training anche a chi non è collegato (2026-10). Testi e gestori nuovi delle
 // push d'invito: senza il bump le app installate terrebbero quelli vecchi.
-const CACHE = 'ga-pwa-v12';
+// v13: quattro lingue; push-helpers con ES/FR.
+const CACHE = 'ga-pwa-v13';
 const PRECACHE = [
-  'app.html', 'app.js', 'push-helpers.js?v=12', 'music-helpers.js', 'inviti-helpers.js', 'index.html', 'manifest.webmanifest',
+  'app.html', 'app.js', 'push-helpers.js?v=13', 'music-helpers.js', 'inviti-helpers.js', 'lingue-helpers.js', 'notifiche-helpers.js', 'index.html', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
   'icons/icon-any-192.png', 'icons/icon-any-512.png',
   'https://unpkg.com/react@18.3.1/umd/react.production.min.js',
@@ -67,7 +68,7 @@ self.addEventListener('fetch', (e) => {
   // music-helpers.js e' codice dell'app quanto app.js: se stesse fra i file cache-first, una
   // correzione all'avvio della musica non arriverebbe mai a chi ha gia' l'app installata.
   // Lo stesso vale per il manifest: e' da li' che Android legge icone, nome e colori dell'app.
-  const isFresh = req.mode === 'navigate' || url.pathname.endsWith('/app.html') || url.pathname.endsWith('/app.js') || url.pathname.endsWith('/music-helpers.js') || url.pathname.endsWith('/inviti-helpers.js') || url.pathname.endsWith('/manifest.webmanifest') || url.pathname.endsWith('/');
+  const isFresh = req.mode === 'navigate' || url.pathname.endsWith('/app.html') || url.pathname.endsWith('/app.js') || url.pathname.endsWith('/music-helpers.js') || url.pathname.endsWith('/inviti-helpers.js') || url.pathname.endsWith('/lingue-helpers.js') || url.pathname.endsWith('/notifiche-helpers.js') || url.pathname.endsWith('/manifest.webmanifest') || url.pathname.endsWith('/');
   if (isFresh) {
     e.respondWith((async () => {
       try {
@@ -137,10 +138,19 @@ self.addEventListener('push', (e) => {
     try {
       n = self.PushHelpers.costruisciNotifica(payload);
     } catch (_) {
-      const it = payload && payload.locale === 'it';
+      // La tabella sta qui e non in push-helpers.js perche' questo ramo scatta proprio quando
+      // push-helpers.js non si e' caricato: non si puo' chiedere i testi a lui.
+      const RIPIEGO = {
+        it: ["Apri l'app", 'Un rituale sta iniziando.'],
+        en: ['Open the app', 'A ritual is starting.'],
+        es: ['Abre la app', 'Un ritual está empezando.'],
+        fr: ["Ouvre l'app", 'Un rituel commence.']
+      };
+      const l = payload && payload.locale;
+      const r = Object.prototype.hasOwnProperty.call(RIPIEGO, l) ? RIPIEGO[l] : RIPIEGO.en;
       n = eInvito
-        ? { titolo: 'Global Awakening', corpo: it ? "Apri l'app" : 'Open the app', tag: 'invito-ripiego', url: 'app.html', azioni: [] }
-        : { titolo: 'Global Awakening', corpo: it ? 'Un rituale sta iniziando.' : 'A ritual is starting.', tag: 'rituale-ripiego', url: 'app.html', azioni: [] };
+        ? { titolo: 'Global Awakening', corpo: r[0], tag: 'invito-ripiego', url: 'app.html', azioni: [] }
+        : { titolo: 'Global Awakening', corpo: r[1], tag: 'rituale-ripiego', url: 'app.html', azioni: [] };
     }
 
     try {

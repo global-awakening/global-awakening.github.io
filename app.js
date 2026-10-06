@@ -409,7 +409,16 @@ const translations = {
     passwordSet: "Password set!",
     profileSaveFailed: "Could not save your profile. Please log in again.",
     passwordChangeFailed: "Could not change the password. Please log in again.",
-    registrationError: "Registration failed. Please try again.",
+    registrationFailed: "Registration failed. Please try again.",
+    fillNameDateTime: "Please fill in name, date and time.",
+    noNotifications: "No notifications",
+    go: "Go",
+    ok: "OK",
+    seeOnlineUsers: "See online users (Community)",
+    mainSections: "Main sections",
+    worldMapAlt: "World map",
+    password: "Password",
+    newPasswordPh: "New password...",
     newAccountCreated: "Account created! Welcome!",
     tabGuest: "Guest",
     tabLogin: "Login",
@@ -514,8 +523,17 @@ const translations = {
       until: "Until",
       weekdaysShort: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
       everyDay: "Every day",
-      atTime: "at",
+      whenAt: (quando, ora) => `${quando} at ${ora}`,
       dayOf: (n, m) => `day ${n} of ${m}`,
+      namePh: "e.g., Full Moon Meditation",
+      descPh: "Describe the ritual...",
+      types: {
+        consciousness: "Consciousness Elevation",
+        dna: "DNA Activation",
+        lightbody: "Light Body Activation",
+        unity: "Unity Consciousness",
+        ascension: "Ascension Portal"
+      },
       leave: "Leave",
       leaveFailed: "Could not leave the ritual.",
       stop: "Stop",
@@ -550,6 +568,7 @@ const translations = {
       thresholdHint: "The music will start with your touch",
       deleteFailed: "The ritual could not be deleted.",
       createRitual: "Propose Ritual",
+      testRitual: "⚡ Test (3 min)",
       noRituals: "No rituals yet. Be the first to propose one!",
       participants: "participants",
       startsIn: "Starts in",
@@ -664,14 +683,14 @@ const translations = {
       randomMatch: "Random Match",
       searching: "Searching for partner...",
       queuePosition: "Queue position",
-      starseedWaiting: "starseed waiting",
-      starseedsWaiting: "starseeds waiting",
+      waiting: n => `${n} ${n > 1 ? "starseeds" : "starseed"} waiting`,
       cancel: "Cancel",
       partnerLeftSuffix: "ended the session",
       yourPartnerFallback: "Your partner",
       backToLobby: "Back to lobby",
       differentChoices: "Different choices — continuing with",
       levelShapes: "Symbols",
+      levelShapesN: n => `${n} Symbols`,
       levelNumbers: "Numbers",
       levelWords: "Letters",
       you: "You",
@@ -738,7 +757,7 @@ const translations = {
       statusWaitingResult: "Waiting for result...",
       statusSent: "has sent! Guess.",
       statusChoosing: "is choosing...",
-      partnerOffline: "is no longer online — go back to the lobby and pick another partner.",
+      partnerOfflineN: nick => `${nick} is no longer online — go back to the lobby and pick another partner.`,
       inviteModalTitle: "Telepathy Training Invite",
       inviteModalBody: "wants to do telepathy training with you!",
       acceptBtn: "Accept",
@@ -813,7 +832,16 @@ const translations = {
     passwordSet: "Password impostata!",
     profileSaveFailed: "Non è stato possibile salvare il profilo. Rientra e riprova.",
     passwordChangeFailed: "Non è stato possibile cambiare la password. Rientra e riprova.",
-    registrationError: "Registrazione non riuscita. Riprova.",
+    registrationFailed: "Registrazione non riuscita. Riprova.",
+    fillNameDateTime: "Compila nome, data e ora.",
+    noNotifications: "Nessuna notifica",
+    go: "Vai",
+    ok: "OK",
+    seeOnlineUsers: "Vedi gli utenti online (Community)",
+    mainSections: "Sezioni principali",
+    worldMapAlt: "Mappa del mondo",
+    password: "Password",
+    newPasswordPh: "Nuova password...",
     newAccountCreated: "Account creato! Benvenuto!",
     tabGuest: "Ospite",
     tabLogin: "Accedi",
@@ -918,8 +946,17 @@ const translations = {
       until: "Fino al",
       weekdaysShort: ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"],
       everyDay: "Ogni giorno",
-      atTime: "alle",
+      whenAt: (quando, ora) => `${quando} alle ${ora}`,
       dayOf: (n, m) => `giorno ${n} di ${m}`,
+      namePh: "es. Meditazione della Luna Piena",
+      descPh: "Descrivi il rituale...",
+      types: {
+        consciousness: "Elevazione della Coscienza",
+        dna: "Attivazione del DNA",
+        lightbody: "Attivazione del Corpo di Luce",
+        unity: "Coscienza di Unità",
+        ascension: "Portale dell'Ascensione"
+      },
       leave: "Lascia",
       leaveFailed: "Non è stato possibile lasciare il rituale.",
       stop: "Ferma",
@@ -954,6 +991,7 @@ const translations = {
       thresholdHint: "La musica partirà con il tuo tocco",
       deleteFailed: "Non è stato possibile cancellare il rituale.",
       createRitual: "Proponi Rituale",
+      testRitual: "⚡ Prova (3 min)",
       noRituals: "Nessun rituale ancora. Sii il primo a proporne uno!",
       participants: "partecipanti",
       startsIn: "Inizia tra",
@@ -1068,14 +1106,14 @@ const translations = {
       randomMatch: "Abbinamento Random",
       searching: "Cerco un partner...",
       queuePosition: "Posizione in coda",
-      starseedWaiting: "starseed in attesa",
-      starseedsWaiting: "starseed in attesa",
+      waiting: n => `${n} starseed in attesa`,
       cancel: "Annulla",
       partnerLeftSuffix: "ha terminato la sessione",
       yourPartnerFallback: "Il tuo partner",
       backToLobby: "Torna alla lobby",
       differentChoices: "Scelte diverse — si continua con",
       levelShapes: "Simboli",
+      levelShapesN: n => `${n} Simboli`,
       levelNumbers: "Numeri",
       levelWords: "Lettere",
       you: "Tu",
@@ -1142,7 +1180,7 @@ const translations = {
       statusWaitingResult: "In attesa del risultato...",
       statusSent: "ha inviato! Indovina.",
       statusChoosing: "sta scegliendo...",
-      partnerOffline: "non e' piu' online — torna alla lobby e scegli un altro partner.",
+      partnerOfflineN: nick => `${nick} non e' piu' online — torna alla lobby e scegli un altro partner.`,
       inviteModalTitle: "Invito all'Allenamento Telepatico",
       inviteModalBody: "ti vuole fare training telepatico!",
       acceptBtn: "Accetta",
@@ -1180,11 +1218,881 @@ const translations = {
         other: "Altro"
       }
     }
+  },
+  es: {
+    title: "Global Awakening",
+    subtitle: "Unidos en la Luz, Despiertos como Uno",
+    enterPlatform: "Entrar",
+    enterAsGuest: "Entrar como Invitado",
+    login: "Iniciar sesión",
+    register: "Registrarse",
+    passwordOptional: "Contraseña (opcional)",
+    emailPlaceholder: "Correo electrónico",
+    usernamePlaceholder: "Elige un nombre de usuario...",
+    invalidCredentials: "Correo o contraseña incorrectos",
+    tooManyAttempts: "Demasiados intentos, vuelve a intentarlo en unos minutos",
+    emailAlreadyUsed: "Este correo ya está registrado",
+    usernameAlreadyUsed: "Este nombre de usuario ya está en uso",
+    fillAllFields: "Completa todos los campos",
+    invalidEmail: "Ingresa un correo electrónico válido",
+    connectionError: "Problema de conexión. Revisa la red y vuelve a intentarlo.",
+    reportIssue: "Reportar un problema",
+    pwaInstall: "📲 Instalar app",
+    pwaIosTitle: "Instalar en iPhone",
+    pwaIosBody: "Toca Compartir ⬆️ y luego \"Añadir a pantalla de inicio\".",
+    pwaIosClose: "Entendido",
+    musicCredit: "Música de",
+    musicFrom: "en",
+    musicMute: "Silenciar la música",
+    musicUnmute: "Activar la música",
+    musicTap: "Toca la pantalla para que empiece la música",
+    pwaIosBrowserTitle: "Abrir en Safari",
+    pwaIosBrowserBody: "Desde aquí no se puede instalar la app. Toca «•••» arriba a la derecha, elige «Abrir en Safari» y vuelve a intentarlo.",
+    pwaBannerText: "Lleva Global Awakening en tu teléfono",
+    pwaBannerClose: "Cerrar",
+    setPassword: "Crear Contraseña",
+    changePassword: "Cambiar Contraseña",
+    passwordSet: "¡Contraseña guardada!",
+    profileSaveFailed: "No se pudo guardar el perfil. Vuelve a entrar e inténtalo de nuevo.",
+    passwordChangeFailed: "No se pudo cambiar la contraseña. Vuelve a entrar e inténtalo de nuevo.",
+    registrationFailed: "No se pudo completar el registro. Inténtalo de nuevo.",
+    fillNameDateTime: "Completa el nombre, la fecha y la hora.",
+    noNotifications: "No hay notificaciones",
+    go: "Ir",
+    ok: "OK",
+    seeOnlineUsers: "Ver quién está en línea (Comunidad)",
+    mainSections: "Secciones principales",
+    worldMapAlt: "Mapa del mundo",
+    password: "Contraseña",
+    newPasswordPh: "Nueva contraseña...",
+    newAccountCreated: "¡Cuenta creada! ¡Te damos la bienvenida!",
+    tabGuest: "Invitado",
+    tabLogin: "Entrar",
+    tabRegister: "Registrarse",
+    noAccountYet: "¿No tienes cuenta? Regístrate",
+    alreadyHaveAccount: "¿Ya tienes cuenta? Inicia sesión",
+    forgotPassword: "¿Olvidaste la contraseña?",
+    resetPassword: "Restablecer Contraseña",
+    backToLogin: "Volver al inicio de sesión",
+    newPasswordPlaceholder: "Nueva contraseña",
+    confirmPasswordPlaceholder: "Confirma la nueva contraseña",
+    passwordsNoMatch: "Las contraseñas no coinciden",
+    resetEmailSent: "Si la dirección está registrada, te hemos escrito. Haz clic en el enlace del correo.",
+    resetTokenInvalid: "Enlace no válido o vencido. Pide uno nuevo.",
+    resetSuccess: "¡Contraseña actualizada! Ya puedes iniciar sesión.",
+    setNewPassword: "Crear nueva contraseña",
+    magicLinkSent: "Si la dirección está registrada, te hemos enviado un enlace para entrar.",
+    magicLinkInvalid: "Enlace no válido o vencido. Pide uno nuevo.",
+    sendMagicLink: "Enviar enlace de acceso",
+    magicLinkHint: "Entrar con enlace mágico →",
+    sessionExpired: "Por seguridad tienes que volver a entrar: te enviamos un enlace por correo. Tu perfil, tus mensajes y tus puntuaciones están a salvo.",
+    showPassword: "Mostrar contraseña",
+    hidePassword: "Ocultar contraseña",
+    guestBadge: "Invitado",
+    registeredBadge: "Registrado",
+    guestCodeLabel: "Tu código de investigador",
+    guestCodeHint: "Anónimo pero reconocible (guardado en este dispositivo): si obtienes resultados de telepatía excepcionales, podríamos hacer un llamamiento público con este código para que puedas darte a conocer, solo si tú quieres.",
+    registerInvite: "Regístrate para guardar tu perfil para siempre",
+    logout: "Salir",
+    logoutConfirmTitle: "¿Quieres salir?",
+    logoutConfirmBody: "Volverás a la pantalla de acceso.",
+    logoutConfirmYes: "Salir",
+    logoutConfirmNo: "Cancelar",
+    gdprTitle: "Tus datos (RGPD)",
+    gdprExport: "Exportar mis datos",
+    gdprExporting: "Preparando…",
+    gdprDelete: "Eliminar cuenta",
+    gdprDeleteTitle: "¿Quieres eliminar la cuenta?",
+    gdprDeleteBody: "Esto elimina para siempre tu perfil, tus mensajes privados y tus puntuaciones. Tus publicaciones y comentarios públicos se mantienen, pero aparecerán como \"Utente eliminato\". No se puede deshacer.",
+    gdprDeleteConfirmLabel: "Escribe tu nickname para confirmar:",
+    gdprDeleteConfirmBtn: "Eliminar para siempre",
+    gdprDeleteCancel: "Cancelar",
+    gdprDeleting: "Eliminando…",
+    gdprExportError: "No se pudo exportar. Inténtalo de nuevo.",
+    gdprDeleteError: "No se pudo eliminar. Inténtalo de nuevo.",
+    tabs: {
+      rituals: "Rituales",
+      telepathy: "Telepatía",
+      consciousness: "Consciencia"
+    },
+    showTelepathyScore: "Mostrar puntuación de telepatía",
+    pushChiedi: "¿Quieres que te avise cuando empiece?",
+    pushSi: "Sí, avísame",
+    pushNo: "Ahora no",
+    pushImpostazioni: "Avísame cuando empiece un ritual",
+    pushIosInstalla: "Para recibir notificaciones, primero añade la app a la pantalla de inicio.",
+    editProfile: "Editar Perfil",
+    profile: {
+      title: "Tu Perfil",
+      subtitle: "Háblale de ti a la comunidad",
+      bio: "Bio",
+      bioPlaceholder: "Cuéntanos tu camino espiritual...",
+      starseedType: "Tipo de Starseed",
+      avatar: "Avatar",
+      country: "País (opcional)",
+      countryPlaceholder: "Tu país",
+      interests: "Intereses Espirituales",
+      experienceLevel: "Nivel de Experiencia",
+      save: "Guardar Perfil",
+      saved: "¡Perfil Guardado!",
+      starseedTypes: {
+        pleiadian: "Pleyadiano",
+        sirian: "Siriano",
+        arcturian: "Arcturiano",
+        andromedan: "Andromedano",
+        lyran: "Lirano",
+        orion: "Orión",
+        universal: "Universal"
+      },
+      experienceLevels: {
+        beginner: "Principiante",
+        intermediate: "Intermedio",
+        advanced: "Avanzado",
+        master: "Maestro"
+      },
+      interestsList: {
+        meditation: "Meditación",
+        telepathy: "Telepatía",
+        healing: "Sanación",
+        astrology: "Astrología",
+        lucidDreams: "Sueños Lúcidos",
+        astralProjection: "Proyección Astral",
+        channeling: "Canalización"
+      }
+    },
+    rituals: {
+      title: "Rituales Globales",
+      repeat: "Se repite",
+      repeatNever: "Solo una vez",
+      repeatDaily: "Todos los días",
+      repeatDays: "Días elegidos",
+      until: "Hasta el",
+      weekdaysShort: ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"],
+      everyDay: "Todos los días",
+      whenAt: (quando, ora) => `${quando} ${/^0?1:/.test(ora) ? 'a la' : 'a las'} ${ora}`,
+      dayOf: (n, m) => `día ${n} de ${m}`,
+      namePh: "p. ej. Meditación de Luna Llena",
+      descPh: "Describe el ritual...",
+      types: {
+        consciousness: "Elevación de la Consciencia",
+        dna: "Activación del ADN",
+        lightbody: "Activación del Cuerpo de Luz",
+        unity: "Consciencia de Unidad",
+        ascension: "Portal de la Ascensión"
+      },
+      leave: "Salir",
+      leaveFailed: "No se pudo salir del ritual.",
+      stop: "Detener",
+      stopTitle: "¿Detener el ciclo?",
+      stopBody: "El ciclo se detiene: no habrá más encuentros. El que está en curso, si lo hay, termina con normalidad.",
+      stopYes: "Detener",
+      stopNo: "Déjalo seguir",
+      stopFailed: "No se pudo detener el ciclo.",
+      reloginNeeded: "Para continuar, vuelve a iniciar sesión: usa «¿Olvidaste la contraseña?» para elegir una nueva.",
+      room: "Sala del ritual",
+      peopleHere: n => n === 1 ? "1 persona aquí ahora" : `${n} personas aquí ahora`,
+      closeRoom: "Cerrar",
+      enterRoom: "Entrar",
+      descCounter: n => `quedan ${n} caracteres`,
+      recurrenceErrors: {
+        recurrence_incomplete: "Elige los días y la fecha de fin.",
+        recurrence_days_invalid: "Elige al menos un día de la semana.",
+        recurrence_end_invalid: "La fecha de fin debe ser posterior al inicio, como máximo dentro de un año.",
+        recurrence_duration_too_long: "Un ritual que se repite dura como máximo 12 horas.",
+        recurrence_empty: "En este periodo no cae ninguno de los días elegidos.",
+        recurrence_limit: "Ya tienes 10 rituales que se repiten: detén uno antes de crear otro.",
+        timezone_invalid: "No se reconoce la zona horaria del teléfono."
+      },
+      subtitle: "Ceremonias de despertar sincronizadas",
+      deleteRitual: "Eliminar",
+      deleteTitle: "¿Eliminar este ritual?",
+      deleteBody: "Desaparece para todos los que se hayan unido. Solo se puede hacer antes de que empiece.",
+      deleteYes: "Eliminar",
+      deleteNo: "Mantenerlo",
+      deleteStarted: "Demasiado tarde: el ritual ya ha empezado.",
+      thresholdTap: "Toca para entrar en el ritual",
+      thresholdHint: "La música empezará cuando toques la pantalla",
+      deleteFailed: "No se pudo eliminar el ritual.",
+      createRitual: "Proponer Ritual",
+      testRitual: "⚡ Prueba (3 min)",
+      noRituals: "Todavía no hay rituales. ¡Sé el primero en proponer uno!",
+      participants: "participantes",
+      startsIn: "Empieza en",
+      live: "EN VIVO",
+      ended: "Terminado",
+      join: "Unirme",
+      joined: "Unido",
+      sendEnergy: "Enviar Energía",
+      candleLight: "Enciende una vela",
+      candleExtinguish: "Apaga tu vela",
+      candlesLitBy: "Velas encendidas por",
+      candleNotLive: "La vela se enciende durante el ritual.",
+      candleNotPresent: "Entra en la sala para encender la vela.",
+      candleTooMany: "La sala está llena de velas.",
+      modalTitle: "Crear Ritual",
+      ritualName: "Nombre del Ritual",
+      description: "Descripción",
+      type: "Tipo",
+      sacredNumber: "Número Sagrado",
+      date: "Fecha",
+      time: "Hora",
+      duration: "Duración (minutos)",
+      create: "Crear Ritual",
+      cancel: "Cancelar"
+    },
+    feed: {
+      title: "Feed de Consciencia",
+      subtitle: "Comparte tus pensamientos con la comunidad",
+      newPostPlaceholder: "¿Qué tienes en mente? Comparte tu despertar...",
+      post: "Publicar",
+      comment: "Comentar",
+      comments: "comentarios",
+      addComment: "Añade un comentario...",
+      noFeed: "Todavía no hay publicaciones. ¡Sé el primero en compartir!",
+      showComments: "Mostrar comentarios",
+      hideComments: "Ocultar comentarios"
+    },
+    map: {
+      title: "Red Global",
+      subtitle: "Starseeds que despiertan juntos",
+      visible: "starseeds visibles"
+    },
+    social: {
+      viewProfile: "Ver Perfil",
+      telepathyScore: "Rondas Jugadas",
+      bestScore: "% Aciertos",
+      community: "Comunidad",
+      noProfile: "Todavía no hay perfil",
+      close: "Cerrar",
+      notifications: "Notificaciones"
+    },
+    stats: {
+      activeRituals: "Rituales Activos",
+      roundsPlayed: "Rondas Jugadas",
+      onlineNow: "En línea ahora"
+    },
+    privacy: {
+      linkLabel: "Privacidad",
+      title: "Política de privacidad",
+      lastUpdated: "Última actualización: junio de 2026",
+      intro: "Global Awakening es un proyecto personal y no comercial. Esta página explica, con palabras sencillas, qué datos tratamos y por qué.",
+      sections: [{
+        heading: "Qué datos recogemos",
+        body: "Cuando creas una cuenta: tu correo electrónico, una contraseña (guardada solo como hash criptográfico, nunca en texto plano) y el nickname, la breve bio y el país que decidas compartir. Mientras usas la app guardamos tu actividad: puntuaciones de telepatía, mensajes privados, rituales, publicaciones y comentarios, y tu estado en línea. Además, el navegador guarda tu nickname y tus preferencias en el local storage. No usamos cookies, analítica ni rastreadores externos."
+      }, {
+        heading: "Para qué los usamos",
+        body: "Solo para que la app funcione: acceso, funciones de telepatía, rituales y comunidad, y notificaciones dentro de la app. Nunca vendemos tus datos ni los usamos para publicidad."
+      }, {
+        heading: "Dónde se guardan",
+        body: "Tus datos se guardan en Supabase (nuestra base de datos). Los correos transaccionales (restablecimiento de contraseña y enlace mágico) se envían a través de EmailJS. El sitio está alojado en GitHub Pages. Compartimos datos con estos proveedores solo en la medida necesaria para que el servicio funcione."
+      }, {
+        heading: "Cuánto tiempo los conservamos",
+        body: "Los datos de la cuenta y de actividad se conservan mientras tu cuenta esté activa. Los tokens de restablecimiento de contraseña y de enlace mágico caducan en un máximo de 15 minutos."
+      }, {
+        heading: "Tus derechos",
+        body: "Según el RGPD puedes acceder a tus datos, rectificarlos, suprimirlos o exportarlos, o bien oponerte a su uso. Puedes exportar tus datos y eliminar tu cuenta directamente desde tu perfil (abre el perfil → \"Tus datos (RGPD)\"). Para la rectificación o la oposición, abre una issue en nuestro repositorio público de GitHub (github.com/global-awakening/global-awakening.github.io)."
+      }, {
+        heading: "Seguridad",
+        body: "Los datos se guardan en Supabase y las contraseñas se almacenan en forma de hash, nunca en texto plano. Al tratarse de un pequeño proyecto personal, no podemos garantizar una seguridad de nivel empresarial: te invitamos a no compartir nada que no quieras que puedan ver otras personas."
+      }, {
+        heading: "Cambios",
+        body: "La versión que se muestra aquí es siempre la vigente. Si cambia algo importante, actualizaremos esta página."
+      }],
+      close: "Cerrar"
+    },
+    messages: {
+      title: "Mensajes",
+      subtitle: "Conversaciones privadas",
+      noConversations: "Todavía no hay conversaciones. ¡Visita un perfil y envía un mensaje!",
+      guestPrompt: "Regístrate para enviar mensajes privados",
+      receiverNotRegistered: "Este starseed todavía no está registrado, así que no puede recibir mensajes privados. ¡Invítalo a registrarse!",
+      placeholder: "Escribe un mensaje...",
+      send: "Enviar",
+      sendMessage: "Enviar Mensaje",
+      newMessage: "Nuevo mensaje para",
+      messagePlaceholder: "Escribe tu primer mensaje...",
+      back: "Atrás",
+      you: "Tú"
+    },
+    telepathy: {
+      title: "Entrenamiento Telepático",
+      subtitle: "Desarrolla tus capacidades psíquicas",
+      howItWorks: "Cómo funciona:",
+      step1: "1. Elige un compañero de la lista o busca uno al azar",
+      step2: "2. Uno envía un símbolo, el otro lo recibe",
+      step3: "3. ¡Después de 7 rondas puedes cambiar el tipo de juego!",
+      onlineUsers: "Usuarios en línea",
+      inSession: "en sesión",
+      available: "disponible",
+      propose: "Invitar",
+      inviteSent: "Invitación enviada...",
+      randomMatch: "Compañero al Azar",
+      searching: "Buscando un compañero...",
+      queuePosition: "Posición en la cola",
+      waiting: n => `${n} ${n === 1 ? "starseed" : "starseeds"} esperando`,
+      cancel: "Cancelar",
+      partnerLeftSuffix: "ha terminado la sesión",
+      yourPartnerFallback: "Tu compañero",
+      backToLobby: "Volver al inicio",
+      differentChoices: "Opciones distintas — se sigue con",
+      levelShapes: "Símbolos",
+      levelShapesN: n => `${n} Símbolos`,
+      levelNumbers: "Números",
+      levelWords: "Letras",
+      you: "Tú",
+      partner: "Compañero",
+      ok: "Ok",
+      yourRole: "Tu papel",
+      roleSwappedSender: "🔄 ¡Papeles invertidos! Ahora eres el Emisor",
+      roleSwappedReceiver: "🔄 ¡Papeles invertidos! Ahora eres el Receptor",
+      roleSender: "Emisor",
+      roleReceiver: "Receptor",
+      roundLabel: "Ronda",
+      matchLabel: "Aciertos",
+      levelLabel: "Nivel",
+      accuracyLabel: "Precisión",
+      statusLabel: "Estado",
+      changeLevelPrompt: "¿Quieres cambiar el tipo de telepatía?",
+      youChose: "Elegiste",
+      waitingDots: "Esperando...",
+      continueLevel: "Continuar",
+      levelChooseTitle: "Elige la nueva modalidad",
+      levelKeep: "Seguir igual",
+      levelWaiting: "está eligiendo la nueva modalidad de juego…",
+      tabPlay: "Jugar",
+      tabLeaderboard: "Clasificación",
+      leaderboardTitle: "Mejores telépatas",
+      leaderboardEmpty: "Todavía hay pocos datos: juega para aparecer aquí.",
+      leaderboardPlayer: "Jugador",
+      leaderboardMatches: "Aciertos",
+      leaderboardAccuracy: "Precisión",
+      leaderboardRefresh: "Actualizar",
+      pickSymbol: "Elige el símbolo que vas a enviar:",
+      sendTelepathically: "Enviar Telepáticamente",
+      symbolSentGuess: "✨ ¡Símbolo enviado! ¿Cuál recibes?",
+      waitingForSend: "está eligiendo el símbolo… espera a que se ilumine",
+      confirm: "Confirmar",
+      senderWaiting: "¡Símbolo enviado! Esperando a que el receptor adivine...",
+      receiverWaiting: "¡Respuesta enviada! Esperando al emisor...",
+      matchResult: "✨ ¡CONEXIÓN TELEPÁTICA! ✨",
+      noMatch: "Esta vez no. ¡Sigue adelante!",
+      sentLabel: "Enviado",
+      guessedLabel: "Adivinado",
+      resonance: "Sintonía ✨",
+      again: "Otra vez",
+      nextMatchIn: "Nueva ronda en",
+      endSessionBtn: "Terminar Sesión",
+      endSessionConfirmTitle: "¿Salir de la sesión?",
+      endSessionConfirmBody: "Tu compañero recibirá un aviso. No se puede deshacer.",
+      endSessionConfirmYes: "Salir",
+      endSessionConfirmNo: "Quedarme",
+      sessionComplete: "¡Sesión Completada!",
+      roundsPlayed: "Rondas jugadas",
+      correctMatches: "Aciertos",
+      accuracyColon: "Precisión:",
+      playAgainWith: "Otra sesión con",
+      backToLobbyCap: "Volver al Inicio",
+      leaveSession: "Salir de la sesión",
+      chatWith: "Chat con",
+      noMessages: "Todavía no hay mensajes",
+      chatPlaceholder: "Escribe...",
+      statusChoosingLevel: "Esperando la elección del nivel...",
+      statusRoundDone: "¡Ronda completada!",
+      statusGuessing: "está adivinando...",
+      statusWaitingSymbol: "espera tu símbolo",
+      statusWaitingResult: "Esperando el resultado...",
+      statusSent: "¡ha enviado! Adivina.",
+      statusChoosing: "está eligiendo...",
+      partnerOfflineN: nick => `${nick} ya no está en línea: vuelve al inicio y elige otro compañero.`,
+      inviteModalTitle: "Invitación al Entrenamiento Telepático",
+      inviteModalBody: "¡quiere hacer entrenamiento telepático contigo!",
+      acceptBtn: "Aceptar",
+      declineBtn: "Rechazar",
+      inviteExpired: "Vencida",
+      trainingFloatingPrefix: "Entrenamiento en curso con",
+      trainingFloatingCta: "Volver"
+    },
+    moderation: {
+      menu: "Acciones",
+      report: "Reportar",
+      block: "Bloquear",
+      unblock: "Desbloquear",
+      cancel: "Cancelar",
+      blockedUsers: "Usuarios bloqueados",
+      noBlocked: "No has bloqueado a nadie.",
+      blockTitle: "¿Quieres bloquear a esta persona?",
+      blockConfirm: "Ya no verás su contenido y no podrá escribirte. Puedes deshacerlo cuando quieras.",
+      blockDone: "Usuario bloqueado.",
+      unblockDone: "Usuario desbloqueado.",
+      reportTitle: "Reportar contenido",
+      reportWhy: "¿Por qué lo reportas?",
+      reportNotes: "Notas (opcionales)",
+      reportSend: "Enviar reporte",
+      reportDone: "Reporte enviado. Lo revisaremos en un plazo de 48 horas.",
+      reportRules: "Normas de contenido",
+      guestOnly: "Necesitas una cuenta registrada para reportar o bloquear.",
+      reasons: {
+        spam: "Spam o publicidad",
+        harassment: "Acoso o insultos",
+        hate: "Odio o discriminación",
+        sexual: "Contenido sexual",
+        violence: "Violencia o amenazas",
+        self_harm: "Autolesiones o suicidio",
+        other: "Otro"
+      }
+    }
+  },
+  fr: {
+    title: "Global Awakening",
+    subtitle: "Unis dans la Lumière, Éveillés, ne faisant qu'Un",
+    enterPlatform: "Entrer",
+    enterAsGuest: "Entrer en tant qu'Invité",
+    login: "Se connecter",
+    register: "S'inscrire",
+    passwordOptional: "Mot de passe (facultatif)",
+    emailPlaceholder: "Adresse e-mail",
+    usernamePlaceholder: "Choisis un nom d'utilisateur...",
+    invalidCredentials: "E-mail ou mot de passe incorrect",
+    tooManyAttempts: "Trop de tentatives, réessaie dans quelques minutes",
+    emailAlreadyUsed: "Cette adresse e-mail est déjà utilisée",
+    usernameAlreadyUsed: "Ce nom d'utilisateur est déjà pris",
+    fillAllFields: "Remplis tous les champs",
+    invalidEmail: "Saisis une adresse e-mail valide",
+    connectionError: "Problème de connexion. Vérifie ton réseau et réessaie.",
+    reportIssue: "Signaler un problème",
+    pwaInstall: "📲 Installer l'app",
+    pwaIosTitle: "Installer sur iPhone",
+    pwaIosBody: "Touche Partager ⬆️ puis « Sur l'écran d'accueil ».",
+    pwaIosClose: "J'ai compris",
+    musicCredit: "Musique de",
+    musicFrom: "sur",
+    musicMute: "Couper la musique",
+    musicUnmute: "Remettre la musique",
+    musicTap: "Touche l'écran pour lancer la musique",
+    pwaIosBrowserTitle: "Ouvrir dans Safari",
+    pwaIosBrowserBody: "L'app ne peut pas s'installer depuis ici. Touche « ••• » en haut à droite, choisis « Ouvrir dans Safari » et réessaie.",
+    pwaBannerText: "Garde Global Awakening sur ton téléphone",
+    pwaBannerClose: "Fermer",
+    setPassword: "Définir un Mot de passe",
+    changePassword: "Changer de Mot de passe",
+    passwordSet: "Mot de passe enregistré !",
+    profileSaveFailed: "Impossible d'enregistrer le profil. Reconnecte-toi et réessaie.",
+    passwordChangeFailed: "Impossible de changer le mot de passe. Reconnecte-toi et réessaie.",
+    registrationFailed: "L'inscription n'a pas abouti. Réessaie.",
+    fillNameDateTime: "Remplis le nom, la date et l'heure.",
+    noNotifications: "Aucune notification",
+    go: "Aller",
+    ok: "OK",
+    seeOnlineUsers: "Voir qui est en ligne (Communauté)",
+    mainSections: "Sections principales",
+    worldMapAlt: "Carte du monde",
+    password: "Mot de passe",
+    newPasswordPh: "Nouveau mot de passe...",
+    newAccountCreated: "Compte créé ! Bienvenue !",
+    tabGuest: "Invité",
+    tabLogin: "Connexion",
+    tabRegister: "Inscription",
+    noAccountYet: "Pas encore de compte ? Inscris-toi",
+    alreadyHaveAccount: "Tu as déjà un compte ? Connecte-toi",
+    forgotPassword: "Mot de passe oublié ?",
+    resetPassword: "Réinitialiser le Mot de passe",
+    backToLogin: "Retour à la connexion",
+    newPasswordPlaceholder: "Nouveau mot de passe",
+    confirmPasswordPlaceholder: "Confirme le nouveau mot de passe",
+    passwordsNoMatch: "Les mots de passe ne correspondent pas",
+    resetEmailSent: "Si l'adresse est inscrite, nous t'avons écrit. Clique sur le lien dans l'e-mail.",
+    resetTokenInvalid: "Lien invalide ou expiré. Demandes-en un nouveau.",
+    resetSuccess: "Mot de passe mis à jour ! Tu peux maintenant te connecter.",
+    setNewPassword: "Définir un nouveau mot de passe",
+    magicLinkSent: "Si l'adresse est inscrite, nous t'avons envoyé un lien pour te connecter.",
+    magicLinkInvalid: "Lien invalide ou expiré. Demandes-en un nouveau.",
+    sendMagicLink: "Envoyer le lien de connexion",
+    magicLinkHint: "Connexion par lien magique →",
+    sessionExpired: "Par sécurité, tu dois te reconnecter : nous t'envoyons un lien par e-mail. Ton profil, tes messages et tes scores sont en sécurité.",
+    showPassword: "Afficher le mot de passe",
+    hidePassword: "Masquer le mot de passe",
+    guestBadge: "Invité",
+    registeredBadge: "Inscrit",
+    guestCodeLabel: "Ton code de chercheur",
+    guestCodeHint: "Anonyme mais reconnaissable (enregistré sur cet appareil) : si tu obtiens des résultats de télépathie exceptionnels, nous pourrions lancer un appel public pour ce code, afin que tu puisses te faire connaître — seulement si tu le souhaites.",
+    registerInvite: "Inscris-toi pour garder ton profil pour toujours",
+    logout: "Quitter",
+    logoutConfirmTitle: "Tu veux te déconnecter ?",
+    logoutConfirmBody: "Tu reviendras à l'écran de connexion.",
+    logoutConfirmYes: "Se déconnecter",
+    logoutConfirmNo: "Annuler",
+    gdprTitle: "Tes données (RGPD)",
+    gdprExport: "Exporter mes données",
+    gdprExporting: "Préparation…",
+    gdprDelete: "Supprimer le compte",
+    gdprDeleteTitle: "Tu veux supprimer ton compte ?",
+    gdprDeleteBody: "Cela supprime définitivement ton profil, tes messages privés et tes scores. Tes publications et commentaires publics restent, mais apparaîtront sous le nom « Utente eliminato ». Cette action est irréversible.",
+    gdprDeleteConfirmLabel: "Tape ton pseudo pour confirmer :",
+    gdprDeleteConfirmBtn: "Supprimer pour toujours",
+    gdprDeleteCancel: "Annuler",
+    gdprDeleting: "Suppression…",
+    gdprExportError: "L'export n'a pas abouti. Réessaie.",
+    gdprDeleteError: "La suppression n'a pas abouti. Réessaie.",
+    tabs: {
+      rituals: "Rituels",
+      telepathy: "Télépathie",
+      consciousness: "Conscience"
+    },
+    showTelepathyScore: "Afficher le score de télépathie",
+    pushChiedi: "Tu veux que je te prévienne quand ça commence ?",
+    pushSi: "Oui, préviens-moi",
+    pushNo: "Pas maintenant",
+    pushImpostazioni: "Préviens-moi quand un rituel commence",
+    pushIosInstalla: "Pour recevoir les notifications, ajoute d'abord l'app à l'écran d'accueil.",
+    editProfile: "Modifier le Profil",
+    profile: {
+      title: "Ton Profil",
+      subtitle: "Parle de toi à la communauté",
+      bio: "Bio",
+      bioPlaceholder: "Raconte-nous ton chemin spirituel...",
+      starseedType: "Type de Starseed",
+      avatar: "Avatar",
+      country: "Pays (facultatif)",
+      countryPlaceholder: "Ton pays",
+      interests: "Centres d'intérêt spirituels",
+      experienceLevel: "Niveau d'Expérience",
+      save: "Enregistrer le Profil",
+      saved: "Profil Enregistré !",
+      starseedTypes: {
+        pleiadian: "Pléiadien",
+        sirian: "Sirien",
+        arcturian: "Arcturien",
+        andromedan: "Andromédien",
+        lyran: "Lyrien",
+        orion: "Orion",
+        universal: "Universel"
+      },
+      experienceLevels: {
+        beginner: "Débutant",
+        intermediate: "Intermédiaire",
+        advanced: "Avancé",
+        master: "Maître"
+      },
+      interestsList: {
+        meditation: "Méditation",
+        telepathy: "Télépathie",
+        healing: "Guérison",
+        astrology: "Astrologie",
+        lucidDreams: "Rêves Lucides",
+        astralProjection: "Projection Astrale",
+        channeling: "Channeling"
+      }
+    },
+    rituals: {
+      title: "Rituels Mondiaux",
+      repeat: "Se répète",
+      repeatNever: "Une seule fois",
+      repeatDaily: "Tous les jours",
+      repeatDays: "Jours choisis",
+      until: "Jusqu'au",
+      weekdaysShort: ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"],
+      everyDay: "Tous les jours",
+      whenAt: (quando, ora) => `${quando} à ${ora}`,
+      dayOf: (n, m) => `jour ${n} sur ${m}`,
+      namePh: "Ex. : Méditation de la Pleine Lune",
+      descPh: "Décris le rituel...",
+      types: {
+        consciousness: "Élévation de la Conscience",
+        dna: "Activation de l'ADN",
+        lightbody: "Activation du Corps de Lumière",
+        unity: "Conscience de l'Unité",
+        ascension: "Portail de l'Ascension"
+      },
+      leave: "Quitter",
+      leaveFailed: "Impossible de quitter le rituel.",
+      stop: "Arrêter",
+      stopTitle: "Arrêter le cycle ?",
+      stopBody: "Le cycle s'arrête : il n'y aura plus de rendez-vous. Celui en cours, s'il y en a un, se termine normalement.",
+      stopYes: "Arrêter",
+      stopNo: "Laisse-le continuer",
+      stopFailed: "Impossible d'arrêter le cycle.",
+      reloginNeeded: "Pour continuer, reconnecte-toi : utilise « Mot de passe oublié ? » pour choisir un nouveau mot de passe.",
+      room: "Salle du rituel",
+      peopleHere: n => n <= 1 ? `${n} personne ici maintenant` : `${n} personnes ici maintenant`,
+      closeRoom: "Fermer",
+      enterRoom: "Entrer",
+      descCounter: n => `encore ${n} caractères`,
+      recurrenceErrors: {
+        recurrence_incomplete: "Choisis les jours et la date de fin.",
+        recurrence_days_invalid: "Choisis au moins un jour de la semaine.",
+        recurrence_end_invalid: "La date de fin doit être après le début, au maximum dans un an.",
+        recurrence_duration_too_long: "Un rituel qui se répète dure au maximum 12 heures.",
+        recurrence_empty: "Aucun des jours choisis ne tombe dans cette période.",
+        recurrence_limit: "Tu as déjà 10 rituels qui se répètent : arrêtes-en un avant d'en créer un autre.",
+        timezone_invalid: "Le fuseau horaire du téléphone n'est pas reconnu."
+      },
+      subtitle: "Cérémonies d'éveil synchronisées",
+      deleteRitual: "Supprimer",
+      deleteTitle: "Supprimer ce rituel ?",
+      deleteBody: "Il disparaît pour tous ceux qui l'ont rejoint. Possible seulement avant qu'il commence.",
+      deleteYes: "Supprimer",
+      deleteNo: "Le garder",
+      deleteStarted: "Trop tard : le rituel a déjà commencé.",
+      thresholdTap: "Touche pour entrer dans le rituel",
+      thresholdHint: "La musique démarrera dès que tu toucheras l'écran",
+      deleteFailed: "Impossible de supprimer le rituel.",
+      createRitual: "Proposer un Rituel",
+      testRitual: "⚡ Test (3 min)",
+      noRituals: "Aucun rituel pour l'instant. Sois le premier à en proposer un !",
+      participants: "participants",
+      startsIn: "Commence dans",
+      live: "EN DIRECT",
+      ended: "Terminé",
+      join: "Rejoindre",
+      joined: "Tu participes",
+      sendEnergy: "Envoyer de l'Énergie",
+      candleLight: "Allume une bougie",
+      candleExtinguish: "Éteins ta bougie",
+      candlesLitBy: "Bougies allumées par",
+      candleNotLive: "La bougie s'allume pendant le rituel.",
+      candleNotPresent: "Entre dans la salle pour allumer la bougie.",
+      candleTooMany: "La salle est pleine de bougies.",
+      modalTitle: "Créer un Rituel",
+      ritualName: "Nom du Rituel",
+      description: "Description",
+      type: "Type",
+      sacredNumber: "Nombre Sacré",
+      date: "Date",
+      time: "Heure",
+      duration: "Durée (minutes)",
+      create: "Créer le Rituel",
+      cancel: "Annuler"
+    },
+    feed: {
+      title: "Fil de Conscience",
+      subtitle: "Partage tes pensées avec la communauté",
+      newPostPlaceholder: "À quoi penses-tu ? Partage ton éveil...",
+      post: "Publier",
+      comment: "Commenter",
+      comments: "commentaires",
+      addComment: "Ajoute un commentaire...",
+      noFeed: "Aucune publication pour l'instant. Sois le premier à partager !",
+      showComments: "Afficher les commentaires",
+      hideComments: "Masquer les commentaires"
+    },
+    map: {
+      title: "Réseau Mondial",
+      subtitle: "Des starseeds qui s'éveillent ensemble",
+      visible: "starseeds visibles"
+    },
+    social: {
+      viewProfile: "Voir le Profil",
+      telepathyScore: "Manches Jouées",
+      bestScore: "% Réussite",
+      community: "Communauté",
+      noProfile: "Pas encore de profil",
+      close: "Fermer",
+      notifications: "Notifications"
+    },
+    stats: {
+      activeRituals: "Rituels Actifs",
+      roundsPlayed: "Manches Jouées",
+      onlineNow: "En ligne"
+    },
+    privacy: {
+      linkLabel: "Confidentialité",
+      title: "Politique de confidentialité",
+      lastUpdated: "Dernière mise à jour : juin 2026",
+      intro: "Global Awakening est un projet personnel et non commercial. Cette page explique, avec des mots simples, quelles données nous traitons et pourquoi.",
+      sections: [{
+        heading: "Quelles données nous collectons",
+        body: "Quand tu crées un compte : ton adresse e-mail, un mot de passe (enregistré uniquement sous forme de hash cryptographique, jamais en clair) ainsi que le pseudo, la courte bio et le pays que tu choisis de partager. Pendant que tu utilises l'app, nous enregistrons ton activité : scores de télépathie, messages privés, rituels, publications et commentaires, et ton statut en ligne. Ton navigateur conserve aussi ton pseudo et tes préférences dans le local storage. Nous n'utilisons ni cookies, ni outils d'analyse, ni traceurs externes."
+      }, {
+        heading: "Pourquoi nous les utilisons",
+        body: "Uniquement pour faire fonctionner l'app : connexion, fonctionnalités de télépathie, de rituels et de communauté, et notifications dans l'app. Nous ne vendons jamais tes données et ne les utilisons pas pour de la publicité."
+      }, {
+        heading: "Où elles sont conservées",
+        body: "Tes données sont conservées sur Supabase (notre base de données). Les e-mails transactionnels (réinitialisation du mot de passe et lien magique) sont envoyés via EmailJS. Le site est hébergé sur GitHub Pages. Nous ne partageons les données avec ces prestataires que dans la mesure nécessaire au fonctionnement du service."
+      }, {
+        heading: "Combien de temps nous les conservons",
+        body: "Les données du compte et d'activité sont conservées tant que ton compte est actif. Les jetons de réinitialisation du mot de passe et de lien magique expirent dans un délai de 15 minutes."
+      }, {
+        heading: "Tes droits",
+        body: "En vertu du RGPD, tu peux accéder à tes données, les rectifier, les effacer ou les exporter, ou t'opposer à leur utilisation. Tu peux exporter tes données et supprimer ton compte directement depuis ton profil (ouvre ton profil → « Tes données (RGPD) »). Pour une rectification ou une opposition, ouvre une issue sur notre dépôt GitHub public (github.com/global-awakening/global-awakening.github.io)."
+      }, {
+        heading: "Sécurité",
+        body: "Les données sont conservées sur Supabase et les mots de passe sont enregistrés sous forme de hash, jamais en clair. S'agissant d'un petit projet personnel, nous ne pouvons pas garantir une sécurité de niveau entreprise : nous t'invitons à ne rien partager que tu ne voudrais pas que d'autres puissent voir."
+      }, {
+        heading: "Modifications",
+        body: "La version affichée ici est toujours la version en vigueur. Si quelque chose d'important change, nous mettrons cette page à jour."
+      }],
+      close: "Fermer"
+    },
+    messages: {
+      title: "Messages",
+      subtitle: "Conversations privées",
+      noConversations: "Aucune conversation. Visite un profil et envoie un message !",
+      guestPrompt: "Inscris-toi pour envoyer des messages privés",
+      receiverNotRegistered: "Ce starseed n'est pas encore inscrit, il ne peut donc pas recevoir de messages privés. Invite-le à s'inscrire !",
+      placeholder: "Écris un message...",
+      send: "Envoyer",
+      sendMessage: "Envoyer un Message",
+      newMessage: "Nouveau message à",
+      messagePlaceholder: "Écris ton premier message...",
+      back: "Retour",
+      you: "Toi"
+    },
+    telepathy: {
+      title: "Entraînement Télépathique",
+      subtitle: "Développe tes capacités psychiques",
+      howItWorks: "Comment ça marche :",
+      step1: "1. Choisis un partenaire dans la liste ou cherches-en un au hasard",
+      step2: "2. L'un envoie un symbole, l'autre le reçoit",
+      step3: "3. Après 7 manches, tu peux changer de type de jeu !",
+      onlineUsers: "Utilisateurs en ligne",
+      inSession: "en session",
+      available: "disponible",
+      propose: "Inviter",
+      inviteSent: "Invitation envoyée...",
+      randomMatch: "Partenaire au Hasard",
+      searching: "Je cherche un partenaire...",
+      queuePosition: "Position dans la file",
+      waiting: n => `${n} ${n > 1 ? "starseeds" : "starseed"} en attente`,
+      cancel: "Annuler",
+      partnerLeftSuffix: "a mis fin à la session",
+      yourPartnerFallback: "Ton partenaire",
+      backToLobby: "Retour au salon",
+      differentChoices: "Choix différents — on continue avec",
+      levelShapes: "Symboles",
+      levelShapesN: n => `${n} Symboles`,
+      levelNumbers: "Nombres",
+      levelWords: "Lettres",
+      you: "Toi",
+      partner: "Partenaire",
+      ok: "Ok",
+      yourRole: "Ton rôle",
+      roleSwappedSender: "🔄 Rôles inversés ! Tu es maintenant l'Émetteur",
+      roleSwappedReceiver: "🔄 Rôles inversés ! Tu es maintenant le Récepteur",
+      roleSender: "Émetteur",
+      roleReceiver: "Récepteur",
+      roundLabel: "Manche",
+      matchLabel: "Réussites",
+      levelLabel: "Niveau",
+      accuracyLabel: "Précision",
+      statusLabel: "Statut",
+      changeLevelPrompt: "Tu veux changer de type de télépathie ?",
+      youChose: "Tu as choisi",
+      waitingDots: "En attente...",
+      continueLevel: "Continuer",
+      levelChooseTitle: "Choisis le nouveau mode",
+      levelKeep: "Garder ce mode",
+      levelWaiting: "choisit le nouveau mode de jeu…",
+      tabPlay: "Jouer",
+      tabLeaderboard: "Classement",
+      leaderboardTitle: "Meilleurs télépathes",
+      leaderboardEmpty: "Encore peu de données — joue pour apparaître ici.",
+      leaderboardPlayer: "Joueur",
+      leaderboardMatches: "Réussites",
+      leaderboardAccuracy: "Précision",
+      leaderboardRefresh: "Actualiser",
+      pickSymbol: "Choisis le symbole à envoyer :",
+      sendTelepathically: "Envoyer par Télépathie",
+      symbolSentGuess: "✨ Symbole envoyé ! Lequel reçois-tu ?",
+      waitingForSend: "choisit le symbole… attends qu'il s'allume",
+      confirm: "Confirmer",
+      senderWaiting: "Symbole envoyé ! En attendant que le récepteur devine...",
+      receiverWaiting: "Réponse envoyée ! En attente de l'émetteur...",
+      matchResult: "✨ CONNEXION TÉLÉPATHIQUE ! ✨",
+      noMatch: "Pas cette fois. Continue !",
+      sentLabel: "Envoyé",
+      guessedLabel: "Deviné",
+      resonance: "Harmonie ✨",
+      again: "Encore",
+      nextMatchIn: "Nouvelle manche dans",
+      endSessionBtn: "Terminer la Session",
+      endSessionConfirmTitle: "Quitter la session ?",
+      endSessionConfirmBody: "Ton partenaire sera prévenu. Impossible de revenir en arrière.",
+      endSessionConfirmYes: "Quitter",
+      endSessionConfirmNo: "Rester",
+      sessionComplete: "Session Terminée !",
+      roundsPlayed: "Manches jouées",
+      correctMatches: "Réussites",
+      accuracyColon: "Précision :",
+      playAgainWith: "Nouvelle session avec",
+      backToLobbyCap: "Retour au Salon",
+      leaveSession: "Quitter la session",
+      chatWith: "Chat avec",
+      noMessages: "Aucun message pour l'instant",
+      chatPlaceholder: "Écris...",
+      statusChoosingLevel: "En attente du choix du niveau...",
+      statusRoundDone: "Manche terminée !",
+      statusGuessing: "devine...",
+      statusWaitingSymbol: "attend ton symbole",
+      statusWaitingResult: "En attente du résultat...",
+      statusSent: "a envoyé ! Devine.",
+      statusChoosing: "choisit...",
+      partnerOfflineN: nick => `${nick} n'est plus en ligne — retourne au salon et choisis un autre partenaire.`,
+      inviteModalTitle: "Invitation à l'Entraînement Télépathique",
+      inviteModalBody: "veut faire un entraînement télépathique avec toi !",
+      acceptBtn: "Accepter",
+      declineBtn: "Refuser",
+      inviteExpired: "Expirée",
+      trainingFloatingPrefix: "Entraînement en cours avec",
+      trainingFloatingCta: "Revenir"
+    },
+    moderation: {
+      menu: "Actions",
+      report: "Signaler",
+      block: "Bloquer",
+      unblock: "Débloquer",
+      cancel: "Annuler",
+      blockedUsers: "Utilisateurs bloqués",
+      noBlocked: "Tu n'as bloqué personne.",
+      blockTitle: "Tu veux bloquer cette personne ?",
+      blockConfirm: "Tu ne verras plus ses contenus et elle ne pourra plus t'écrire. Tu peux annuler quand tu veux.",
+      blockDone: "Utilisateur bloqué.",
+      unblockDone: "Utilisateur débloqué.",
+      reportTitle: "Signaler un contenu",
+      reportWhy: "Pourquoi le signales-tu ?",
+      reportNotes: "Notes (facultatives)",
+      reportSend: "Envoyer le signalement",
+      reportDone: "Signalement envoyé. Nous l'examinerons sous 48 heures.",
+      reportRules: "Règles de contenu",
+      guestOnly: "Il faut être inscrit pour signaler ou bloquer.",
+      reasons: {
+        spam: "Spam ou publicité",
+        harassment: "Harcèlement ou insultes",
+        hate: "Haine ou discrimination",
+        sexual: "Contenu sexuel",
+        violence: "Violence ou menaces",
+        self_harm: "Automutilation ou suicide",
+        other: "Autre"
+      }
+    }
   }
 };
+const TRADUZIONI = (() => {
+  const LH = typeof window !== 'undefined' ? window.LingueHelpers : null;
+  const r = {};
+  ['en', 'it', 'es', 'fr'].forEach(l => {
+    r[l] = LH ? LH.fondi(translations.en, translations[l]) : translations[l] || translations.en;
+  });
+  return r;
+})();
 const DURATA_RITUALE_PREDEFINITA = 3;
 function GlobalAwakeningPlatform() {
-  const [lang, setLang] = useState('en');
+  const [lang, setLangStato] = useState(() => {
+    const LH = window.LingueHelpers;
+    if (!LH) return 'en';
+    let salvata = null;
+    try {
+      salvata = LH.leggiLinguaSalvata(window.localStorage);
+    } catch (e) {}
+    const tel = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+    return LH.linguaIniziale(salvata, tel);
+  });
+  const setLang = l => {
+    setLangStato(l);
+    try {
+      window.LingueHelpers && window.LingueHelpers.salvaLingua(window.localStorage, l);
+    } catch (e) {}
+  };
+  const LOC = window.LingueHelpers ? window.LingueHelpers.locale(lang) : 'en-GB';
   const [activeTab, setActiveTab] = useState('rituals');
   const [nickname, setNickname] = useState(() => localStorage.getItem('ga_nickname') || '');
   const [tempNickname, setTempNickname] = useState('');
@@ -1412,12 +2320,12 @@ function GlobalAwakeningPlatform() {
   const stanza = stanzaId != null ? rituals.find(r => r.id === stanzaId) : null;
   const [magicLinkEmail, setMagicLinkEmail] = useState('');
   const [showMagicLink, setShowMagicLink] = useState(false);
-  const t = translations[lang];
+  const t = TRADUZIONI[lang] || TRADUZIONI.en;
   const levelLabel = level => {
     if (level === 'numbers') return t.telepathy.levelNumbers;
     if (level === 'words') return t.telepathy.levelWords;
     const m = /^lvl(\d+)$/.exec(level || '');
-    return m ? `${m[1]} ${t.telepathy.levelShapes}` : t.telepathy.levelShapes;
+    return m ? t.telepathy.levelShapesN(m[1]) : t.telepathy.levelShapes;
   };
   const avatarEmojis = ['🌟', '✨', '🔮', '🧿', '💫', '⭐', '🌙', '☀️', '🌈', '🦋', '🕊️', '🐉', '🧬', '👁️', '💜', '🔥', '🌸', '🍃', '💎', '🪷'];
   const starseedTypes = ['pleiadian', 'sirian', 'arcturian', 'andromedan', 'lyran', 'orion', 'universal'];
@@ -1698,7 +2606,7 @@ function GlobalAwakeningPlatform() {
     attesaInvitanteRef.current = attesaInvitante;
   }, [attesaInvitante]);
   const IH = typeof InvitiHelpers !== 'undefined' ? InvitiHelpers : null;
-  const testoInviti = (chiave, valori) => IH ? IH.testo(chiave, lang === 'it' ? 'it' : 'en', valori) : String(chiave);
+  const testoInviti = (chiave, valori) => IH ? IH.testo(chiave, lang, valori) : String(chiave);
   const rpcInviti = async (fn, extra) => {
     const {
       data,
@@ -2278,7 +3186,7 @@ function GlobalAwakeningPlatform() {
         nickname_in_uso: t.usernameAlreadyUsed,
         troppi_tentativi: t.tooManyAttempts
       }[reg.motivo];
-      setLoginError(msg || t.registrationError || 'Registration failed. Please try again.');
+      setLoginError(msg || t.registrationFailed);
       setAuthLoading(false);
       return;
     }
@@ -3495,7 +4403,7 @@ function GlobalAwakeningPlatform() {
     } = await supabase.from('online_users').select('id,last_seen').eq('id', savedPartner.id);
     const stillOnline = presence && presence.length > 0 && Date.now() - new Date(presence[0].last_seen).getTime() < 30000;
     if (!stillOnline) {
-      alert(`${savedPartner.nickname} ${t.telepathy.partnerOffline}`);
+      alert(t.telepathy.partnerOfflineN(savedPartner.nickname));
       return;
     }
     if (matchId) {
@@ -3865,12 +4773,12 @@ function GlobalAwakeningPlatform() {
   };
   const createRitual = async () => {
     if (!newRitual.name || !newRitual.date || !newRitual.time) {
-      alert('Please fill in name, date and time.');
+      alert(t.fillNameDateTime);
       return;
     }
     const istanteLocale = new Date(`${newRitual.date}T${newRitual.time}`);
     if (isNaN(istanteLocale.getTime())) {
-      alert('Please fill in name, date and time.');
+      alert(t.fillNameDateTime);
       return;
     }
     const dataUtc = istanteLocale.toISOString().slice(0, 10);
@@ -3976,7 +4884,7 @@ function GlobalAwakeningPlatform() {
         url: SUPABASE_URL,
         key: SUPABASE_KEY,
         sessionId,
-        locale: lang === 'it' ? 'it' : 'en',
+        locale: lang,
         vapid: VAPID_PUBLIC_KEY
       }), {
         headers: {
@@ -4000,7 +4908,7 @@ function GlobalAwakeningPlatform() {
       p_endpoint: sub.endpoint,
       p_p256dh: j.keys.p256dh,
       p_auth: j.keys.auth,
-      p_locale: lang === 'it' ? 'it' : 'en'
+      p_locale: lang
     });
     if (error) throw new Error('registrazione push non riuscita');
     await salvaConfigPush();
@@ -4269,7 +5177,7 @@ function GlobalAwakeningPlatform() {
   const formatRitualWhen = ritual => {
     const istante = new Date(`${ritual.date}T${ritual.time}Z`);
     if (isNaN(istante.getTime())) return `${ritual.date} ${ritual.time}`;
-    return new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB', {
+    return new Intl.DateTimeFormat(LOC, {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
@@ -4283,12 +5191,12 @@ function GlobalAwakeningPlatform() {
     const g = ritual.ripeti_giorni || [];
     const quando = g.length === 7 ? t.rituals.everyDay : g.map(n => t.rituals.weekdaysShort[n - 1]).join(', ');
     const istante = new Date(`${ritual.date}T${ritual.time}Z`);
-    const ora = isNaN(istante.getTime()) ? '' : new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB', {
+    const ora = isNaN(istante.getTime()) ? '' : new Intl.DateTimeFormat(LOC, {
       hour: '2-digit',
       minute: '2-digit',
       hour12: false
     }).format(istante);
-    return `${quando} ${t.rituals.atTime} ${ora}`;
+    return t.rituals.whenAt(quando, ora);
   };
   const MUSIC_SRC = 'assets/meditation-music-rockot.mp3';
   const MUSIC_VOLUME = 0.35;
@@ -4646,10 +5554,20 @@ function GlobalAwakeningPlatform() {
       }
     }, renderInstallBanner('install-banner--landing'), React.createElement("div", {
       className: "absolute top-4 right-4"
-    }, React.createElement("button", {
-      onClick: () => setLang(lang === 'en' ? 'it' : 'en'),
-      className: "btn-secondary"
-    }, lang === 'en' ? '🌐 EN' : '🌐 IT')), React.createElement("div", {
+    }, React.createElement("label", {
+      className: "lingua-menu btn-secondary",
+      title: "Language"
+    }, React.createElement("span", {
+      "aria-hidden": "true"
+    }, "\uD83C\uDF10 ", lang.toUpperCase()), React.createElement("select", {
+      "data-test": "lingua",
+      "aria-label": "Language",
+      value: lang,
+      onChange: e => setLang(e.target.value)
+    }, ['en', 'it', 'es', 'fr'].map(l => React.createElement("option", {
+      key: l,
+      value: l
+    }, window.LingueHelpers ? window.LingueHelpers.etichetta(l) : l.toUpperCase()))))), React.createElement("div", {
       className: "bg-glass rounded-3xl p-8 max-w-md w-full shadow-2xl border-glass"
     }, React.createElement("div", {
       className: "text-center mb-8"
@@ -4731,8 +5649,8 @@ function GlobalAwakeningPlatform() {
         setTempPassword(e.target.value);
         setLoginError('');
       },
-      placeholder: "Password",
-      "aria-label": "Password"
+      placeholder: t.password,
+      "aria-label": t.password
     }), React.createElement("button", {
       onClick: handleLogin,
       className: "btn-primary",
@@ -4901,8 +5819,8 @@ function GlobalAwakeningPlatform() {
         setTempPassword(e.target.value);
         setLoginError('');
       },
-      placeholder: "Password",
-      "aria-label": "Password"
+      placeholder: t.password,
+      "aria-label": t.password
     }), React.createElement("button", {
       onClick: handleRegister,
       className: "btn-primary",
@@ -4964,15 +5882,32 @@ function GlobalAwakeningPlatform() {
     className: "text-primary text-xs"
   }, t.subtitle))), React.createElement("div", {
     className: "header-right flex items-center gap-3"
-  }, React.createElement("button", {
-    onClick: () => setLang(lang === 'en' ? 'it' : 'en'),
-    className: "btn-secondary px-3 py-2"
-  }, lang === 'en' ? '🌐 EN' : '🌐 IT'), React.createElement("div", {
-    className: "flex items-center gap-2"
+  }, React.createElement("label", {
+    className: "lingua-menu btn-secondary px-3 py-2",
+    title: "Language"
+  }, React.createElement("span", {
+    "aria-hidden": "true"
+  }, "\uD83C\uDF10 ", lang.toUpperCase()), React.createElement("select", {
+    "data-test": "lingua",
+    "aria-label": "Language",
+    value: lang,
+    onChange: e => setLang(e.target.value)
+  }, ['en', 'it', 'es', 'fr'].map(l => React.createElement("option", {
+    key: l,
+    value: l
+  }, window.LingueHelpers ? window.LingueHelpers.etichetta(l) : l.toUpperCase())))), React.createElement("div", {
+    className: "flex items-center gap-2",
+    style: {
+      minWidth: 0
+    }
   }, React.createElement("div", {
     className: "text-white font-medium",
     style: {
-      cursor: 'pointer'
+      cursor: 'pointer',
+      minWidth: 0,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
     },
     onClick: () => setShowEditProfile(true),
     title: t.editProfile
@@ -4982,6 +5917,7 @@ function GlobalAwakeningPlatform() {
     }
   }, profile.avatar), nickname), React.createElement("span", {
     style: {
+      flexShrink: 0,
       fontSize: '0.65rem',
       padding: '0.15rem 0.5rem',
       borderRadius: '9999px',
@@ -5060,7 +5996,7 @@ function GlobalAwakeningPlatform() {
       textAlign: 'center',
       padding: '0.5rem'
     }
-  }, "Nessuna notifica") : React.createElement(React.Fragment, null, notifItems.map(n => {
+  }, t.noNotifications) : React.createElement(React.Fragment, null, notifItems.map(n => {
     const tabTarget = n.type === 'telepathy_invite' ? 'telepathy' : n.type === 'comment' ? 'consciousness' : n.type === 'private_message' ? null : 'rituals';
     const icon = n.type === 'comment' || n.type === 'ritual_comment' ? '💬' : n.type === 'ritual_join' ? '🌟' : n.type === 'private_message' ? '✉️' : n.type === 'telepathy_declined' ? '❌' : '🧠';
     const isExpiredInvite = n.type === 'telepathy_invite' && !incomingInvite;
@@ -5087,7 +6023,7 @@ function GlobalAwakeningPlatform() {
         color: '#e5e7eb',
         fontSize: '0.82rem'
       }
-    }, n.message, isExpiredInvite && React.createElement("span", {
+    }, window.NotificheHelpers ? window.NotificheHelpers.testoNotifica(n, lang) : n.message, isExpiredInvite && React.createElement("span", {
       style: {
         marginLeft: '0.4rem',
         background: 'rgba(239,68,68,0.2)',
@@ -5111,7 +6047,7 @@ function GlobalAwakeningPlatform() {
         padding: '0.2rem 0.6rem',
         whiteSpace: 'nowrap'
       }
-    }, isExpiredInvite ? 'OK' : 'Vai'));
+    }, isExpiredInvite ? t.ok : t.go));
   })))), React.createElement("button", {
     onClick: () => setShowLogoutConfirm(true),
     className: "btn-secondary px-3 py-2",
@@ -5157,7 +6093,7 @@ function GlobalAwakeningPlatform() {
     style: {
       cursor: 'pointer'
     },
-    title: "Vedi gli utenti online (Community)"
+    title: t.seeOnlineUsers
   }, React.createElement("div", {
     className: "text-2xl font-bold",
     style: {
@@ -5208,7 +6144,7 @@ function GlobalAwakeningPlatform() {
     "aria-hidden": "true"
   }))))), React.createElement("nav", {
     className: "main-nav-bottom",
-    "aria-label": "Sezioni principali"
+    "aria-label": t.mainSections
   }, ['rituals', 'telepathy', 'consciousness'].map(tab => React.createElement("button", {
     key: tab,
     onClick: () => setActiveTab(tab),
@@ -5252,7 +6188,7 @@ function GlobalAwakeningPlatform() {
     style: {
       fontSize: '0.8rem'
     }
-  }, "\u26A1 Test (3 min)"), React.createElement("button", {
+  }, t.rituals.testRitual), React.createElement("button", {
     onClick: () => setShowCreateRitual(true),
     className: "btn-primary"
   }, t.rituals.createRitual))), rituals.length === 0 && React.createElement("div", {
@@ -5318,7 +6254,7 @@ function GlobalAwakeningPlatform() {
     style: {
       marginTop: '0.75rem'
     }
-  }, "OK")), React.createElement("div", {
+  }, t.ok)), React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
@@ -5520,7 +6456,7 @@ ${ritual.description || ''}`
           color: '#c4b5fd'
         },
         className: "text-xs"
-      }, new Date(c.created_at).toLocaleTimeString()), moderationMenu({
+      }, new Date(c.created_at).toLocaleTimeString(LOC)), moderationMenu({
         author: c.author_nickname,
         type: commentKind,
         id: c.id,
@@ -5628,7 +6564,7 @@ ${ritual.description || ''}`
         color: '#c4b5fd'
       },
       className: "text-xs"
-    }, new Date(post.created_at).toLocaleString()), moderationMenu({
+    }, new Date(post.created_at).toLocaleString(LOC)), moderationMenu({
       author: post.author_nickname,
       type: 'post',
       id: post.id,
@@ -5693,7 +6629,7 @@ ${ritual.description || ''}`
           color: '#c4b5fd'
         },
         className: "text-xs"
-      }, new Date(c.created_at).toLocaleTimeString()), moderationMenu({
+      }, new Date(c.created_at).toLocaleTimeString(LOC)), moderationMenu({
         author: c.author_nickname,
         type: commentKind,
         id: c.id,
@@ -5740,7 +6676,7 @@ ${ritual.description || ''}`
     className: "map-container"
   }, React.createElement("img", {
     src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 500'%3E%3Crect fill='%23111827' width='1000' height='500'/%3E%3Cpath fill='%231f2937' d='M0 250 Q 250 200 500 250 T 1000 250 L 1000 500 L 0 500 Z'/%3E%3C/svg%3E",
-    alt: "World map",
+    alt: t.worldMapAlt,
     style: {
       width: '100%',
       height: '100%',
@@ -6079,7 +7015,7 @@ ${ritual.description || ''}`
     className: "text-white font-bold"
   }, queuePosition), " / ", queueSize), React.createElement("p", {
     className: "text-secondary text-sm mt-2"
-  }, queueSize - 1, " ", queueSize > 2 ? t.telepathy.starseedsWaiting : t.telepathy.starseedWaiting)), React.createElement("button", {
+  }, t.telepathy.waiting(queueSize - 1))), React.createElement("button", {
     onClick: () => setSearchingPartner(false),
     className: "btn-secondary"
   }, t.telepathy.cancel)), (partner || sessionEnded) && React.createElement("div", {
@@ -6895,7 +7831,7 @@ ${ritual.description || ''}`
       setProfilePassword(e.target.value);
       setProfilePasswordMsg('');
     },
-    placeholder: "New password...",
+    placeholder: t.newPasswordPh,
     wrapperStyle: {
       flex: 1
     }
@@ -6962,7 +7898,7 @@ ${ritual.description || ''}`
     },
     onClick: () => doUnblock(nick)
   }, t.moderation.unblock))), React.createElement("a", {
-    href: "regole.html",
+    href: `regole.html#${lang}`,
     target: "_blank",
     rel: "noopener",
     className: "text-secondary text-xs",
@@ -7217,7 +8153,7 @@ ${ritual.description || ''}`
         color: '#c4b5fd',
         marginTop: '0.1rem'
       }
-    }, new Date(msg.created_at).toLocaleTimeString(undefined, {
+    }, new Date(msg.created_at).toLocaleTimeString(LOC, {
       hour: '2-digit',
       minute: '2-digit'
     })), !isMe && moderationMenu({
@@ -7589,7 +8525,7 @@ ${ritual.description || ''}`
     className: "btn-secondary",
     onClick: () => setReportTarget(null)
   }, t.moderation.cancel)), React.createElement("a", {
-    href: "regole.html",
+    href: `regole.html#${lang}`,
     target: "_blank",
     rel: "noopener",
     className: "text-secondary text-xs",
@@ -8070,7 +9006,7 @@ ${ritual.description || ''}`
       ...newRitual,
       name: e.target.value
     }),
-    placeholder: "e.g., Full Moon Meditation",
+    placeholder: t.rituals.namePh,
     maxLength: 80
   })), React.createElement("div", null, React.createElement("label", {
     className: "text-white text-sm mb-2",
@@ -8083,7 +9019,7 @@ ${ritual.description || ''}`
       ...newRitual,
       description: e.target.value
     }),
-    placeholder: "Describe the ritual...",
+    placeholder: t.rituals.descPh,
     rows: "5",
     maxLength: 5000
   }), 5000 - newRitual.description.length < 500 && React.createElement("div", {
@@ -8104,7 +9040,7 @@ ${ritual.description || ''}`
   }, ritualTypes.map(type => React.createElement("option", {
     key: type.id,
     value: type.id
-  }, type.icon, " ", type.name)))), React.createElement("div", null, React.createElement("label", {
+  }, type.icon, " ", t.rituals.types[type.id])))), React.createElement("div", null, React.createElement("label", {
     className: "text-white text-sm mb-2",
     style: {
       display: 'block'
