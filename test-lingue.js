@@ -1,13 +1,8 @@
 // Parità delle traduzioni: ogni lingua ha le stesse foglie di «en», con lo stesso tipo,
 // stesse lunghezze degli array, funzioni che rispondono con una stringa non vuota.
-const fs = require('fs');
-const vm = require('vm');
-const src = fs.readFileSync('src/app.jsx', 'utf8');
-const m = src.match(/\/\/ ==== TRADUZIONI: INIZIO ====\n([\s\S]*?)\n\s*\/\/ ==== TRADUZIONI: FINE ====/);
-if (!m) { console.log('❌ marcatori TRADUZIONI non trovati'); process.exit(1); }
-const ctx = {}; vm.createContext(ctx);
-vm.runInContext(m[1].replace(/const translations\s*=/, 'translations ='), ctx);
-const T = ctx.translations;
+const { leggiTraduzioni } = require('./scripts/leggi-traduzioni');
+let T;
+try { T = leggiTraduzioni(); } catch (e) { console.log('❌ ' + e.message); process.exit(1); }
 let passed = 0, failed = 0;
 const check = (c, msg, d) => { if (c) passed++; else { failed++; console.log('  ❌ ' + msg, d === undefined ? '' : JSON.stringify(d)); } };
 
