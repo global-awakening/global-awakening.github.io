@@ -5910,7 +5910,7 @@ function GlobalAwakeningPlatform() {
       whiteSpace: 'nowrap'
     },
     onClick: () => setShowEditProfile(true),
-    title: `${nickname} · ${t.editProfile}`
+    title: t.editProfile
   }, profile.avatar && React.createElement("span", {
     style: {
       marginRight: '0.25rem'
