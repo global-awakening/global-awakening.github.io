@@ -10,8 +10,8 @@ const T = leggiTraduzioni();
 const SUFFISSO = Date.now();
 const NICK_SEZIONI = `LinguaUI_s${SUFFISSO}`;
 const NICK_CAMPANELLA = `LinguaUI_c${SUFFISSO}`;
-// Nickname corto (12 caratteri) di proposito: il test misura il menu lingua, non la lunghezza dei nomi.
-const NICK_360 = `LinguaUI_${String(SUFFISSO).slice(-3)}`;
+// Nickname lungo (26 caratteri) di proposito: l'intestazione deve reggerlo a 360 px con l'ellissi.
+const NICK_360 = `LinguaUI_lungo_${SUFFISSO}`;
 
 let passed = 0, failed = 0;
 const check = (c, msg, d) => {
@@ -30,16 +30,32 @@ async function entraOspite(page, nick, lingua) {
 }
 
 // Parole che in ES non devono comparire: inglesi e italiane presenti oggi nell'interfaccia.
-// Ognuna deve esistere davvero in en o it (controllato sotto), altrimenti l'elenco non prova nulla.
-const PAROLE_VIETATE = [
-  'Rituals', 'Telepathy', 'Consciousness', 'Logout', 'Online now', 'Active Rituals', 'Create Ritual', 'Guest',
-  'Rituali', 'Telepatia', 'Coscienza', 'Esci', 'Ospite', 'Rituali attivi', 'Crea Rituale', 'Invita', 'Impostazioni',
-];
-const testiEnIt = JSON.stringify([T.en, T.it]).toLowerCase();
-const nonPresenti = PAROLE_VIETATE.filter((p) => !testiEnIt.includes(minuscolo(p)));
-const paroleDaCercare = PAROLE_VIETATE.filter((p) => !nonPresenti.includes(p));
-// Parola intera, senza distinguere maiuscole: «Invita» non deve far scattare «Invitado».
+// Una parola vale solo se la scansione di controllo (stesse zone, in en e in it) la trova davvero:
+// cercarla fra le chiavi o dentro frasi lunghe darebbe un elenco che non può mai scattare.
+const PAROLE = {
+  en: ['Rituals', 'Telepathy', 'Consciousness', 'Logout', 'Online Now', 'Active Rituals', 'Rounds Played', 'Guest'],
+  it: ['Rituali', 'Telepatia', 'Coscienza', 'Esci', 'Online', 'Rituali attivi', 'Round giocati', 'Ospite'],
+};
+// Parola intera, senza distinguere maiuscole: «Esci» non deve far scattare «Escribe».
 const cercaParola = (testo, p) => new RegExp('(^|[^\\p{L}])' + p.replace(/ /g, '\\s+') + '($|[^\\p{L}])', 'iu').test(testo);
+
+// Testo dell'interfaccia delle tre sezioni: intestazione, barra delle sezioni, statistiche e titoli.
+// Il testo scritto dagli utenti (nomi di rituali, post, utenti online) sta fuori.
+async function raccogliInterfaccia(page, lingua) {
+  const parti = [];
+  for (const tab of ['rituals', 'telepathy', 'consciousness']) {
+    const nome = T[lingua].tabs[tab];
+    await page.locator('.main-nav-top button', { hasText: nome }).first().click();
+    await page.waitForTimeout(1200);
+    const testo = await page.evaluate(() => {
+      const sel = ['header', '.main-nav-top', '.stats-grid', 'h1', 'h2', 'h3', '.main-nav-bottom'];
+      return sel.flatMap((s) => [...document.querySelectorAll(s)].map((e) => e.innerText)).join('\n');
+    });
+    check(testo.includes(nome), `[${lingua}] sezione «${nome}» visibile (raccolti ${testo.length} caratteri)`);
+    parti.push({ tab, nome, testo });
+  }
+  return parti;
+}
 
 async function run() {
   const browser = await chromium.launch();
@@ -89,23 +105,25 @@ async function run() {
     }
 
     console.log('\n[4] nessuna frase a metà: sezioni principali in es, da ospite');
-    if (nonPresenti.length) console.log('  (parole scartate perché non esistono in en/it: ' + nonPresenti.join(', ') + ')');
-    check(paroleDaCercare.length >= 10, `almeno 10 parole da cercare (${paroleDaCercare.length})`);
     {
       const ctx = await browser.newContext({ locale: 'en-US' });
       const page = await ctx.newPage();
-      await entraOspite(page, NICK_SEZIONI, 'es');
-      for (const tab of ['rituals', 'telepathy', 'consciousness']) {
-        const nome = T.es.tabs[tab];
-        await page.locator('.main-nav-top button', { hasText: nome }).first().click();
-        await page.waitForTimeout(1200);
-        // Solo l'interfaccia: intestazione, barra delle sezioni, statistiche e titoli.
-        // Il testo scritto dagli utenti (nomi di rituali, post, utenti online) sta fuori.
-        const testo = await page.evaluate(() => {
-          const sel = ['header', '.main-nav-top', '.stats-grid', 'h1', 'h2', 'h3', '.main-nav-bottom'];
-          return sel.flatMap((s) => [...document.querySelectorAll(s)].map((e) => e.innerText)).join('\n');
-        });
-        check(testo.includes(nome), `sezione «${nome}» visibile (raccolti ${testo.length} caratteri)`);
+      await entraOspite(page, NICK_SEZIONI, 'en');
+      // Controllo: la scansione, nelle lingue sbagliate, deve saper trovare le parole.
+      const controlloEn = (await raccogliInterfaccia(page, 'en')).map((x) => x.testo).join('\n');
+      await page.locator('select[data-test="lingua"]').first().selectOption('it');
+      const controlloIt = (await raccogliInterfaccia(page, 'it')).map((x) => x.testo).join('\n');
+      const inEn = PAROLE.en.filter((p) => cercaParola(controlloEn, p));
+      const inIt = PAROLE.it.filter((p) => cercaParola(controlloIt, p));
+      check(inEn.length >= 1, `controllo: la scansione in en trova parole inglesi (${inEn.length}/${PAROLE.en.length})`, inEn);
+      check(inIt.length >= 1, `controllo: la scansione in it trova parole italiane (${inIt.length}/${PAROLE.it.length})`, inIt);
+      const scartate = [...PAROLE.en.filter((p) => !inEn.includes(p)), ...PAROLE.it.filter((p) => !inIt.includes(p))];
+      if (scartate.length) console.log('  (parole scartate: non compaiono nelle zone scansionate: ' + scartate.join(', ') + ')');
+      const paroleDaCercare = [...inEn, ...inIt];
+      check(paroleDaCercare.length >= 10, `almeno 10 parole da cercare in es (${paroleDaCercare.length})`);
+
+      await page.locator('select[data-test="lingua"]').first().selectOption('es');
+      for (const { nome, testo } of await raccogliInterfaccia(page, 'es')) {
         const trovate = paroleDaCercare.filter((p) => cercaParola(testo, p));
         check(trovate.length === 0, `«${nome}»: nessuna parola en/it dimenticata`, trovate);
       }
@@ -136,8 +154,10 @@ async function run() {
       await entraOspite(page, NICK_360, 'fr');
       await page.waitForTimeout(1000);
       const larghezza = await page.evaluate(() => document.documentElement.scrollWidth);
-      check(larghezza <= 360, `nessuno scroll orizzontale (scrollWidth ${larghezza})`);
+      check(larghezza <= 360, `nickname di ${NICK_360.length} caratteri: nessuno scroll orizzontale (scrollWidth ${larghezza})`);
       check(await page.locator('header select[data-test="lingua"]').first().isVisible(), 'menu lingua visibile');
+      const caselle = await page.locator('header .lingua-menu').first().boundingBox();
+      check(caselle && caselle.x >= 0 && caselle.x + caselle.width <= 360, 'menu lingua intero dentro i 360 px', caselle);
       const intestazione = await page.evaluate(() => { const h = document.querySelector('header'); return h ? h.scrollWidth : -1; });
       check(intestazione >= 0 && intestazione <= 360, `intestazione dentro i 360 px (${intestazione})`);
       await ctx.close();
@@ -146,14 +166,15 @@ async function run() {
     console.log('  ✗ Eccezione: ' + e.message);
     failed++;
   } finally {
-    await browser.close();
-    // Pulizia sul DB vero: la notifica e le presenze lasciate dal login da ospite.
+    // Pulizia sul DB vero: la notifica e le presenze lasciate dal login da ospite. Prima del close,
+    // così se il browser si pianta la pulizia parte comunque.
     const filtri = [];
     for (const n of creati) {
       const q = encodeURIComponent(n);
       filtri.push(`notifications?user_nickname=eq.${q}`, `online_users?nickname=eq.${q}`);
     }
-    await purge(SUPABASE_URL, filtri, { label: 'lingue-ui' });
+    try { await purge(SUPABASE_URL, filtri, { label: 'lingue-ui' }); }
+    finally { try { await browser.close(); } catch (e) { console.log('  (browser.close: ' + e.message + ')'); } }
   }
 
   console.log(`\n${passed} passati, ${failed} falliti`);
