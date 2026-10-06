@@ -608,7 +608,9 @@
             .header-inner { flex-wrap: wrap; gap: 0.35rem; padding-top: 0.5rem; padding-bottom: 0.5rem; }
             .header-left h1 { font-size: 1rem; }
             .header-left p  { display: none; }
-            .header-right { gap: 0.35rem; }
+            .header-right { gap: 0.35rem; min-width: 0; max-width: 100%; }
+            .header-right > * { flex-shrink: 0; }
+            .header-right > .flex { flex-shrink: 1; }
             .header-right .btn-secondary { padding: 0.4rem 0.65rem; font-size: 0.75rem; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
         }
     </style>

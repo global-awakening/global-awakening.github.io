@@ -5896,20 +5896,28 @@ function GlobalAwakeningPlatform() {
     key: l,
     value: l
   }, window.LingueHelpers ? window.LingueHelpers.etichetta(l) : l.toUpperCase())))), React.createElement("div", {
-    className: "flex items-center gap-2"
+    className: "flex items-center gap-2",
+    style: {
+      minWidth: 0
+    }
   }, React.createElement("div", {
     className: "text-white font-medium",
     style: {
-      cursor: 'pointer'
+      cursor: 'pointer',
+      minWidth: 0,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
     },
     onClick: () => setShowEditProfile(true),
-    title: t.editProfile
+    title: `${nickname} · ${t.editProfile}`
   }, profile.avatar && React.createElement("span", {
     style: {
       marginRight: '0.25rem'
     }
   }, profile.avatar), nickname), React.createElement("span", {
     style: {
+      flexShrink: 0,
       fontSize: '0.65rem',
       padding: '0.15rem 0.5rem',
       borderRadius: '9999px',

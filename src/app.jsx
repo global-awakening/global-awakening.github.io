@@ -5354,9 +5354,12 @@
                           ))}
                         </select>
                       </label>
-                      <div className="flex items-center gap-2">
-                        <div className="text-white font-medium" style={{cursor: 'pointer'}} onClick={() => setShowEditProfile(true)} title={t.editProfile}>{profile.avatar && <span style={{marginRight: '0.25rem'}}>{profile.avatar}</span>}{nickname}</div>
+                      {/* minWidth:0 + ellissi: un nickname lungo si accorcia invece di spingere fuori dallo
+                          schermo menu lingua, campanella e Logout (a 360 px). Il titolo ha il nome intero. */}
+                      <div className="flex items-center gap-2" style={{minWidth: 0}}>
+                        <div className="text-white font-medium" style={{cursor: 'pointer', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}} onClick={() => setShowEditProfile(true)} title={`${nickname} · ${t.editProfile}`}>{profile.avatar && <span style={{marginRight: '0.25rem'}}>{profile.avatar}</span>}{nickname}</div>
                         <span style={{
+                          flexShrink: 0,
                           fontSize: '0.65rem',
                           padding: '0.15rem 0.5rem',
                           borderRadius: '9999px',
