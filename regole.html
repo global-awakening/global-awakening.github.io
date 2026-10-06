@@ -43,7 +43,7 @@
   strong { color: #fff; }
   a { color: var(--accent); }
   .muted { color: var(--muted); font-size: .88rem; }
-  section.lingua + section.lingua { margin-top: 3rem; }
+  section.lingua:not([hidden]) ~ section.lingua:not([hidden]) { margin-top: 3rem; padding-top: 2rem; border-top: 1px solid rgba(255,255,255,0.1); }
   hr { border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 3rem 0 2rem; }
   footer { text-align: center; color: var(--muted); font-size: .82rem; margin-top: 2.5rem; }
   @media (max-width: 480px) {
@@ -128,7 +128,6 @@
 
 </section>
 
-  <hr>
 
 <section lang="en" id="en" class="lingua">
 
@@ -202,7 +201,6 @@
 
 </section>
 
-  <hr>
 
 <section lang="es" id="es" class="lingua">
 
@@ -276,7 +274,6 @@
 
 </section>
 
-  <hr>
 
 <section lang="fr" id="fr" class="lingua">
 
