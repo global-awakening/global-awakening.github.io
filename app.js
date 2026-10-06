@@ -8153,7 +8153,7 @@ ${ritual.description || ''}`
         color: '#c4b5fd',
         marginTop: '0.1rem'
       }
-    }, new Date(msg.created_at).toLocaleTimeString(undefined, {
+    }, new Date(msg.created_at).toLocaleTimeString(LOC, {
       hour: '2-digit',
       minute: '2-digit'
     })), !isMe && moderationMenu({

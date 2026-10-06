@@ -6791,7 +6791,7 @@ ${ritual.description || ''}` })}
                                       </div>
                                       <div className="flex items-center gap-1" style={{justifyContent: isMe ? 'flex-end' : 'flex-start'}}>
                                         <p style={{fontSize: '0.6rem', color: '#c4b5fd', marginTop: '0.1rem'}}>
-                                          {new Date(msg.created_at).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'})}
+                                          {new Date(msg.created_at).toLocaleTimeString(LOC, {hour: '2-digit', minute: '2-digit'})}
                                         </p>
                                         {!isMe && moderationMenu({ author: msg.sender_name, type: 'private_message', id: msg.id, snapshot: msg.content })}
                                       </div>
