@@ -77,7 +77,14 @@ async function goToFeed(page) {
 
 async function publish(page, text) {
   await page.locator('textarea').first().fill(text);
+  // Il post compare subito (inserimento ottimistico), prima che il server l'abbia salvato:
+  // aspettare solo il testo e poi ricaricare interrompeva l'insert, e il post spariva.
+  const salvato = page.waitForResponse(r =>
+    r.url().includes('/rest/v1/consciousness_posts') && r.request().method() === 'POST',
+    { timeout: TIMEOUT });
   await page.locator('button:has-text("Pubblica"), button:has-text("Post")').first().click();
+  const res = await salvato;
+  if (res.status() !== 201) throw new Error(`pubblicazione non salvata: HTTP ${res.status()}`);
   await page.locator(`text=${text}`).first().waitFor({ state: 'visible', timeout: TIMEOUT });
 }
 
@@ -117,6 +124,8 @@ const cardCon = (page, text) =>
     else fail('il menu ⋯ NON compare sul post di un altro utente');
 
     // 2) menu ⋯ ASSENTE sul proprio contenuto
+    // Senza il proprio post nel feed il conteggio sotto sarebbe 0 per il motivo sbagliato.
+    await pageB.locator(`text=${POST_B}`).first().waitFor({ state: 'visible', timeout: TIMEOUT });
     const menuProprio = cardCon(pageB, POST_B).locator('button[aria-label]').filter({ hasText: '⋯' });
     if (await menuProprio.count() === 0) pass('il menu ⋯ NON compare sul proprio post');
     else fail('il menu ⋯ compare sul proprio post (non dovrebbe)');
