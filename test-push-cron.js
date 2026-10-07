@@ -59,10 +59,18 @@ try {
     motore[0].active ? ok('il job del motore è attivo') : ko('il job del motore è attivo', 'spento');
   }
 
-  const sentinella = interroga("select active from cron.job where jobname = 'controllo-salute-cron';");
+  const sentinella = interroga("select active, substring(command from 'timeout_milliseconds\\s*:=\\s*(\\d+)') as attesa from cron.job where jobname = 'controllo-salute-cron';");
   sentinella.length === 1 && sentinella[0].active
     ? ok('la sentinella sulla salute è attiva')
     : ko('la sentinella sulla salute è attiva', sentinella.length ? 'spenta' : 'assente');
+  // Con i 5 secondi predefiniti di pg_net la sentinella, che gira ogni 15 minuti e quindi
+  // parte sempre «fredda», rispondeva tardi: la sua chiamata finiva in net._http_response
+  // come fallita, il giro dopo la contava come guasto, e mandava un'email. 214 falsi allarmi
+  // fra il 21/09 e il 07/10. Vedi 34_sentinella_attesa.sql.
+  const attesa = sentinella.length === 1 ? Number(sentinella[0].attesa) : 0;
+  attesa >= 15000
+    ? ok('la sentinella aspetta abbastanza la propria risposta')
+    : ko('la sentinella aspetta abbastanza la propria risposta', attesa ? `${attesa} ms` : 'attesa predefinita di 5 s');
 
   const vecchio = interroga("select active from cron.job where jobname = 'notify-ritual-participants';");
   vecchio.length === 0 || !vecchio[0].active
