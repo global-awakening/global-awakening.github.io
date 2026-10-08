@@ -1,7 +1,7 @@
 -- ============================================================================
 -- 35a_ritorno.sql — ritorno indietro della 35a. SCRITTO E PROVATO IN LOCALE, NON APPLICATO.
--- Ordine: prima le funzioni (le nuove tolte, le ridefinite ripristinate), poi tabella e colonne,
--- perché le funzioni dipendono dalle colonne. Idempotente.
+-- Ordine: prima le funzioni (le nuove tolte, le ridefinite ripristinate), poi tabelle e colonne,
+-- perché le funzioni dipendono da tabelle e colonne. Idempotente.
 -- ============================================================================
 BEGIN;
 
@@ -338,13 +338,13 @@ BEGIN
 END $function$;
 
 
--- ── 3. Tabella e colonne, per ultime ───────────────────────────────────────
+-- ── 3. Tabelle e colonne, per ultime ───────────────────────────────────────
+-- notifiche_instradamento porta con sé i telefoni: va via per intero (i session_id non sono
+-- mai stati in notifications).
+DROP TABLE IF EXISTS public.notifiche_instradamento;
 DROP TABLE IF EXISTS public.consciousness_post_autori;
-DROP INDEX IF EXISTS public.notifications_recipient_non_lette;
 DROP INDEX IF EXISTS public.notifications_nickname_non_lette;
 ALTER TABLE public.notifications
-  DROP COLUMN IF EXISTS recipient_session_id,
-  DROP COLUMN IF EXISTS sender_session_id,
   DROP COLUMN IF EXISTS sender_nickname,
   DROP COLUMN IF EXISTS oggetto;
 

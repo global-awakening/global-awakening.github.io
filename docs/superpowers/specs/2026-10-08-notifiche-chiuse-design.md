@@ -39,12 +39,23 @@ Il chiamante passa `(p_session_id, p_password_hash, p_nickname)`.
 
 ## Dati
 
-`notifications`, colonne nuove (nullable, i dati esistenti restano):
+`notifications`, colonne nuove (nullable, i dati esistenti restano). Solo dati che non sono
+credenziali:
 
-- `recipient_session_id text`: il telefono destinatario;
-- `sender_session_id text`, `sender_nickname text`: chi la manda (null per le notifiche di sistema).
+- `sender_nickname text`: il nome di chi la manda (null per le notifiche di sistema);
+- `oggetto text`: l'id del rituale o del post, serve solo all'anti-raffica di `notify_event`.
 
-Indice su `(recipient_session_id) WHERE read = false` e su `(user_nickname) WHERE read = false`.
+Indice su `(user_nickname) WHERE read = false`.
+
+**I `session_id` non stanno mai in `notifications`.** Per un ospite il `session_id` è l'unica
+credenziale, e `notifications` resta leggibile da chiunque fino alla 35b (e di nuovo con
+`35b_ritorno`). I telefoni stanno nella tabella privata nuova, creata già nella 35a:
+
+`notifiche_instradamento(notifica_id uuid PK → notifications(id) ON DELETE CASCADE,
+recipient_session_id text, sender_session_id text)`: il telefono destinatario e quello di chi
+la manda. RLS accesa, nessuna policy, nessun privilegio a `PUBLIC`, `anon`, `authenticated`.
+Indice su `(recipient_session_id)`. Le notifiche vecchie, solo per nickname, non hanno righe qui.
+La leggono e la scrivono solo le funzioni `SECURITY DEFINER` sotto.
 
 Tabella nuova `consciousness_post_autori(post_id uuid PK → consciousness_posts ON DELETE CASCADE,
 session_id text NOT NULL, created_at)`. RLS accesa, nessuna policy, nessun privilegio ad anon.
@@ -63,9 +74,12 @@ L'unico accesso è dalle funzioni `SECURITY DEFINER` sotto.
 
 ## Funzioni (tutte SECURITY DEFINER, `search_path = public, pg_temp`, GRANT ad anon solo le pubbliche)
 
-**Lettura — `get_my_notifications(sid, hash, nick) RETURNS SETOF notifications`**
-- Restituisce le notifiche non lette dove `recipient_session_id = sid`, più (solo per i registrati)
-  quelle con `user_nickname = <nickname del profilo>`, per le notifiche vecchie.
+**Lettura — `get_my_notifications(sid, hash, nick) RETURNS TABLE(id, user_nickname, type, message, read, created_at, sender_nickname)`**
+- Colonne elencate una per una, non `notifications.*`: nessun `session_id` né `oggetto` esce,
+  nemmeno se un domani la tabella cresce.
+- Restituisce le notifiche non lette il cui instradamento ha `recipient_session_id = sid`, più
+  (solo per i registrati) quelle senza telefono destinatario con `user_nickname = <nickname del
+  profilo>`, per le notifiche vecchie.
 - Esclude quelle il cui mittente è bloccato in uno dei due sensi: `user_blocks` per nickname e
   `telepathy_invite_blocks` per session.
 - Le esclude soltanto: non le cancella, così uno sblocco le fa ricomparire, come in `get_my_messages`.
@@ -89,7 +103,9 @@ Regole comuni:
 - niente notifica a me stesso;
 - niente notifica se uno dei due ha bloccato l'altro;
 - al massimo una notifica identica (tipo + oggetto + mittente → destinatario) ogni 10 minuti,
-  così rientrare e uscire più volte da un rituale non manda raffiche.
+  così rientrare e uscire più volte da un rituale non manda raffiche. «Stesso mittente» vuol dire
+  stesso nickname effettivo oppure stesso `session_id` (letto da `notifiche_instradamento`);
+- al massimo 3 notifiche in 10 minuti per destinatario + tipo + oggetto, da chiunque.
 
 Restituisce `{ok, inviata, motivo}`. Un rifiuto non è un errore per l'app: lo ignora.
 
@@ -100,16 +116,20 @@ Restituisce `{ok, inviata, motivo}`. Un rifiuto non è un errore per l'app: lo i
 
 **Funzioni server già esistenti che scrivono notifiche**
 - `send_private_message`, `send_telepathy_invite` e `respond_telepathy_invite`: ridefinite per
-  riempire le colonne nuove.
+  riempire `sender_nickname` e scrivere la riga di `notifiche_instradamento` con i due telefoni.
 - `respond_telepathy_invite` (declined) non crea la notifica se c'è un blocco.
 
 Ridefinirle vuol dire copiarle per intero dall'ultima versione applicata: va presa dal DB con
 `pg_get_functiondef`, non dal file più recente.
 
 **Cancellazione ed export account**
-- `delete_my_account` cancella anche per `recipient_session_id` e le righe di
-  `consciousness_post_autori` del proprio `session_id`.
-- `export_my_account` esporta anche le notifiche per `recipient_session_id`.
+- `delete_my_account` cancella le notifiche ricevute (per nickname e per `recipient_session_id`)
+  e anche quelle **mandate** (per `sender_session_id` o `sender_nickname`): non le anonimizza,
+  perché un mittente anonimizzato non è più riconoscibile come bloccato e a chi lo aveva bloccato
+  ricomparirebbero le notifiche che il blocco nascondeva. Cancella anche le righe di
+  `consciousness_post_autori` del proprio `session_id`. L'instradamento va via a cascata.
+- `export_my_account` esporta anche le notifiche per `recipient_session_id` (letto da
+  `notifiche_instradamento`); l'export non contiene `session_id` altrui.
 
 ## App (`src/app.jsx` → `node build.js`)
 
@@ -165,5 +185,11 @@ Ridefinirle vuol dire copiarle per intero dall'ultima versione applicata: va pre
 - **Notifiche vecchie degli ospiti.** Le notifiche non lette degli ospiti create prima di oggi non
   hanno un telefono associato e non compaiono più (534 delle 558 attuali sono di nickname senza
   profilo, quasi tutte righe di prova).
-- **Ritorno indietro.** `35b_ritorno.sql` riapre la tabella com'era. Le colonne nuove restano
-  (nullable, innocue).
+- **Finestra fra 35a e 35b.** La 35b si applica circa 10 minuti dopo il deploy dell'app (cache
+  `max-age=600`). In quella finestra `notifications` è ancora leggibile, ma non contiene
+  credenziali: i `session_id` stanno in `notifiche_instradamento`, chiusa dalla 35a.
+- **Ritorno indietro.** `35b_ritorno.sql` riapre `notifications` com'era (policy e i sette
+  privilegi del catalogo, non `GRANT ALL`). Le colonne nuove rimaste, `sender_nickname` e
+  `oggetto`, sono innocue: nessuna credenziale. `notifiche_instradamento` resta chiusa.
+  `35a_ritorno.sql` ripristina prima le cinque funzioni, poi toglie `notifiche_instradamento`,
+  `consciousness_post_autori` e le due colonne.

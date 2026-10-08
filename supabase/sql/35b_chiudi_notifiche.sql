@@ -7,8 +7,10 @@
 -- all'app. Da qui si legge e si scrive solo con le RPC SECURITY DEFINER della 35a
 -- (get_my_notifications, mark_my_notification_read, notify_event, register_my_post).
 --
--- ⚠️ Applicare SOLO quando l'app nuova (che usa le RPC) è live da almeno un giorno: un'app
---    vecchia ancora in cache non vedrebbe più le notifiche finché non si aggiorna.
+-- ⚠️ Applicare circa 10 minuti DOPO il deploy dell'app nuova (che usa le RPC): la cache del sito
+--    dura max-age=600, e un'app vecchia ancora in cache non vedrebbe più le notifiche finché non
+--    si aggiorna. Nella finestra fra 35a e 35b la tabella resta leggibile, ma non contiene
+--    credenziali: i session_id stanno in notifiche_instradamento, privata già dalla 35a.
 -- Ritorno indietro: 35b_ritorno.sql.
 -- Idempotente, in una transazione.
 -- ============================================================================

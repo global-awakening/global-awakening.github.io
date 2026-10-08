@@ -1,23 +1,35 @@
 -- ============================================================================
 -- 35a_notifiche_server.sql — notifiche chiuse, parte additiva (spec 2026-10-08, Task 1).
--- Compatibile con l'app vecchia: aggiunge colonne, una tabella privata e funzioni nuove,
+-- Compatibile con l'app vecchia: aggiunge colonne, due tabelle private e funzioni nuove,
 -- non tocca privilegi né policy di `notifications` (li chiude la 35b, dopo il deploy dell'app).
 -- Idempotente: si può rilanciare senza errori. Ritorno: 35a_ritorno.sql.
 -- Richiede la 32a (telepatia_verifica_identita, nome_pubblico, telepatia_bloccati).
 -- ============================================================================
 BEGIN;
 
--- ════ A. Colonne e tabella nuove ═════════════════════════════════════════════
+-- ════ A. Colonne e tabelle nuove ════════════════════════════════════════════
+-- Su notifications solo dati che non sono credenziali: il nome di chi la manda e l'oggetto.
+-- I session_id (per un ospite sono l'unica credenziale) NON stanno in notifications, che fino
+-- alla 35b resta leggibile da chiunque: stanno in notifiche_instradamento, privata da subito.
 ALTER TABLE public.notifications
-  ADD COLUMN IF NOT EXISTS recipient_session_id text,
-  ADD COLUMN IF NOT EXISTS sender_session_id    text,
   ADD COLUMN IF NOT EXISTS sender_nickname      text,
   ADD COLUMN IF NOT EXISTS oggetto              text;  -- id del rituale/post (serve solo all'anti-raffica di notify_event)
 
-CREATE INDEX IF NOT EXISTS notifications_recipient_non_lette
-  ON public.notifications (recipient_session_id) WHERE read = false;
 CREATE INDEX IF NOT EXISTS notifications_nickname_non_lette
   ON public.notifications (user_nickname) WHERE read = false;
+
+-- A quale telefono va una notifica e da quale telefono viene: al massimo una riga per notifica;
+-- le notifiche vecchie, solo per nickname, non ne hanno. RLS accesa, nessuna policy, nessun
+-- privilegio all'app: la leggono e la scrivono solo le funzioni SECURITY DEFINER di questo file.
+CREATE TABLE IF NOT EXISTS public.notifiche_instradamento (
+  notifica_id          uuid PRIMARY KEY REFERENCES public.notifications(id) ON DELETE CASCADE,
+  recipient_session_id text,
+  sender_session_id    text
+);
+ALTER TABLE public.notifiche_instradamento ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.notifiche_instradamento FROM PUBLIC, anon, authenticated;
+CREATE INDEX IF NOT EXISTS notifiche_instradamento_destinatario
+  ON public.notifiche_instradamento (recipient_session_id);
 
 -- A quale telefono notificare i commenti ai post degli ospiti. Privata: il session_id non deve
 -- stare in una tabella leggibile (consciousness_posts lo è).
@@ -54,32 +66,40 @@ REVOKE ALL ON FUNCTION public.notifica_bloccata(text, text, text, text)    FROM 
 -- Le non lette del chiamante: quelle per il suo telefono e, solo per i registrati, quelle
 -- vecchie per nickname (senza telefono). Quelle di un mittente bloccato (in un senso o
 -- nell'altro) sono escluse, non cancellate: uno sblocco le fa ricomparire.
-CREATE OR REPLACE FUNCTION public.get_my_notifications(p_session_id text, p_password_hash text, p_nickname text)
-RETURNS SETOF public.notifications LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+-- Colonne elencate una per una (non notifications.*): nessun session_id esce, nemmeno per errore
+-- se un domani la tabella cresce. Il DROP serve perché il tipo di ritorno è cambiato.
+DROP FUNCTION IF EXISTS public.get_my_notifications(text, text, text);
+CREATE FUNCTION public.get_my_notifications(p_session_id text, p_password_hash text, p_nickname text)
+RETURNS TABLE(id uuid, user_nickname text, type text, message text, read boolean, created_at timestamptz, sender_nickname text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+#variable_conflict use_column
 DECLARE v_nome text; v_iscritto boolean;
 BEGIN
   v_nome := notifica_chi_sono(p_session_id, p_password_hash, p_nickname);
-  v_iscritto := EXISTS (SELECT 1 FROM profiles WHERE session_id = p_session_id);
+  v_iscritto := EXISTS (SELECT 1 FROM profiles pr WHERE pr.session_id = p_session_id);
   RETURN QUERY
-    SELECT n.* FROM notifications n
+    SELECT n.id, n.user_nickname, n.type, n.message, n.read, n.created_at, n.sender_nickname
+      FROM notifications n
+      LEFT JOIN notifiche_instradamento r ON r.notifica_id = n.id
      WHERE n.read = false
-       AND (n.recipient_session_id = p_session_id
-            OR (v_iscritto AND n.recipient_session_id IS NULL AND n.user_nickname = v_nome))
-       AND NOT notifica_bloccata(p_session_id, v_nome, n.sender_session_id, n.sender_nickname)
+       AND (r.recipient_session_id = p_session_id
+            OR (v_iscritto AND r.recipient_session_id IS NULL AND n.user_nickname = v_nome))
+       AND NOT notifica_bloccata(p_session_id, v_nome, r.sender_session_id, n.sender_nickname)
      ORDER BY n.created_at DESC
      LIMIT 100;
 END $$;
 
 CREATE OR REPLACE FUNCTION public.mark_my_notification_read(p_id uuid, p_session_id text, p_password_hash text, p_nickname text)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
-DECLARE v_nome text; v_iscritto boolean;
+DECLARE v_nome text; v_iscritto boolean; v_dest text;
 BEGIN
   v_nome := notifica_chi_sono(p_session_id, p_password_hash, p_nickname);
   v_iscritto := EXISTS (SELECT 1 FROM profiles WHERE session_id = p_session_id);
+  SELECT r.recipient_session_id INTO v_dest FROM notifiche_instradamento r WHERE r.notifica_id = p_id;
   UPDATE notifications n SET read = true
    WHERE n.id = p_id
-     AND (n.recipient_session_id = p_session_id
-          OR (v_iscritto AND n.recipient_session_id IS NULL AND n.user_nickname = v_nome));
+     AND (v_dest = p_session_id
+          OR (v_iscritto AND v_dest IS NULL AND n.user_nickname = v_nome));
   RETURN FOUND;
 END $$;
 
@@ -103,6 +123,7 @@ DECLARE
   v_post      consciousness_posts%ROWTYPE;
   v_fatto     boolean;
   v_msg       text;
+  v_nid       uuid;
 BEGIN
   v_nome := notifica_chi_sono(p_session_id, p_password_hash, p_nickname);
 
@@ -172,18 +193,21 @@ BEGIN
   --     session_id non aggira il limite) entro 10 minuti;
   --  b) tetto: al massimo 3 notifiche in 10 minuti per destinatario + tipo + oggetto, da chiunque.
   PERFORM pg_advisory_xact_lock(hashtext('notify_event:' || p_tipo || ':' || v_ogg || ':' || v_dest_sid));
-  IF EXISTS (SELECT 1 FROM notifications n
-              WHERE n.type = p_tipo AND n.oggetto = v_ogg AND n.recipient_session_id = v_dest_sid
+  IF EXISTS (SELECT 1 FROM notifications n JOIN notifiche_instradamento r ON r.notifica_id = n.id
+              WHERE n.type = p_tipo AND n.oggetto = v_ogg AND r.recipient_session_id = v_dest_sid
                 AND n.created_at > now() - interval '10 minutes'
-                AND (n.sender_nickname = v_nome OR n.sender_session_id = p_session_id))
-     OR (SELECT count(*) FROM notifications n
-          WHERE n.type = p_tipo AND n.oggetto = v_ogg AND n.recipient_session_id = v_dest_sid
+                AND (n.sender_nickname = v_nome OR r.sender_session_id = p_session_id))
+     OR (SELECT count(*) FROM notifications n JOIN notifiche_instradamento r ON r.notifica_id = n.id
+          WHERE n.type = p_tipo AND n.oggetto = v_ogg AND r.recipient_session_id = v_dest_sid
             AND n.created_at > now() - interval '10 minutes') >= 3 THEN
     RETURN jsonb_build_object('ok', true, 'inviata', false, 'motivo', 'gia_inviata');
   END IF;
 
-  INSERT INTO notifications (user_nickname, recipient_session_id, sender_session_id, sender_nickname, type, message, oggetto)
-  VALUES (v_dest_nick, v_dest_sid, p_session_id, v_nome, p_tipo, v_msg, v_ogg);
+  INSERT INTO notifications (user_nickname, sender_nickname, type, message, oggetto)
+  VALUES (v_dest_nick, v_nome, p_tipo, v_msg, v_ogg)
+  RETURNING id INTO v_nid;
+  INSERT INTO notifiche_instradamento (notifica_id, recipient_session_id, sender_session_id)
+  VALUES (v_nid, v_dest_sid, p_session_id);
   RETURN jsonb_build_object('ok', true, 'inviata', true, 'motivo', NULL);
 END $$;
 
@@ -210,7 +234,10 @@ GRANT EXECUTE ON FUNCTION public.register_my_post(uuid, text, text, text)     TO
 -- ════ D. Scrittori esistenti: riempiono mittente e destinatario ═════════════
 -- Ridefinite dalla versione applicata sul DB (docs/superpowers/plans/catalogo-notifiche-35.txt),
 -- cambiando solo le righe marcate «NUOVO (35)». Firme e risultati identici. Ritorno: 35a_ritorno.
--- Chi non ha un profilo (ospite) non ha un telefono noto: recipient_session_id resta null.
+-- I session_id vanno in notifiche_instradamento, mai in notifications. Per un messaggio privato
+-- il telefono del destinatario viene dal suo profilo: se non ce l'ha, recipient_session_id resta
+-- null e la notifica si legge solo come riga «per nickname», cioè solo da un profilo registrato
+-- con quel nickname.
 
 CREATE OR REPLACE FUNCTION public.send_private_message(p_sender_id text, p_sender_name text, p_receiver_name text, p_content text, p_sender_password_hash text)
  RETURNS private_messages
@@ -221,7 +248,7 @@ AS $function$
 DECLARE
   v_msg private_messages%ROWTYPE;
   v_clean_content text;
-  v_mitt_sid text; v_dest_sid text;
+  v_mitt_sid text; v_dest_sid text; v_nid uuid;
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM profiles
@@ -258,13 +285,17 @@ BEGIN
   VALUES (p_sender_id, p_sender_name, p_receiver_name, v_clean_content, false)
   RETURNING * INTO v_msg;
 
-  -- NUOVO (35): la notifica porta mittente e destinatario. Il telefono del destinatario viene dal
-  -- suo profilo (null se non esiste: la riga resta leggibile solo per nickname); quello del
-  -- mittente dal profilo già autenticato, non dal parametro.
+  -- NUOVO (35): la notifica porta il nome del mittente; i telefoni vanno in notifiche_instradamento.
+  -- Il telefono del destinatario viene dal suo profilo (null se non esiste: la notifica la legge
+  -- solo un profilo registrato con quel nickname); quello del mittente dal profilo già
+  -- autenticato, non dal parametro.
   SELECT session_id INTO v_mitt_sid FROM profiles WHERE nickname = p_sender_name;
   SELECT session_id INTO v_dest_sid FROM profiles WHERE nickname = p_receiver_name;
-  INSERT INTO notifications (user_nickname, recipient_session_id, sender_session_id, sender_nickname, type, message)
-  VALUES (p_receiver_name, v_dest_sid, v_mitt_sid, p_sender_name, 'private_message', p_sender_name || ' ti ha inviato un messaggio privato');
+  INSERT INTO notifications (user_nickname, sender_nickname, type, message)
+  VALUES (p_receiver_name, p_sender_name, 'private_message', p_sender_name || ' ti ha inviato un messaggio privato')
+  RETURNING id INTO v_nid;
+  INSERT INTO notifiche_instradamento (notifica_id, recipient_session_id, sender_session_id)
+  VALUES (v_nid, v_dest_sid, v_mitt_sid);
 
   RETURN v_msg;
 END $function$;
@@ -279,6 +310,7 @@ DECLARE
   v_me text; v_sid text; v_nome text; v_online boolean;
   v_con_push boolean := false; v_saltata boolean := false;
   v_id uuid; v_creato timestamptz; v_scade timestamptz; v_vincolo text;
+  v_nid uuid;
 BEGIN
   PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
   IF (p_disponibilita_id IS NULL) = (p_session_online IS NULL) THEN
@@ -334,8 +366,12 @@ BEGIN
       CASE WHEN v_vincolo = 'telepathy_invites_un_pending_mittente' THEN 'invito_in_corso' ELSE 'gia_invitato' END);
   END;
 
-  INSERT INTO notifications (user_nickname, recipient_session_id, sender_session_id, sender_nickname, type, message)
-  VALUES (v_nome, v_sid, p_session_id, v_me, 'telepathy_invite', v_me || ' ti ha invitato a un training telepatico');
+  -- NUOVO (35): nome del mittente nella notifica, telefoni in notifiche_instradamento.
+  INSERT INTO notifications (user_nickname, sender_nickname, type, message)
+  VALUES (v_nome, v_me, 'telepathy_invite', v_me || ' ti ha invitato a un training telepatico')
+  RETURNING id INTO v_nid;
+  INSERT INTO notifiche_instradamento (notifica_id, recipient_session_id, sender_session_id)
+  VALUES (v_nid, v_sid, p_session_id);
   -- Solo adesso, a insert riuscito: la richiesta parte al commit.
   IF v_con_push THEN
     PERFORM telepatia_chiama_motore(jsonb_build_object('invito', v_id, 'tipo', 'invito'));
@@ -350,7 +386,7 @@ CREATE OR REPLACE FUNCTION public.respond_telepathy_invite(p_invite_id uuid, p_s
  SECURITY DEFINER
  SET search_path TO 'public', 'pg_temp'
 AS $function$
-DECLARE v telepathy_invites%ROWTYPE; v_stato text;
+DECLARE v telepathy_invites%ROWTYPE; v_stato text; v_nid uuid;
 BEGIN
   PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
   IF p_invite_id IS NULL OR p_accept IS NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'dati_non_validi'); END IF;
@@ -397,9 +433,12 @@ BEGIN
     -- NUOVO (35): se fra i due c'è un blocco, in un senso o nell'altro, chi ha invitato non
     -- riceve nulla; il rifiuto va comunque a buon fine.
     IF NOT notifica_bloccata(v.from_id, v.from_name, p_session_id, v.to_name) THEN
-      INSERT INTO notifications (user_nickname, recipient_session_id, sender_session_id, sender_nickname, type, message)
-      VALUES (v.from_name, v.from_id, p_session_id, v.to_name, 'telepathy_declined',
-              v.to_name || ' ha rifiutato il tuo invito al training telepatico');
+      INSERT INTO notifications (user_nickname, sender_nickname, type, message)
+      VALUES (v.from_name, v.to_name, 'telepathy_declined',
+              v.to_name || ' ha rifiutato il tuo invito al training telepatico')
+      RETURNING id INTO v_nid;
+      INSERT INTO notifiche_instradamento (notifica_id, recipient_session_id, sender_session_id)
+      VALUES (v_nid, v.from_id, p_session_id);
     END IF;
     -- Per un invito da 45 s chi ha invitato è online e lo vede nell'app.
     IF telepatia_era_da_dieci(v.created_at, v.expires_at) THEN
@@ -437,6 +476,9 @@ BEGIN
   -- (b) Cancella i dati personali/privati
   DELETE FROM private_messages WHERE sender_name = p_nickname OR receiver_name = p_nickname;
   DELETE FROM notifications    WHERE user_nickname = p_nickname;
+  -- NUOVO (35): anche quelle che HO MANDATO col mio nome, non solo anonimizzate: altrimenti a
+  -- chi mi aveva bloccato ricomparirebbero quelle che il blocco nascondeva.
+  DELETE FROM notifications    WHERE sender_nickname = p_nickname;
 
   IF v_email IS NOT NULL AND v_email <> '' THEN
     DELETE FROM telepathy_scores WHERE user_id = v_email;
@@ -454,14 +496,12 @@ BEGIN
     -- qualcuno che ha chiesto di sparire.
     DELETE FROM push_subscriptions WHERE session_id = v_sid;
 
-    -- NUOVO (35): le notifiche destinate al mio telefono (anche quelle con un altro nickname) e
-    -- il registro privato di chi ha scritto quali post.
-    DELETE FROM notifications           WHERE recipient_session_id = v_sid;
-
-    -- NUOVO (35): le notifiche che HA MANDATO ad altri restano a chi le ha ricevute, ma senza
-    -- più il suo nome né il suo telefono.
-    UPDATE notifications SET sender_session_id = NULL, sender_nickname = 'Utente eliminato'
-     WHERE sender_session_id = v_sid OR sender_nickname = p_nickname;
+    -- NUOVO (35): le notifiche destinate al mio telefono (anche quelle con un altro nickname),
+    -- quelle mandate dal mio telefono e il registro privato di chi ha scritto quali post.
+    -- Le righe di notifiche_instradamento se ne vanno a cascata.
+    DELETE FROM notifications
+     WHERE id IN (SELECT r.notifica_id FROM notifiche_instradamento r
+                   WHERE r.recipient_session_id = v_sid OR r.sender_session_id = v_sid);
     DELETE FROM consciousness_post_autori WHERE session_id = v_sid;
 
     -- NUOVO (30): le sue candele e il nome accanto, in ogni rituale.
@@ -534,7 +574,9 @@ BEGIN
                   FROM telepathy_scores ts WHERE ts.user_id = v_email), '[]'::jsonb),
     'notifications', coalesce((SELECT jsonb_agg(to_jsonb(n))
                   FROM notifications n
-                 WHERE n.user_nickname = p_nickname OR n.recipient_session_id = v_sid), '[]'::jsonb),
+                 WHERE n.user_nickname = p_nickname
+                    OR n.id IN (SELECT r.notifica_id FROM notifiche_instradamento r
+                                 WHERE r.recipient_session_id = v_sid)), '[]'::jsonb),
     -- NUOVO (24): abbonamenti alle notifiche push.
     'push_subscriptions', coalesce((SELECT jsonb_agg(to_jsonb(ps))
                   FROM push_subscriptions ps WHERE ps.session_id = v_sid), '[]'::jsonb),

@@ -22,10 +22,20 @@ const G = (sid, nick, hash = null) => ({ p_session_id: sid, p_password_hash: has
 const iscritto = (db, sid, nick, pw) => db.query(
   `INSERT INTO profiles (session_id, nickname, email, password_hash) VALUES ($1, $2, lower($2) || '@test.com', $3)`, [sid, nick, pw]);
 // Una notifica; ritorna l'id. o = { sid, nick, mittSid, mittNick, read, minutiFa }
-const notif = async (db, o) => (await uno(db,
-  `INSERT INTO notifications (user_nickname, recipient_session_id, sender_session_id, sender_nickname, type, message, read, created_at)
-   VALUES ($1, $2, $3, $4, 'comment', $5, $6, now() - make_interval(mins => $7)) RETURNING id`,
-  [o.nick || 'x', o.sid || null, o.mittSid || null, o.mittNick || null, o.msg || 'm', o.read || false, o.minutiFa || 0])).id;
+// I telefoni (sid, mittSid) vanno in notifiche_instradamento, mai in notifications.
+const notif = async (db, o) => {
+  const id = (await uno(db,
+    `INSERT INTO notifications (user_nickname, sender_nickname, type, message, read, created_at)
+     VALUES ($1, $2, 'comment', $3, $4, now() - make_interval(mins => $5)) RETURNING id`,
+    [o.nick || 'x', o.mittNick || null, o.msg || 'm', o.read || false, o.minutiFa || 0])).id;
+  if (o.sid || o.mittSid) await db.query(
+    `INSERT INTO notifiche_instradamento (notifica_id, recipient_session_id, sender_session_id) VALUES ($1, $2, $3)`,
+    [id, o.sid || null, o.mittSid || null]);
+  return id;
+};
+// Le notifiche con i loro telefoni (dalla tabella privata), per le asserzioni.
+const CON_TELEFONI = `SELECT n.*, r.recipient_session_id, r.sender_session_id
+  FROM notifications n LEFT JOIN notifiche_instradamento r ON r.notifica_id = n.id`;
 const leggi = (db, args) => righe(db,
   `SELECT * FROM get_my_notifications(p_session_id => $1, p_password_hash => $2, p_nickname => $3)`,
   [args.p_session_id, args.p_password_hash, args.p_nickname]);
@@ -98,8 +108,9 @@ sezione('L4. solo non lette, ordine, limite 100', async (db) => {
   await notif(db, { sid: 's1', msg: 'nuova', minutiFa: 1 });
   await notif(db, { sid: 's1', msg: 'media', minutiFa: 10 });
   check(JSON.stringify(msgs(await leggi(db, G('s1', 'x')))) === '["nuova","media","vecchia"]', 'non lette, dalla più recente');
-  await db.query(`INSERT INTO notifications (user_nickname, recipient_session_id, type, message)
-                  SELECT 'x', 's2', 'comment', 'n' || g FROM generate_series(1, 130) g`);
+  await db.query(`WITH n AS (INSERT INTO notifications (user_nickname, type, message)
+                    SELECT 'x', 'comment', 'n' || g FROM generate_series(1, 130) g RETURNING id)
+                  INSERT INTO notifiche_instradamento (notifica_id, recipient_session_id) SELECT id, 's2' FROM n`);
   check((await leggi(db, G('s2', 'x'))).length === 100, 'al massimo 100');
 });
 
@@ -120,6 +131,19 @@ sezione('L5. segna letta: solo la propria', async (db) => {
   check(await m(altrui, 'sidL', 'Luna') === true, 'ospite sulla sua: true');
 });
 
+sezione('L7. la lettura non restituisce session_id né oggetto', async (db) => {
+  await iscritto(db, 'sidR', 'Stella', 'h');
+  await notif(db, { nick: 'Stella', sid: 'sidR', mittSid: 'sidM', mittNick: 'Mario', msg: 'da Mario' });
+  await db.query(`UPDATE notifications SET oggetto = 'x'`);
+  const r = await leggi(db, G('sidR', 'Stella', 'h'));
+  check(r.length === 1, 'la notifica arriva', r);
+  const chiavi = Object.keys(r[0]);
+  check(!chiavi.some((k) => /session_id$/.test(k)), 'nessuna chiave finisce in session_id', chiavi);
+  check(!chiavi.includes('oggetto'), 'niente oggetto', chiavi);
+  check(JSON.stringify(chiavi) === '["id","user_nickname","type","message","read","created_at","sender_nickname"]', 'solo le sette colonne previste', chiavi);
+  check(!JSON.stringify(r).includes('sidM') && !JSON.stringify(r).includes('sidR'), 'nessun session_id nei valori', r);
+});
+
 sezione('P1. privilegi: helper non eseguibili da anon, pubbliche sì', async (db) => {
   const e1 = await comeAnon(db, () => errore(chiama(db, 'notifica_chi_sono', G('s', 'n'))));
   check(/permission denied/.test(e1 || ''), 'anon non esegue notifica_chi_sono', e1);
@@ -134,12 +158,30 @@ sezione('P1. privilegi: helper non eseguibili da anon, pubbliche sì', async (db
   check(/permission denied/.test(e4 || ''), 'anon non scrive consciousness_post_autori', e4);
   const rls = await uno(db, `SELECT relrowsecurity FROM pg_class WHERE relname = 'consciousness_post_autori'`);
   check(rls.relrowsecurity === true, 'consciousness_post_autori ha la RLS accesa');
+  // I telefoni delle notifiche: chiusi già prima della 35b (notifications qui è ancora aperta).
+  const e5 = await comeAnon(db, () => errore(righe(db, `SELECT * FROM notifiche_instradamento`)));
+  check(/permission denied/.test(e5 || ''), 'anon non legge notifiche_instradamento (prima della 35b)', e5);
+  const e6 = await comeAnon(db, () => errore(db.query(`INSERT INTO notifiche_instradamento (notifica_id, recipient_session_id) VALUES (gen_random_uuid(), 's')`)));
+  check(/permission denied/.test(e6 || ''), 'anon non scrive notifiche_instradamento', e6);
+  await db.query('SET ROLE authenticated');
+  const e7 = await errore(righe(db, `SELECT * FROM notifiche_instradamento`));
+  await db.query('RESET ROLE');
+  check(/permission denied/.test(e7 || ''), 'authenticated non legge notifiche_instradamento', e7);
+  const rls2 = await uno(db, `SELECT relrowsecurity FROM pg_class WHERE relname = 'notifiche_instradamento'`);
+  check(rls2.relrowsecurity === true, 'notifiche_instradamento ha la RLS accesa');
+  const pol = await righe(db, `SELECT 1 FROM pg_policies WHERE tablename = 'notifiche_instradamento'`);
+  check(pol.length === 0, 'notifiche_instradamento senza policy', pol);
 });
 
-sezione('S1. schema: colonne, tabella, cascata', async (db) => {
+sezione('S1. schema: colonne, tabelle, cascata', async (db) => {
   const col = (await righe(db, `SELECT column_name FROM information_schema.columns WHERE table_name = 'notifications'
-    AND column_name IN ('recipient_session_id','sender_session_id','sender_nickname')`)).length;
-  check(col === 3, 'tre colonne nuove su notifications', col);
+    AND column_name IN ('sender_nickname','oggetto')`)).length;
+  check(col === 2, 'due colonne nuove su notifications (sender_nickname, oggetto)', col);
+  const sid = await righe(db, `SELECT column_name FROM information_schema.columns WHERE table_name = 'notifications' AND column_name LIKE '%session_id'`);
+  check(sid.length === 0, 'nessun session_id in notifications', sid);
+  const nid = await notif(db, { nick: 'Luna', sid: 'sidL', mittSid: 'sidM' });
+  await db.query(`DELETE FROM notifications WHERE id = $1`, [nid]);
+  check((await uno(db, `SELECT count(*)::int n FROM notifiche_instradamento`)).n === 0, 'cancellare la notifica cancella il suo instradamento (CASCADE)');
   const p = await uno(db, `INSERT INTO consciousness_posts (author_nickname) VALUES ('Luna') RETURNING id`);
   await db.query(`INSERT INTO consciousness_post_autori (post_id, session_id) VALUES ($1, 'sidL')`, [p.id]);
   await db.query(`DELETE FROM consciousness_posts WHERE id = $1`, [p.id]);
@@ -159,7 +201,7 @@ const commentoPost = (db, pid, nick, minutiFa = 1) => db.query(
   `INSERT INTO consciousness_comments (post_id, author_nickname, content, created_at) VALUES ($1, $2, 'ciao', now() - make_interval(mins => $3))`, [pid, nick, minutiFa]);
 const notifica = (db, sid, nick, tipo, ogg, hash = null) => chiama(db, 'notify_event', { ...G(sid, nick, hash), p_tipo: tipo, p_oggetto: String(ogg) });
 const register = (db, pid, sid, nick) => chiama(db, 'register_my_post', { p_post_id: pid, ...G(sid, nick) });
-const tutte = (db) => righe(db, `SELECT * FROM notifications ORDER BY created_at`);
+const tutte = (db) => righe(db, `${CON_TELEFONI} ORDER BY n.created_at`);
 
 sezione('N1. ritual_join: fatto vero, falso, inesistente', async (db) => {
   const rid = await rituale(db, { partecipanti: ['sidL'] });
@@ -207,7 +249,7 @@ sezione('N3. comment: ospite (autore registrato), registrato (profilo), senza au
   check(b.inviata === true, 'commento a post di registrato: inviata (telefono dal profilo)', b);
   const c = await notifica(db, 'sidM', 'Mario', 'comment', pSenza);
   check(c.inviata === false && c.motivo === 'non_trovato', 'post di ospite senza autore: non_trovato', c);
-  const n = await righe(db, `SELECT * FROM notifications ORDER BY recipient_session_id`);
+  const n = await righe(db, `${CON_TELEFONI} ORDER BY r.recipient_session_id`);
   check(n.length === 2 && n[0].recipient_session_id === 'sidL' && n[1].recipient_session_id === 'sidP', 'due righe, ai telefoni giusti', n);
   check(n.every((x) => x.message === 'Mario ha commentato il tuo post' && x.type === 'comment' && x.sender_session_id === 'sidM' && x.sender_nickname === 'Mario'), 'testo e mittente', n);
   check(n[0].user_nickname === 'Luna' && n[1].user_nickname === 'Paola', 'user_nickname = autore');
@@ -350,7 +392,9 @@ sezione('R1. idempotenza e ritorno', async () => {
   const f = await righe(db, `SELECT proname FROM pg_proc WHERE proname IN ('notifica_chi_sono','notifica_bloccata','get_my_notifications','mark_my_notification_read','notify_event','register_my_post')`);
   check(f.length === 0, 'funzioni tolte', f);
   const t = await righe(db, `SELECT 1 FROM pg_tables WHERE tablename = 'consciousness_post_autori'`);
-  check(t.length === 0, 'tabella tolta');
+  check(t.length === 0, 'tabella consciousness_post_autori tolta');
+  const t2 = await righe(db, `SELECT 1 FROM pg_tables WHERE tablename = 'notifiche_instradamento'`);
+  check(t2.length === 0, 'tabella notifiche_instradamento tolta');
   const col = await righe(db, `SELECT column_name FROM information_schema.columns WHERE table_name = 'notifications' ORDER BY ordinal_position`);
   check(JSON.stringify(col.map((c) => c.column_name)) === '["id","user_nickname","type","message","read","created_at"]', 'colonne com\'erano', col);
   const r = await uno(db, `SELECT message FROM notifications`);
@@ -378,7 +422,7 @@ const invitaDisp = async (db, sid, nick, destSid) => chiama(db, 'send_telepathy_
   { ...G(sid, nick), p_disponibilita_id: (await uno(db, `SELECT id FROM telepathy_availability WHERE session_id = $1`, [destSid])).id, p_session_online: null });
 const rispondi = (db, id, sid, accetta) => chiama(db, 'respond_telepathy_invite',
   { p_invite_id: id, p_session_id: sid, p_password_hash: null, p_accept: accetta, p_match_id: null });
-const ultimaNotifica = (db, tipo) => uno(db, `SELECT * FROM notifications WHERE type = $1 ORDER BY created_at DESC LIMIT 1`, [tipo]);
+const ultimaNotifica = (db, tipo) => uno(db, `${CON_TELEFONI} WHERE n.type = $1 ORDER BY n.created_at DESC LIMIT 1`, [tipo]);
 
 sezione('W1. messaggio privato: destinatario dal profilo, mittente', async (db) => {
   await iscritto(db, 'sidS', 'Stella', 'hS');
@@ -391,7 +435,7 @@ sezione('W1. messaggio privato: destinatario dal profilo, mittente', async (db) 
   check(n.sender_session_id === 'sidM' && n.sender_nickname === 'Mario', 'mittente: telefono e nome', n);
   const m2 = await chiama(db, 'send_private_message', { p_sender_id: 'sidM', p_sender_name: 'Mario', p_receiver_name: 'Senzaprofilo', p_content: 'ehi', p_sender_password_hash: 'hM' });
   check(/Mario,Senzaprofilo,ehi/.test(m2), 'destinatario senza profilo: il messaggio parte', m2);
-  const n2 = await uno(db, `SELECT * FROM notifications WHERE user_nickname = 'Senzaprofilo'`);
+  const n2 = await uno(db, `${CON_TELEFONI} WHERE n.user_nickname = 'Senzaprofilo'`);
   check(n2 && n2.recipient_session_id === null && n2.sender_nickname === 'Mario', 'senza profilo: destinatario null, mittente sì', n2);
   const e = await errore(chiama(db, 'send_private_message', { p_sender_id: 'sidM', p_sender_name: 'Mario', p_receiver_name: 'Stella', p_content: 'x', p_sender_password_hash: 'sbagliato' }));
   check(/Sender auth failed/.test(e || ''), 'hash sbagliato: errore di prima', e);
@@ -429,23 +473,44 @@ sezione('W3. rifiuto: senza blocco la notifica nasce, col blocco no', async (db)
     const q = await uno(db, `SELECT count(*)::int n FROM notifications WHERE type = 'telepathy_declined' AND user_nickname = $1`, [nomeInv]);
     check(q.n === 0, `blocco ${blocca} -> ${bloccato}: nessuna notifica di rifiuto`, q);
   }
+
+  // Blocco per session (telepathy_invite_blocks, fra ospiti), in un senso e nell'altro.
+  for (const [sidInv, nomeInv, sidRif, nomeRif, inverso] of [
+    ['sidI4', 'Ida', 'sidR4', 'Rina', false], ['sidI5', 'Iris', 'sidR5', 'Rebe', true]]) {
+    await disponibile(db, sidRif, nomeRif);
+    const inv = await invitaDisp(db, sidInv, nomeInv, sidRif);
+    check(inv.ok === true, `invito ${nomeInv} -> ${nomeRif}`, inv);
+    const [chi, chiBloccato] = inverso ? [sidInv, sidRif] : [sidRif, sidInv];
+    await db.query(`INSERT INTO telepathy_invite_blocks (blocker_session, blocked_session) VALUES ($1, $2)`, [chi, chiBloccato]);
+    const y = await rispondi(db, inv.id, sidRif, false);
+    check(y.ok === true && y.status === 'declined', `blocco per session ${chi} -> ${chiBloccato}: il rifiuto riesce comunque`, y);
+    const q = await uno(db, `SELECT count(*)::int n FROM notifications WHERE type = 'telepathy_declined' AND user_nickname = $1`, [nomeInv]);
+    check(q.n === 0, `blocco per session ${chi} -> ${chiBloccato}: nessuna notifica di rifiuto`, q);
+  }
 });
 
-sezione('W4. cancellazione account: notifiche per telefono e registro dei post', async (db) => {
+sezione('W4. cancellazione account: notifiche ricevute e mandate, registro dei post', async (db) => {
   await iscritto(db, 'sidA', 'Anna', 'hA');
   await iscritto(db, 'sidB', 'Bruno', 'hB');
   await notif(db, { nick: 'Anna', sid: 'sidA', msg: 'per nickname e telefono' });
   await notif(db, { nick: 'AltroNome', sid: 'sidA', msg: 'solo per telefono' });
   await notif(db, { nick: 'Bruno', sid: 'sidB', mittSid: 'sidA', mittNick: 'Anna', msg: 'di Anna a Bruno' });
+  await notif(db, { nick: 'Bruno', sid: 'sidB', mittSid: 'sidA', mittNick: 'NomeVecchio', msg: 'dal telefono di Anna' });
+  await notif(db, { nick: 'Bruno', mittNick: 'Anna', msg: 'col nome di Anna, senza telefono' });
+  await notif(db, { nick: 'Bruno', sid: 'sidB', mittSid: 'sidC', mittNick: 'Carla', msg: 'di Carla a Bruno' });
+  // Bruno aveva bloccato Anna: dopo la cancellazione non deve ricomparirgli nulla di suo.
+  await db.query(`INSERT INTO user_blocks (blocker_nickname, blocked_nickname) VALUES ('Bruno', 'Anna')`);
   const p = (await uno(db, `INSERT INTO consciousness_posts (author_nickname) VALUES ('Anna') RETURNING id`)).id;
   const pb = (await uno(db, `INSERT INTO consciousness_posts (author_nickname) VALUES ('Bruno') RETURNING id`)).id;
   await db.query(`INSERT INTO consciousness_post_autori (post_id, session_id) VALUES ($1, 'sidA'), ($2, 'sidB')`, [p, pb]);
   await db.query(`INSERT INTO notifications (user_nickname, type, message) VALUES ('Anna', 'x', 'vecchia per nickname')`);
   await chiama(db, 'delete_my_account', { p_nickname: 'Anna', p_password_hash: 'hA' });
   const rimaste = (await righe(db, `SELECT message FROM notifications ORDER BY message`)).map((r) => r.message);
-  check(JSON.stringify(rimaste) === '["di Anna a Bruno"]', 'spariscono quelle per nickname e per telefono; quella inviata da lei a Bruno resta', rimaste);
-  const mitt = await uno(db, `SELECT sender_session_id, sender_nickname FROM notifications WHERE message = 'di Anna a Bruno'`);
-  check(mitt.sender_session_id === null && mitt.sender_nickname === 'Utente eliminato', 'quella inviata da lei resta ma il mittente è anonimizzato', mitt);
+  check(JSON.stringify(rimaste) === '["di Carla a Bruno"]', 'spariscono le ricevute (nickname, telefono) e le mandate (telefono, nome); resta quella di un terzo', rimaste);
+  const instr = await righe(db, `SELECT recipient_session_id, sender_session_id FROM notifiche_instradamento`);
+  check(instr.length === 1 && instr[0].sender_session_id === 'sidC' && instr[0].recipient_session_id === 'sidB', 'instradamento: resta solo quello della notifica di Carla', instr);
+  const vistoBruno = msgs(await leggi(db, G('sidB', 'Bruno', 'hB')));
+  check(JSON.stringify(vistoBruno) === '["di Carla a Bruno"]', 'Bruno non rivede le notifiche di chi aveva bloccato', vistoBruno);
   const a = await righe(db, `SELECT session_id FROM consciousness_post_autori`);
   check(JSON.stringify(a.map((x) => x.session_id)) === '["sidB"]', 'sparisce il suo registro dei post, resta quello di Bruno', a);
   const pr = await righe(db, `SELECT author_nickname FROM consciousness_posts ORDER BY author_nickname`);
@@ -457,12 +522,13 @@ sezione('W4. cancellazione account: notifiche per telefono e registro dei post',
 
 sezione('W5. export: anche le notifiche per telefono', async (db) => {
   await iscritto(db, 'sidA', 'Anna', 'hA');
-  await notif(db, { nick: 'Anna', sid: 'sidA', msg: 'uno' });
+  await notif(db, { nick: 'Anna', sid: 'sidA', mittSid: 'sidMittente', mittNick: 'Mario', msg: 'uno' });
   await notif(db, { nick: 'AltroNome', sid: 'sidA', msg: 'due' });
   await notif(db, { nick: 'Anna', sid: null, msg: 'tre' });
   await notif(db, { nick: 'Bruno', sid: 'sidB', msg: 'non sua' });
   const ex = await chiama(db, 'export_my_account', { p_nickname: 'Anna', p_password_hash: 'hA' });
   check(JSON.stringify(ex.notifications.map((n) => n.message).sort()) === '["due","tre","uno"]', 'le sue, per nickname o per telefono, non quella di Bruno', ex.notifications.map((n) => n.message));
+  check(!JSON.stringify(ex.notifications).includes('sidMittente'), 'l\'export non contiene il session_id di chi ha mandato la notifica');
   check(ex.profile && ex.profile.password_hash === undefined && Array.isArray(ex.private_messages), 'il resto dell\'export è com\'era');
 });
 
@@ -500,6 +566,7 @@ sezione('C1. 35b: anon non tocca più la tabella, le RPC funzionano ancora', asy
   await db.query('RESET ROLE');
   check(/permission denied/i.test(ea || ''), 'authenticated SELECT: permission denied', ea);
   check((await righe(db, `SELECT 1 FROM pg_policies WHERE tablename = 'notifications'`)).length === 0, 'nessuna policy rimasta');
+  check(await nega(`SELECT * FROM notifiche_instradamento`), 'anon non legge notifiche_instradamento (dopo la 35b)');
   const l = await comeAnon(db, () => righe(db, `SELECT * FROM get_my_notifications('sidR', 'h', 'Stella')`));
   check(l.length === 1, 'get_my_notifications funziona da anon', l);
   await comeAnon(db, () => chiama(db, 'mark_my_notification_read', { p_id: id, ...G('sidR', 'Stella', 'h') }));
@@ -520,7 +587,11 @@ sezione('C2. 35b è idempotente e il ritorno riapre come prima', async (db) => {
   const pol = await righe(db, `SELECT policyname, cmd, roles::text AS roles, qual, with_check FROM pg_policies WHERE tablename = 'notifications'`);
   check(pol.length === 1 && pol[0].policyname === 'allow all' && pol[0].cmd === 'ALL' && pol[0].qual === 'true' && pol[0].with_check === 'true', 'policy "allow all" tornata', pol);
   const gr = (await righe(db, `SELECT grantee, privilege_type FROM information_schema.role_table_grants WHERE table_name = 'notifications' AND grantee IN ('anon','authenticated') ORDER BY 1,2`)).map((r) => r.grantee + ':' + r.privilege_type);
-  check(gr.length === 14, 'sette privilegi per anon e authenticated', gr);
+  const sette = ['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE'];
+  check(JSON.stringify(gr) === JSON.stringify([...sette.map((p) => 'anon:' + p), ...sette.map((p) => 'authenticated:' + p)]),
+    'esattamente i sette privilegi del catalogo per anon e authenticated', gr);
+  const instr = await comeAnon(db, () => errore(righe(db, `SELECT * FROM notifiche_instradamento`)));
+  check(/permission denied/.test(instr || ''), 'dopo 35b_ritorno notifiche_instradamento resta chiusa', instr);
   const r = await comeAnon(db, () => righe(db, `SELECT * FROM notifications`));
   check(r.length === 1, 'anon torna a leggere');
   check(!(await errore(applicaFile(db, 'supabase/sql/35b_ritorno.sql'))), '35b_ritorno due volte: nessun errore');
