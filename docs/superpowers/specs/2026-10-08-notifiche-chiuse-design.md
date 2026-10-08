@@ -1,6 +1,6 @@
 # Notifiche chiuse — design
 
-Data: 2026-10-08 · Ramo: `feat/notifiche-chiuse` · Migration: `35_notifiche_chiuse.sql` (+ `35_ritorno.sql`)
+Data: 2026-10-08 · Ramo: `feat/notifiche-chiuse` · Migration: `35a_notifiche_server.sql` (additiva) e `35b_chiudi_notifiche.sql` (chiusura), ognuna col suo `_ritorno`
 Scelta di Irene (08/10): «chiudere bene» invece del solo filtro lato client.
 
 ## Problema
@@ -52,7 +52,9 @@ Serve solo a sapere a quale telefono notificare i commenti ai post degli ospiti 
 post sono di ospiti). Il `session_id` non deve finire in una tabella leggibile:
 `consciousness_posts` lo è.
 
-## Chiusura
+## Chiusura (solo in 35b)
+
+Ordine di rilascio, come 32a/32b: 35a si applica prima ed è compatibile con l'app vecchia; poi merge e deploy dell'app; dopo ~10 minuti (cache `max-age=600`) si applica 35b.
 
 - `DROP POLICY "allow all" ON notifications`;
 - `REVOKE ALL ON notifications FROM anon, authenticated`.
@@ -128,7 +130,7 @@ Ridefinirle vuol dire copiarle per intero dall'ultima versione applicata: va pre
     blocco in un senso e nell'altro; raffica entro 10 min;
   - `register_my_post` rifiuta i post altrui o vecchi;
   - declined con blocco → niente notifica;
-  - `35_` è idempotente e `35_ritorno` riporta a prima.
+  - 35a e 35b sono idempotenti e i due `_ritorno` riportano a prima.
 - **DB vero**, dopo l'applicazione: lo stesso controllo dei privilegi via REST con la chiave anon,
   che dev'essere respinto.
 - **UI**: `test-inviti-telepatia.js` (campanella, rifiuto), `test-moderazione-ui.js` e i test
@@ -140,7 +142,7 @@ Ridefinirle vuol dire copiarle per intero dall'ultima versione applicata: va pre
 
 ## Criteri di «fatto»
 
-1. 35_ applicata. Con la chiave anon, SELECT, INSERT, PATCH e DELETE su `/rest/v1/notifications`
+1. 35a e 35b applicate. Con la chiave anon, SELECT, INSERT, PATCH e DELETE su `/rest/v1/notifications`
    sono respinti.
 2. `test-notifiche-chiuse-sql.js` è verde.
 3. Le prove UI sopra sono verdi, contro il ramo servito in locale.
@@ -163,5 +165,5 @@ Ridefinirle vuol dire copiarle per intero dall'ultima versione applicata: va pre
 - **Notifiche vecchie degli ospiti.** Le notifiche non lette degli ospiti create prima di oggi non
   hanno un telefono associato e non compaiono più (534 delle 558 attuali sono di nickname senza
   profilo, quasi tutte righe di prova).
-- **Ritorno indietro.** `35_ritorno.sql` riapre la tabella com'era. Le colonne nuove restano
+- **Ritorno indietro.** `35b_ritorno.sql` riapre la tabella com'era. Le colonne nuove restano
   (nullable, innocue).
