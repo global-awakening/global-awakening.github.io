@@ -5,7 +5,7 @@
  * Niente Supabase: PGlite con lo schema del catalogo (scripts/pg-locale.js) e le migration vere.
  * Ogni sezione gira su un database nuovo.
  */
-const { creaDbTelepatia, applicaFile, F35A } = require('./scripts/pg-locale');
+const { creaDbTelepatia, applicaFile, F35A, funzioniCatalogo35 } = require('./scripts/pg-locale');
 let passed = 0, failed = 0;
 const check = (c, m, x) => { if (c) { console.log(`  ✅ ${m}`); passed++; } else { console.log(`  ❌ ${m}${x !== undefined ? ' — ' + JSON.stringify(x) : ''}`); failed++; process.exitCode = 1; } };
 const errore = async (p) => { try { await p; return null; } catch (e) { return e.message; } };
@@ -368,6 +368,116 @@ sezione('L6. profilo storico senza email né hash', async (db) => {
   const id = await notif(db, { nick: 'Vecchia', sid: 'sidV', msg: 'da segnare' });
   check(await chiama(db, 'mark_my_notification_read', { p_id: id, ...G('sidV', 'Vecchia', null) }) === true, 'segna letta con hash null');
 });
+
+// ════ W. Scrittori server esistenti (Task 3) ═══════════════════════════════
+const abbonamento = (db, sid) => db.query(
+  `INSERT INTO push_subscriptions (session_id, endpoint, p256dh, auth, locale)
+   VALUES ($1, 'https://fcm.googleapis.com/fcm/send/prova_' || $1, 'k', 'a', 'it') ON CONFLICT (endpoint) DO NOTHING`, [sid]);
+const disponibile = async (db, sid, nick) => { await abbonamento(db, sid); await chiama(db, 'set_telepathy_availability', { ...G(sid, nick), p_enabled: true }); };
+const invitaDisp = async (db, sid, nick, destSid) => chiama(db, 'send_telepathy_invite',
+  { ...G(sid, nick), p_disponibilita_id: (await uno(db, `SELECT id FROM telepathy_availability WHERE session_id = $1`, [destSid])).id, p_session_online: null });
+const rispondi = (db, id, sid, accetta) => chiama(db, 'respond_telepathy_invite',
+  { p_invite_id: id, p_session_id: sid, p_password_hash: null, p_accept: accetta, p_match_id: null });
+const ultimaNotifica = (db, tipo) => uno(db, `SELECT * FROM notifications WHERE type = $1 ORDER BY created_at DESC LIMIT 1`, [tipo]);
+
+sezione('W1. messaggio privato: destinatario dal profilo, mittente', async (db) => {
+  await iscritto(db, 'sidS', 'Stella', 'hS');
+  await iscritto(db, 'sidM', 'Mario', 'hM');
+  const m = await chiama(db, 'send_private_message', { p_sender_id: 'sidM', p_sender_name: 'Mario', p_receiver_name: 'Stella', p_content: 'ciao', p_sender_password_hash: 'hM' });
+  check(/Mario,Stella,ciao/.test(m), 'il messaggio è tornato come prima', m);
+  const n = await ultimaNotifica(db, 'private_message');
+  check(n.user_nickname === 'Stella' && n.message === 'Mario ti ha inviato un messaggio privato', 'testo e nickname come prima', n);
+  check(n.recipient_session_id === 'sidS', 'destinatario: il telefono del profilo', n.recipient_session_id);
+  check(n.sender_session_id === 'sidM' && n.sender_nickname === 'Mario', 'mittente: telefono e nome', n);
+  const m2 = await chiama(db, 'send_private_message', { p_sender_id: 'sidM', p_sender_name: 'Mario', p_receiver_name: 'Senzaprofilo', p_content: 'ehi', p_sender_password_hash: 'hM' });
+  check(/Mario,Senzaprofilo,ehi/.test(m2), 'destinatario senza profilo: il messaggio parte', m2);
+  const n2 = await uno(db, `SELECT * FROM notifications WHERE user_nickname = 'Senzaprofilo'`);
+  check(n2 && n2.recipient_session_id === null && n2.sender_nickname === 'Mario', 'senza profilo: destinatario null, mittente sì', n2);
+  const e = await errore(chiama(db, 'send_private_message', { p_sender_id: 'sidM', p_sender_name: 'Mario', p_receiver_name: 'Stella', p_content: 'x', p_sender_password_hash: 'sbagliato' }));
+  check(/Sender auth failed/.test(e || ''), 'hash sbagliato: errore di prima', e);
+});
+
+sezione('W2. invito: destinatario e mittente', async (db) => {
+  await disponibile(db, 'sidR', 'Rita');
+  const r = await invitaDisp(db, 'sidI', 'Ines', 'sidR');
+  check(r.ok === true, 'invito inviato', r);
+  const n = await ultimaNotifica(db, 'telepathy_invite');
+  check(n.user_nickname === 'Rita' && n.message === 'Ines ti ha invitato a un training telepatico', 'testo come prima', n);
+  check(n.recipient_session_id === 'sidR' && n.sender_session_id === 'sidI' && n.sender_nickname === 'Ines', 'colonne nuove piene', n);
+});
+
+sezione('W3. rifiuto: senza blocco la notifica nasce, col blocco no', async (db) => {
+  await disponibile(db, 'sidR', 'Rita');
+  const r = await invitaDisp(db, 'sidI', 'Ines', 'sidR');
+  const x = await rispondi(db, r.id, 'sidR', false);
+  check(x.ok === true && x.status === 'declined', 'rifiuto riuscito', x);
+  const n = await ultimaNotifica(db, 'telepathy_declined');
+  check(n && n.user_nickname === 'Ines' && n.message === 'Rita ha rifiutato il tuo invito al training telepatico', 'notifica di rifiuto, testo come prima', n);
+  check(n.recipient_session_id === 'sidI' && n.sender_session_id === 'sidR' && n.sender_nickname === 'Rita', 'colonne nuove: destinatario chi ha invitato, mittente chi rifiuta', n);
+
+  // Blocco in un senso e nell'altro, messo dopo l'invio: l'invito è in piedi, poi lo si rifiuta.
+  for (const [blocca, bloccato, sidInv, nomeInv, sidRif, nomeRif] of [
+    ['Rosa', 'Ivo', 'sidI2', 'Ivo', 'sidR2', 'Rosa'], ['Ivan', 'Rosy', 'sidI3', 'Ivan', 'sidR3', 'Rosy']]) {
+    await disponibile(db, sidRif, nomeRif);
+    const inv = await invitaDisp(db, sidInv, nomeInv, sidRif);
+    check(inv.ok === true, `invito ${nomeInv} -> ${nomeRif}`, inv);
+    await db.query(`INSERT INTO user_blocks (blocker_nickname, blocked_nickname) VALUES ($1, $2)`, [blocca, bloccato]);
+    const y = await rispondi(db, inv.id, sidRif, false);
+    check(y.ok === true && y.status === 'declined', `blocco ${blocca} -> ${bloccato}: il rifiuto riesce comunque`, y);
+    const st = await uno(db, `SELECT status FROM telepathy_invites WHERE id = $1`, [inv.id]);
+    check(st.status === 'declined', 'invito marcato declined', st);
+    const q = await uno(db, `SELECT count(*)::int n FROM notifications WHERE type = 'telepathy_declined' AND user_nickname = $1`, [nomeInv]);
+    check(q.n === 0, `blocco ${blocca} -> ${bloccato}: nessuna notifica di rifiuto`, q);
+  }
+});
+
+sezione('W4. cancellazione account: notifiche per telefono e registro dei post', async (db) => {
+  await iscritto(db, 'sidA', 'Anna', 'hA');
+  await iscritto(db, 'sidB', 'Bruno', 'hB');
+  await notif(db, { nick: 'Anna', sid: 'sidA', msg: 'per nickname e telefono' });
+  await notif(db, { nick: 'AltroNome', sid: 'sidA', msg: 'solo per telefono' });
+  await notif(db, { nick: 'Bruno', sid: 'sidB', mittSid: 'sidA', mittNick: 'Anna', msg: 'di Anna a Bruno' });
+  const p = (await uno(db, `INSERT INTO consciousness_posts (author_nickname) VALUES ('Anna') RETURNING id`)).id;
+  const pb = (await uno(db, `INSERT INTO consciousness_posts (author_nickname) VALUES ('Bruno') RETURNING id`)).id;
+  await db.query(`INSERT INTO consciousness_post_autori (post_id, session_id) VALUES ($1, 'sidA'), ($2, 'sidB')`, [p, pb]);
+  await db.query(`INSERT INTO notifications (user_nickname, type, message) VALUES ('Anna', 'x', 'vecchia per nickname')`);
+  await chiama(db, 'delete_my_account', { p_nickname: 'Anna', p_password_hash: 'hA' });
+  const rimaste = (await righe(db, `SELECT message FROM notifications ORDER BY message`)).map((r) => r.message);
+  check(JSON.stringify(rimaste) === '["di Anna a Bruno"]', 'spariscono quelle per nickname e per telefono; quella inviata da lei a Bruno resta', rimaste);
+  const a = await righe(db, `SELECT session_id FROM consciousness_post_autori`);
+  check(JSON.stringify(a.map((x) => x.session_id)) === '["sidB"]', 'sparisce il suo registro dei post, resta quello di Bruno', a);
+  const pr = await righe(db, `SELECT author_nickname FROM consciousness_posts ORDER BY author_nickname`);
+  check(JSON.stringify(pr.map((x) => x.author_nickname)) === '["Bruno","Utente eliminato"]', 'i post restano, anonimizzati come prima', pr);
+  check((await righe(db, `SELECT 1 FROM profiles WHERE nickname = 'Anna'`)).length === 0, 'profilo cancellato');
+  const e = await errore(chiama(db, 'delete_my_account', { p_nickname: 'Bruno', p_password_hash: 'sbagliato' }));
+  check(/Auth failed/.test(e || ''), 'hash sbagliato: Auth failed come prima', e);
+});
+
+sezione('W5. export: anche le notifiche per telefono', async (db) => {
+  await iscritto(db, 'sidA', 'Anna', 'hA');
+  await notif(db, { nick: 'Anna', sid: 'sidA', msg: 'uno' });
+  await notif(db, { nick: 'AltroNome', sid: 'sidA', msg: 'due' });
+  await notif(db, { nick: 'Anna', sid: null, msg: 'tre' });
+  await notif(db, { nick: 'Bruno', sid: 'sidB', msg: 'non sua' });
+  const ex = await chiama(db, 'export_my_account', { p_nickname: 'Anna', p_password_hash: 'hA' });
+  check(JSON.stringify(ex.notifications.map((n) => n.message).sort()) === '["due","tre","uno"]', 'le sue, per nickname o per telefono, non quella di Bruno', ex.notifications.map((n) => n.message));
+  check(ex.profile && ex.profile.password_hash === undefined && Array.isArray(ex.private_messages), 'il resto dell\'export è com\'era');
+});
+
+sezione('R2. ritorno: le cinque funzioni tornano al catalogo', async () => {
+  const db = await creaDbTelepatia({ con35a: false });
+  const norm = (t) => t.replace(/\r/g, '').split('\n').map((l) => l.replace(/\s+$/, '')).join('\n').trim();
+  const def = async (nome) => norm((await uno(db, `SELECT pg_get_functiondef(p.oid) AS d FROM pg_proc p WHERE p.proname = $1 AND p.pronamespace = 'public'::regnamespace`, [nome])).d);
+  const cat = Object.fromEntries(funzioniCatalogo35().map((f) => [/FUNCTION public\.(\w+)/.exec(f)[1], norm(f)]));
+  const nomi = ['send_private_message', 'send_telepathy_invite', 'respond_telepathy_invite', 'delete_my_account', 'export_my_account'];
+  check(Object.keys(cat).length === 5, 'il catalogo ha cinque funzioni', Object.keys(cat));
+  await applicaFile(db, F35A);
+  for (const n of nomi) check(await def(n) !== cat[n], `${n}: dopo la 35a è cambiata`);
+  check(!(await errore(applicaFile(db, 'supabase/sql/35a_ritorno.sql'))), '35a_ritorno si applica');
+  for (const n of nomi) check(await def(n) === cat[n], `${n}: dopo il ritorno è uguale al catalogo`);
+  check(!(await errore(applicaFile(db, 'supabase/sql/35a_ritorno.sql'))), '35a_ritorno due volte: nessun errore');
+  for (const n of nomi) check(await def(n) === cat[n], `${n}: ancora uguale al catalogo`);
+}, { con35a: false });
 
 // ── esecuzione ──
 (async () => {

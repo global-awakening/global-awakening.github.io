@@ -74,6 +74,8 @@ async function creaDbLocale({ con28 = true, con29 = con28, con30 = con29 } = {})
 // Solo per creaDbTelepatia: creaDbLocale resta com'era, perché test-candela-stanza-sql.js crea
 // da sé alcune di queste tabelle e non deve trovarle già lì.
 const SCHEMA_TELEPATIA = `
+  -- send_private_message (catalogo 35) scrive e legge queste due colonne.
+  ALTER TABLE private_messages ADD COLUMN IF NOT EXISTS sender_id text, ADD COLUMN IF NOT EXISTS is_read boolean DEFAULT false;
   ALTER TABLE profiles
     ADD COLUMN IF NOT EXISTS bio text, ADD COLUMN IF NOT EXISTS country text,
     ADD COLUMN IF NOT EXISTS show_telepathy_score boolean DEFAULT true;
@@ -157,6 +159,13 @@ const F31 = 'supabase/sql/31_account_cancellato_rituali.sql';
 const F32A = 'supabase/sql/32a_inviti_telepatia_offline.sql';
 const F32B = 'supabase/sql/32b_chiudi_inviti_diretti.sql';
 const F35A = 'supabase/sql/35a_notifiche_server.sql';
+const CATALOGO_35 = 'docs/superpowers/plans/catalogo-notifiche-35.txt';
+
+// Le cinque funzioni com'erano sul DB vero prima della 35a (catalogo), nell'ordine del file.
+function funzioniCatalogo35() {
+  const t = fs.readFileSync(path.join(ROOT, CATALOGO_35), 'utf8').replace(/\r/g, '');
+  return t.split('-- ════ notifications')[0].split(/^-- ════\n/m).map((x) => x.trim()).filter(Boolean);
+}
 
 // Per gli inviti telepatia: catena dei rituali fino alla 30_, schema della telepatia, 31_
 // (l'ultima delete_my_account su main), poi le migration nuove se richieste.
@@ -166,8 +175,10 @@ async function creaDbTelepatia({ con32a = true, con32b = false, con35a = false }
   await applicaFile(db, F31);
   if (con32a) await applicaFile(db, F32A);
   if (con32a && con32b) await applicaFile(db, F32B);
+  // send_private_message non è in nessuna migration caricata qui: si installa la versione del catalogo.
+  await db.exec(funzioniCatalogo35().find((f) => f.includes('FUNCTION public.send_private_message(')) + ';');
   if (con35a) await applicaFile(db, F35A);
   return db;
 }
 
-module.exports = { creaDbLocale, creaDbTelepatia, applicaFile, RUOLO_SERVIZIO, F31, F32A, F32B, F35A };
+module.exports = { creaDbLocale, creaDbTelepatia, applicaFile, RUOLO_SERVIZIO, F31, F32A, F32B, F35A, funzioniCatalogo35 };
