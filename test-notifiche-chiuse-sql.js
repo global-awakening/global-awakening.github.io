@@ -165,6 +165,16 @@ sezione('R1. idempotenza e ritorno', async () => {
   check(!(await errore(applicaFile(db, F35A))), '35a si può rimettere dopo il ritorno');
 }, { con35a: false });
 
+sezione('L6. profilo storico senza email né hash', async (db) => {
+  await db.query(`INSERT INTO profiles (session_id, nickname, email, password_hash) VALUES ('sidV', 'Vecchia', NULL, NULL)`);
+  await notif(db, { nick: 'Vecchia', sid: 'sidV', msg: 'nuova' });
+  await notif(db, { nick: 'Vecchia', sid: null, msg: 'vecchia' });
+  const r = await leggi(db, G('sidV', 'Vecchia', null));
+  check(JSON.stringify(msgs(r).sort()) === '["nuova","vecchia"]', 'legge anche con hash null, righe vecchie per nickname comprese', msgs(r));
+  const id = await notif(db, { nick: 'Vecchia', sid: 'sidV', msg: 'da segnare' });
+  check(await chiama(db, 'mark_my_notification_read', { p_id: id, ...G('sidV', 'Vecchia', null) }) === true, 'segna letta con hash null');
+});
+
 // ── esecuzione ──
 (async () => {
   for (const [nome, fn, opzioni] of sezioni) {

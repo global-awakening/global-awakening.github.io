@@ -29,17 +29,14 @@ ALTER TABLE public.consciousness_post_autori ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.consciousness_post_autori FROM PUBLIC, anon, authenticated;
 
 -- ════ B. Funzioni interne ════════════════════════════════════════════════════
--- Il nickname effettivo del chiamante. Registrato (c'è un profilo con quel session_id): serve
--- l'hash giusto e il nome è quello del profilo, mai quello passato. Ospite: il session_id è
+-- Il nickname effettivo del chiamante. Registrato (c'è un profilo con quel session_id): vale la
+-- regola di telepatia_verifica_identita (32a) e il nome è quello del profilo, mai quello passato. Ospite: il session_id è
 -- l'unica prova (rischio accettato, 32a §6) e il nome è nome_pubblico(sid, nick).
 CREATE OR REPLACE FUNCTION public.notifica_chi_sono(p_session_id text, p_password_hash text, p_nickname text)
 RETURNS text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
 BEGIN
+  -- La regola di identità è quella della 32a, senza varianti: l'hash serve solo ai profili con email.
   PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
-  IF EXISTS (SELECT 1 FROM profiles WHERE session_id = p_session_id)
-     AND NOT EXISTS (SELECT 1 FROM profiles WHERE session_id = p_session_id AND password_hash = p_password_hash) THEN
-    RAISE EXCEPTION 'Auth failed';
-  END IF;
   RETURN nome_pubblico(p_session_id, p_nickname);
 END $$;
 
