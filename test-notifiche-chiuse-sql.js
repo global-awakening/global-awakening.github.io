@@ -5,7 +5,7 @@
  * Niente Supabase: PGlite con lo schema del catalogo (scripts/pg-locale.js) e le migration vere.
  * Ogni sezione gira su un database nuovo.
  */
-const { creaDbTelepatia, applicaFile, F35A, funzioniCatalogo35 } = require('./scripts/pg-locale');
+const { creaDbTelepatia, applicaFile, F35A, F35B, funzioniCatalogo35 } = require('./scripts/pg-locale');
 let passed = 0, failed = 0;
 const check = (c, m, x) => { if (c) { console.log(`  ✅ ${m}`); passed++; } else { console.log(`  ❌ ${m}${x !== undefined ? ' — ' + JSON.stringify(x) : ''}`); failed++; process.exitCode = 1; } };
 const errore = async (p) => { try { await p; return null; } catch (e) { return e.message; } };
@@ -444,6 +444,8 @@ sezione('W4. cancellazione account: notifiche per telefono e registro dei post',
   await chiama(db, 'delete_my_account', { p_nickname: 'Anna', p_password_hash: 'hA' });
   const rimaste = (await righe(db, `SELECT message FROM notifications ORDER BY message`)).map((r) => r.message);
   check(JSON.stringify(rimaste) === '["di Anna a Bruno"]', 'spariscono quelle per nickname e per telefono; quella inviata da lei a Bruno resta', rimaste);
+  const mitt = await uno(db, `SELECT sender_session_id, sender_nickname FROM notifications WHERE message = 'di Anna a Bruno'`);
+  check(mitt.sender_session_id === null && mitt.sender_nickname === 'Utente eliminato', 'quella inviata da lei resta ma il mittente è anonimizzato', mitt);
   const a = await righe(db, `SELECT session_id FROM consciousness_post_autori`);
   check(JSON.stringify(a.map((x) => x.session_id)) === '["sidB"]', 'sparisce il suo registro dei post, resta quello di Bruno', a);
   const pr = await righe(db, `SELECT author_nickname FROM consciousness_posts ORDER BY author_nickname`);
@@ -478,6 +480,51 @@ sezione('R2. ritorno: le cinque funzioni tornano al catalogo', async () => {
   check(!(await errore(applicaFile(db, 'supabase/sql/35a_ritorno.sql'))), '35a_ritorno due volte: nessun errore');
   for (const n of nomi) check(await def(n) === cat[n], `${n}: ancora uguale al catalogo`);
 }, { con35a: false });
+
+sezione('C1. 35b: anon non tocca più la tabella, le RPC funzionano ancora', async (db) => {
+  const nega = async (sql) => /permission denied/i.test((await comeAnon(db, () => errore(db.query(sql)))) || '');
+  await iscritto(db, 'sidR', 'Stella', 'h');
+  const id = await notif(db, { nick: 'Stella', sid: 'sidR', msg: 'prima' });
+  // Prima della 35b la tabella è aperta, come sul DB vero.
+  const aperta = await comeAnon(db, () => righe(db, `SELECT 1 FROM notifications`));
+  check(aperta.length === 1, 'prima della 35b anon legge (stato di produzione)');
+  await applicaFile(db, F35B);
+  check(await nega(`SELECT * FROM notifications`), 'anon SELECT: permission denied');
+  check(await nega(`INSERT INTO notifications (user_nickname, type, message) VALUES ('x','y','z')`), 'anon INSERT: permission denied');
+  check(await nega(`UPDATE notifications SET read = true`), 'anon UPDATE: permission denied');
+  check(await nega(`DELETE FROM notifications`), 'anon DELETE: permission denied');
+  const q = await comeAnon(db, () => errore(db.query(`SELECT * FROM notifications`)));
+  check(/permission denied/i.test(q || ''), 'authenticated chiuso come anon (privilegi)', q);
+  await db.query('SET ROLE authenticated');
+  const ea = await errore(db.query(`SELECT * FROM notifications`));
+  await db.query('RESET ROLE');
+  check(/permission denied/i.test(ea || ''), 'authenticated SELECT: permission denied', ea);
+  check((await righe(db, `SELECT 1 FROM pg_policies WHERE tablename = 'notifications'`)).length === 0, 'nessuna policy rimasta');
+  const l = await comeAnon(db, () => righe(db, `SELECT * FROM get_my_notifications('sidR', 'h', 'Stella')`));
+  check(l.length === 1, 'get_my_notifications funziona da anon', l);
+  await comeAnon(db, () => chiama(db, 'mark_my_notification_read', { p_id: id, ...G('sidR', 'Stella', 'h') }));
+  check((await uno(db, `SELECT read FROM notifications WHERE id = $1`, [id])).read === true, 'mark_my_notification_read funziona da anon');
+  const n = await comeAnon(db, () => chiama(db, 'notify_event', { ...G('sidR', 'Stella', 'h'), p_tipo: 'ritual_join', p_oggetto: 'zz' }));
+  check(n !== undefined, 'notify_event chiamabile da anon', n);
+  const pid = (await uno(db, `INSERT INTO consciousness_posts (author_nickname) VALUES ('Stella') RETURNING id`)).id;
+  const rp = await comeAnon(db, () => errore(chiama(db, 'register_my_post', { p_post_id: pid, ...G('sidR', 'Stella', 'h') })));
+  check(rp === null, 'register_my_post funziona da anon', rp);
+}, { con35a: true, con35b: false });
+
+sezione('C2. 35b è idempotente e il ritorno riapre come prima', async (db) => {
+  await iscritto(db, 'sidR', 'Stella', 'h');
+  await notif(db, { nick: 'Stella', sid: 'sidR', msg: 'x' });
+  await applicaFile(db, F35B);
+  check(!(await errore(applicaFile(db, F35B))), '35b due volte: nessun errore');
+  check(!(await errore(applicaFile(db, 'supabase/sql/35b_ritorno.sql'))), '35b_ritorno si applica');
+  const pol = await righe(db, `SELECT policyname, cmd, roles::text AS roles, qual, with_check FROM pg_policies WHERE tablename = 'notifications'`);
+  check(pol.length === 1 && pol[0].policyname === 'allow all' && pol[0].cmd === 'ALL' && pol[0].qual === 'true' && pol[0].with_check === 'true', 'policy "allow all" tornata', pol);
+  const gr = (await righe(db, `SELECT grantee, privilege_type FROM information_schema.role_table_grants WHERE table_name = 'notifications' AND grantee IN ('anon','authenticated') ORDER BY 1,2`)).map((r) => r.grantee + ':' + r.privilege_type);
+  check(gr.length === 14, 'sette privilegi per anon e authenticated', gr);
+  const r = await comeAnon(db, () => righe(db, `SELECT * FROM notifications`));
+  check(r.length === 1, 'anon torna a leggere');
+  check(!(await errore(applicaFile(db, 'supabase/sql/35b_ritorno.sql'))), '35b_ritorno due volte: nessun errore');
+}, { con35a: true });
 
 // ── esecuzione ──
 (async () => {

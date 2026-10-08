@@ -128,6 +128,9 @@ const SCHEMA_TELEPATIA = `
     type text NOT NULL, message text NOT NULL,
     read boolean DEFAULT false, created_at timestamptz DEFAULT now());
   GRANT ALL ON notifications TO anon, authenticated;
+  -- Come sul DB vero (catalogo 08/10): RLS attiva con la sola policy "allow all" per tutti.
+  ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY "allow all" ON notifications FOR ALL TO PUBLIC USING (true) WITH CHECK (true);
   CREATE TABLE consciousness_posts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), author_nickname text, created_at timestamptz DEFAULT now());
   CREATE TABLE consciousness_comments (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), post_id uuid, author_nickname text, content text, created_at timestamptz DEFAULT now());
   CREATE TABLE magic_links (email text); CREATE TABLE password_resets (email text);
@@ -159,6 +162,7 @@ const F31 = 'supabase/sql/31_account_cancellato_rituali.sql';
 const F32A = 'supabase/sql/32a_inviti_telepatia_offline.sql';
 const F32B = 'supabase/sql/32b_chiudi_inviti_diretti.sql';
 const F35A = 'supabase/sql/35a_notifiche_server.sql';
+const F35B = 'supabase/sql/35b_chiudi_notifiche.sql';
 const CATALOGO_35 = 'docs/superpowers/plans/catalogo-notifiche-35.txt';
 
 // Le cinque funzioni com'erano sul DB vero prima della 35a (catalogo), nell'ordine del file.
@@ -169,7 +173,7 @@ function funzioniCatalogo35() {
 
 // Per gli inviti telepatia: catena dei rituali fino alla 30_, schema della telepatia, 31_
 // (l'ultima delete_my_account su main), poi le migration nuove se richieste.
-async function creaDbTelepatia({ con32a = true, con32b = false, con35a = false } = {}) {
+async function creaDbTelepatia({ con32a = true, con32b = false, con35a = false, con35b = false } = {}) {
   const db = await creaDbLocale();
   await db.exec(SCHEMA_TELEPATIA);
   await applicaFile(db, F31);
@@ -178,7 +182,8 @@ async function creaDbTelepatia({ con32a = true, con32b = false, con35a = false }
   // send_private_message non è in nessuna migration caricata qui: si installa la versione del catalogo.
   await db.exec(funzioniCatalogo35().find((f) => f.includes('FUNCTION public.send_private_message(')) + ';');
   if (con35a) await applicaFile(db, F35A);
+  if (con35a && con35b) await applicaFile(db, F35B);
   return db;
 }
 
-module.exports = { creaDbLocale, creaDbTelepatia, applicaFile, RUOLO_SERVIZIO, F31, F32A, F32B, F35A, funzioniCatalogo35 };
+module.exports = { creaDbLocale, creaDbTelepatia, applicaFile, RUOLO_SERVIZIO, F31, F32A, F32B, F35A, F35B, funzioniCatalogo35 };
