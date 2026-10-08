@@ -126,7 +126,8 @@ const SCHEMA_TELEPATIA = `
     type text NOT NULL, message text NOT NULL,
     read boolean DEFAULT false, created_at timestamptz DEFAULT now());
   GRANT ALL ON notifications TO anon, authenticated;
-  CREATE TABLE consciousness_posts (author_nickname text); CREATE TABLE consciousness_comments (author_nickname text);
+  CREATE TABLE consciousness_posts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), author_nickname text, created_at timestamptz DEFAULT now());
+  CREATE TABLE consciousness_comments (author_nickname text);
   CREATE TABLE magic_links (email text); CREATE TABLE password_resets (email text);
   CREATE TABLE content_reports (reporter_nickname text);
 
@@ -155,16 +156,18 @@ const SCHEMA_TELEPATIA = `
 const F31 = 'supabase/sql/31_account_cancellato_rituali.sql';
 const F32A = 'supabase/sql/32a_inviti_telepatia_offline.sql';
 const F32B = 'supabase/sql/32b_chiudi_inviti_diretti.sql';
+const F35A = 'supabase/sql/35a_notifiche_server.sql';
 
 // Per gli inviti telepatia: catena dei rituali fino alla 30_, schema della telepatia, 31_
 // (l'ultima delete_my_account su main), poi le migration nuove se richieste.
-async function creaDbTelepatia({ con32a = true, con32b = false } = {}) {
+async function creaDbTelepatia({ con32a = true, con32b = false, con35a = false } = {}) {
   const db = await creaDbLocale();
   await db.exec(SCHEMA_TELEPATIA);
   await applicaFile(db, F31);
   if (con32a) await applicaFile(db, F32A);
   if (con32a && con32b) await applicaFile(db, F32B);
+  if (con35a) await applicaFile(db, F35A);
   return db;
 }
 
-module.exports = { creaDbLocale, creaDbTelepatia, applicaFile, RUOLO_SERVIZIO, F31, F32A, F32B };
+module.exports = { creaDbLocale, creaDbTelepatia, applicaFile, RUOLO_SERVIZIO, F31, F32A, F32B, F35A };
