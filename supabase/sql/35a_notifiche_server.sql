@@ -457,6 +457,11 @@ BEGIN
     -- NUOVO (35): le notifiche destinate al mio telefono (anche quelle con un altro nickname) e
     -- il registro privato di chi ha scritto quali post.
     DELETE FROM notifications           WHERE recipient_session_id = v_sid;
+
+    -- NUOVO (35): le notifiche che HA MANDATO ad altri restano a chi le ha ricevute, ma senza
+    -- più il suo nome né il suo telefono.
+    UPDATE notifications SET sender_session_id = NULL, sender_nickname = 'Utente eliminato'
+     WHERE sender_session_id = v_sid OR sender_nickname = p_nickname;
     DELETE FROM consciousness_post_autori WHERE session_id = v_sid;
 
     -- NUOVO (30): le sue candele e il nome accanto, in ogni rituale.
