@@ -4673,23 +4673,26 @@ function GlobalAwakeningPlatform() {
     if (!nickname) return;
     const loadNotifications = async () => {
       const {
-        data
-      } = await supabase.from('notifications').select('*').eq('user_nickname', nickname).eq('read', false).order('created_at', {
-        ascending: false
+        data,
+        error
+      } = await supabase.rpc('get_my_notifications', {
+        p_session_id: sessionIdRef.current || sessionId,
+        p_password_hash: passwordHashRef.current || null,
+        p_nickname: nickname
       });
-      if (data) setNotifItems(data);
+      if (error || !Array.isArray(data)) return;
+      setNotifItems(data);
     };
     loadNotifications();
     const interval = setInterval(loadNotifications, 10000);
     return () => clearInterval(interval);
   }, [nickname]);
   const markOneNotifRead = async (notif, tabTarget) => {
-    await fetch(`${SUPABASE_URL}/rest/v1/notifications?id=eq.${notif.id}`, {
-      method: 'PATCH',
-      headers: SB_HEADERS,
-      body: JSON.stringify({
-        read: true
-      })
+    await supabase.rpc('mark_my_notification_read', {
+      p_id: notif.id,
+      p_session_id: sessionIdRef.current || sessionId,
+      p_password_hash: passwordHashRef.current || null,
+      p_nickname: nickname
     });
     setNotifItems(prev => prev.filter(n => n.id !== notif.id));
     setShowNotifPanel(false);
@@ -4990,6 +4993,17 @@ function GlobalAwakeningPlatform() {
       await iscriviPush();
     } catch (_) {}
   };
+  const notificaEvento = async (tipo, oggetto) => {
+    try {
+      await supabase.rpc('notify_event', {
+        p_session_id: sessionIdRef.current || sessionId,
+        p_password_hash: passwordHashRef.current || null,
+        p_nickname: nickname,
+        p_tipo: tipo,
+        p_oggetto: oggetto
+      });
+    } catch (_) {}
+  };
   const joiningRef = useRef(new Set());
   const joinRitual = async ritualId => {
     const ritual = rituals.find(r => r.id === ritualId);
@@ -5012,11 +5026,7 @@ function GlobalAwakeningPlatform() {
       participants: [...r.participants, sessionId]
     } : r));
     if (ritual.creator && ritual.creator !== nickname) {
-      await supabase.from('notifications').insert({
-        user_nickname: ritual.creator,
-        type: 'ritual_join',
-        message: `${nickname} si è unito/a al tuo rituale "${ritual.name}"`
-      });
+      await notificaEvento('ritual_join', String(ritualId));
     }
     await valutaPush();
   };
@@ -5298,11 +5308,7 @@ function GlobalAwakeningPlatform() {
     }));
     const ritual = rituals.find(r => r.id === ritualId);
     if (ritual && ritual.creator && ritual.creator !== nickname) {
-      await supabase.from('notifications').insert({
-        user_nickname: ritual.creator,
-        type: 'ritual_comment',
-        message: `${nickname} ha commentato il tuo rituale "${ritual.name}"`
-      });
+      await notificaEvento('ritual_comment', String(ritualId));
     }
   };
   const createPost = async () => {
@@ -5318,6 +5324,7 @@ function GlobalAwakeningPlatform() {
     setNewPostContent('');
     setSavingContent(true);
     const {
+      data,
       error
     } = await supabase.from('consciousness_posts').insert({
       author_nickname: nickname,
@@ -5328,6 +5335,18 @@ function GlobalAwakeningPlatform() {
       setPosts(prev => prev.filter(p => p.id !== optimistic.id));
       setNewPostContent(content);
       showErrorToast();
+      return;
+    }
+    const nuovo = Array.isArray(data) ? data[0] : data;
+    if (nuovo && nuovo.id) {
+      try {
+        await supabase.rpc('register_my_post', {
+          p_post_id: nuovo.id,
+          p_session_id: sessionIdRef.current || sessionId,
+          p_password_hash: passwordHashRef.current || null,
+          p_nickname: nickname
+        });
+      } catch (_) {}
     }
   };
   const togglePostComments = async postId => {
@@ -5385,11 +5404,7 @@ function GlobalAwakeningPlatform() {
     }
     const post = posts.find(p => p.id === postId);
     if (post && post.author_nickname !== nickname) {
-      await supabase.from('notifications').insert({
-        user_nickname: post.author_nickname,
-        type: 'comment',
-        message: `${nickname} ha commentato il tuo post`
-      });
+      await notificaEvento('comment', String(postId));
     }
   };
   const renderFooter = () => React.createElement("footer", {
@@ -6682,7 +6697,7 @@ ${ritual.description || ''}`
       height: '100%',
       objectFit: 'cover'
     }
-  }), onlineUsers.map(user => {
+  }), onlineUsers.filter(u => !isBlocked(u.nickname)).map(user => {
     const x = (user.lng + 180) / 360 * 100;
     const y = (90 - user.lat) / 180 * 100;
     return React.createElement(React.Fragment, {
@@ -6719,7 +6734,7 @@ ${ritual.description || ''}`
       maxHeight: '300px',
       overflowY: 'auto'
     }
-  }, onlineUsers.map(user => React.createElement("div", {
+  }, onlineUsers.filter(u => !isBlocked(u.nickname)).map(user => React.createElement("div", {
     key: user.id,
     className: "flex items-center gap-3 p-3 rounded-xl transition-all",
     style: {

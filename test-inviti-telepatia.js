@@ -15,7 +15,7 @@
  */
 
 const { chromium } = require('playwright');
-const { purge } = require('./test-helpers');
+const { purge, getServiceKey } = require('./test-helpers');
 
 const APP_URL      = 'http://localhost:4321/app.html';
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
@@ -52,6 +52,16 @@ async function sbFetch(path, opts = {}) {
   try { return await res.json(); } catch { return null; }
 }
 
+/** Lettura con la chiave di servizio (bypassa RLS). Senza chiave restituisce null. */
+async function sbFetchServizio(path) {
+  const key = getServiceKey();
+  if (!key) return null;
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: { apikey: key, Authorization: `Bearer ${key}` },
+  });
+  try { return await res.json(); } catch { return null; }
+}
+
 async function loginAsGuest(page, nick) {
   await page.goto(APP_URL);
   await page.waitForSelector('button:has-text("Ospite"), button:has-text("Guest")', { timeout: TIMEOUT });
@@ -72,10 +82,11 @@ async function cleanup() {
   try {
     await sbFetch(`online_users?nickname=eq.${encodeURIComponent(NICK_A)}`, { method: 'DELETE' });
     await sbFetch(`online_users?nickname=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
-    await sbFetch(`notifications?user_nickname=eq.${encodeURIComponent(NICK_A)}`, { method: 'DELETE' });
-    await sbFetch(`notifications?user_nickname=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
-    // Dalla 32b la tabella non è più scrivibile con la chiave pubblica: pulizia con la chiave di servizio.
+    // Dalla 32b (inviti) e dalla 35b (notifiche) le tabelle non sono più scrivibili con la chiave
+    // pubblica: pulizia con la chiave di servizio.
     await purge(SUPABASE_URL, [
+      `notifications?user_nickname=eq.${encodeURIComponent(NICK_A)}`,
+      `notifications?user_nickname=eq.${encodeURIComponent(NICK_B)}`,
       `telepathy_invites?from_name=eq.${encodeURIComponent(NICK_A)}`,
       `telepathy_invites?from_name=eq.${encodeURIComponent(NICK_B)}`,
     ], { label: 'inviti-telepatia' });
@@ -363,8 +374,9 @@ async function cleanup() {
       );
       pass('A riceve notifica "ha rifiutato il tuo invito"');
     } catch {
-      // Verifica diretta nel DB
-      const notifs = await sbFetch(`notifications?user_nickname=eq.${encodeURIComponent(NICK_A)}&type=eq.telepathy_declined&select=message`);
+      // Verifica diretta nel DB, con la chiave di servizio: dalla 35b le notifiche non si
+      // leggono più con la chiave pubblica (senza chiave la verifica dà rosso, non un falso verde).
+      const notifs = await sbFetchServizio(`notifications?user_nickname=eq.${encodeURIComponent(NICK_A)}&type=eq.telepathy_declined&select=message`);
       if (notifs && notifs.length > 0) {
         pass(`A ha notifica rifiuto in DB: "${notifs[0].message}"`);
       } else {

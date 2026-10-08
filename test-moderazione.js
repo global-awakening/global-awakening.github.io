@@ -65,8 +65,6 @@ async function cleanup() {
   await deleteTestAccount(EMAIL_B);
   await sb(`private_messages?sender_name=eq.${e(NICK_A)}`, { method: 'DELETE' });
   await sb(`private_messages?sender_name=eq.${e(NICK_B)}`, { method: 'DELETE' });
-  await sb(`notifications?user_nickname=eq.${e(NICK_A)}`, { method: 'DELETE' });
-  await sb(`notifications?user_nickname=eq.${e(NICK_B)}`, { method: 'DELETE' });
 
   // user_blocks e content_reports hanno RLS ON senza policy: la anon key non cancella
   // nulla (PostgREST risponde comunque 2xx). Serve la chiave privilegiata via purge().
@@ -74,7 +72,10 @@ async function cleanup() {
   // Senza chiave, purge() salta in silenzio e il test 12 lascerebbe 21 segnalazioni
   // nel DB — inquinando la coda che scripts/segnalazioni.js deve leggere — mentre il
   // test resterebbe verde. Meglio un rosso onesto.
+  // Anche notifications, dalla 35b, non è più accessibile con la chiave pubblica.
   const res = await purge(SUPABASE_URL, [
+    `notifications?user_nickname=eq.${e(NICK_A)}`,
+    `notifications?user_nickname=eq.${e(NICK_B)}`,
     `user_blocks?blocker_nickname=eq.${e(NICK_A)}`,
     `user_blocks?blocker_nickname=eq.${e(NICK_B)}`,
     `content_reports?reporter_nickname=eq.${e(NICK_A)}`,
