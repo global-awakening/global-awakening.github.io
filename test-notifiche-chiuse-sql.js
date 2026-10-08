@@ -158,6 +158,7 @@ const post = async (db, nick, minutiFa = 1) => (await uno(db,
 const commentoPost = (db, pid, nick, minutiFa = 1) => db.query(
   `INSERT INTO consciousness_comments (post_id, author_nickname, content, created_at) VALUES ($1, $2, 'ciao', now() - make_interval(mins => $3))`, [pid, nick, minutiFa]);
 const notifica = (db, sid, nick, tipo, ogg, hash = null) => chiama(db, 'notify_event', { ...G(sid, nick, hash), p_tipo: tipo, p_oggetto: String(ogg) });
+const register = (db, pid, sid, nick) => chiama(db, 'register_my_post', { p_post_id: pid, ...G(sid, nick) });
 const tutte = (db) => righe(db, `SELECT * FROM notifications ORDER BY created_at`);
 
 sezione('N1. ritual_join: fatto vero, falso, inesistente', async (db) => {
@@ -224,15 +225,15 @@ sezione('N4. a_me_stesso, tipo sconosciuto, blocchi, raffica', async (db) => {
   check(t.inviata === false && t.motivo === 'tipo_sconosciuto', 'tipo_sconosciuto', t);
   await db.query(`INSERT INTO user_blocks (blocker_nickname, blocked_nickname) VALUES ('Creatrice', 'Luna')`);
   const b1 = await notifica(db, 'sidL', 'Luna', 'ritual_join', rid);
-  check(b1.motivo === 'bloccato', 'bloccato da lei', b1);
+  check(b1.inviata === false && b1.motivo === 'non_inviata', 'bloccato da lei: non_inviata (il blocco non si rivela)', b1);
   await db.query(`DELETE FROM user_blocks`);
   await db.query(`INSERT INTO user_blocks (blocker_nickname, blocked_nickname) VALUES ('Luna', 'Creatrice')`);
   const b2 = await notifica(db, 'sidL', 'Luna', 'ritual_join', rid);
-  check(b2.motivo === 'bloccato', 'bloccata da me, senso inverso', b2);
+  check(b2.inviata === false && b2.motivo === 'non_inviata', 'bloccata da me, senso inverso', b2);
   await db.query(`DELETE FROM user_blocks`);
   await db.query(`INSERT INTO telepathy_invite_blocks (blocker_session, blocked_session) VALUES ('sidC', 'sidL')`);
   const b3 = await notifica(db, 'sidL', 'Luna', 'ritual_join', rid);
-  check(b3.motivo === 'bloccato', 'blocco per session', b3);
+  check(b3.inviata === false && b3.motivo === 'non_inviata', 'blocco per session', b3);
   await db.query(`DELETE FROM telepathy_invite_blocks`);
   check((await tutte(db)).length === 0, 'nessuna riga creata finora');
   const ok = await notifica(db, 'sidL', 'Luna', 'ritual_join', rid);
@@ -272,6 +273,59 @@ sezione('N5. register_my_post', async (db) => {
   check(await reg(pr, 'sidR', 'Falso', 'h') === true, 'registrato: vale il nickname del profilo, non quello passato');
   const e = await errore(reg(await post(db, 'Stella'), 'sidR', 'Stella', 'sbagliato'));
   check(/Auth failed/.test(e || ''), 'hash sbagliato: Auth failed', e);
+});
+
+sezione('N6. tutti i tipi: blocchi, raffica, sid ruotato, tetto, id malformati', async (db) => {
+  const rid = await rituale(db, { partecipanti: ['sidL'] });
+  await commentoRituale(db, rid, 'Luna');
+  const pid = await post(db, 'Autrice');
+  await register(db, pid, 'sidAut', 'Autrice');
+  await commentoPost(db, pid, 'Luna');
+  const casi = [['ritual_comment', rid, 'sidC', 'Creatrice'], ['comment', pid, 'sidAut', 'Autrice']];
+  for (const [tipo, ogg, dsid, dnick] of casi) {
+    await db.query('DELETE FROM notifications'); await db.query('DELETE FROM user_blocks'); await db.query('DELETE FROM telepathy_invite_blocks');
+    await db.query("INSERT INTO user_blocks (blocker_nickname, blocked_nickname) VALUES ($1, 'Luna')", [dnick]);
+    const b1 = await notifica(db, 'sidL', 'Luna', tipo, ogg);
+    check(b1.inviata === false && b1.motivo === 'non_inviata', tipo + ': bloccato da lei', b1);
+    await db.query('DELETE FROM user_blocks');
+    await db.query("INSERT INTO user_blocks (blocker_nickname, blocked_nickname) VALUES ('Luna', $1)", [dnick]);
+    const b2 = await notifica(db, 'sidL', 'Luna', tipo, ogg);
+    check(b2.inviata === false && b2.motivo === 'non_inviata', tipo + ': bloccata da me', b2);
+    await db.query('DELETE FROM user_blocks');
+    await db.query("INSERT INTO telepathy_invite_blocks (blocker_session, blocked_session) VALUES ($1, 'sidL')", [dsid]);
+    const b3 = await notifica(db, 'sidL', 'Luna', tipo, ogg);
+    check(b3.inviata === false && b3.motivo === 'non_inviata', tipo + ': blocco per session', b3);
+    check((await tutte(db)).length === 0, tipo + ': nessuna riga col blocco');
+    await db.query('DELETE FROM telepathy_invite_blocks');
+    check((await notifica(db, 'sidL', 'Luna', tipo, ogg)).inviata === true, tipo + ': inviata');
+    const bis = await notifica(db, 'sidL', 'Luna', tipo, ogg);
+    check(bis.motivo === 'gia_inviata', tipo + ': identica: gia_inviata', bis);
+    const ruotato = await notifica(db, 'sidL2', 'Luna', tipo, ogg);
+    check(ruotato.motivo === 'gia_inviata', tipo + ': sid ruotato, stesso nickname: gia_inviata', ruotato);
+    for (const [sid, nick] of [['sidA1', 'Anna'], ['sidA2', 'Berta']]) {
+      if (tipo === 'ritual_comment') await commentoRituale(db, ogg, nick); else await commentoPost(db, ogg, nick);
+      check((await notifica(db, sid, nick, tipo, ogg)).inviata === true, tipo + ': ' + nick + ' inviata');
+    }
+    if (tipo === 'ritual_comment') await commentoRituale(db, ogg, 'Carla'); else await commentoPost(db, ogg, 'Carla');
+    const tetto = await notifica(db, 'sidA3', 'Carla', tipo, ogg);
+    check(tetto.inviata === false && tetto.motivo === 'gia_inviata', tipo + ': quarta da un altro mittente: tetto di 3', tetto);
+    check((await tutte(db)).length === 3, tipo + ': tre righe e basta');
+  }
+  const nr = await notifica(db, 'sidL', 'Luna', 'ritual_comment', 999999);
+  check(nr.motivo === 'non_trovato', 'ritual_comment su rituale inesistente: non_trovato', nr);
+  for (const [tipo, ogg] of [['ritual_join', 'abc'], ['ritual_comment', 'abc'], ['ritual_join', '99999999999999999999'], ['ritual_comment', '99999999999999999999'], ['comment', 'abc']]) {
+    const m = await notifica(db, 'sidL', 'Luna', tipo, ogg);
+    check(m.inviata === false && m.motivo === 'non_trovato', tipo + " con id malformato '" + ogg + "': non_trovato", m);
+  }
+});
+
+sezione('N7. autore registrato trovato anche con maiuscole e spazi diversi', async (db) => {
+  await iscritto(db, 'sidP', 'Paola', 'h');
+  const p = await post(db, ' paola ');
+  await commentoPost(db, p, 'Mario');
+  const r = await notifica(db, 'sidM', 'Mario', 'comment', p);
+  check(r.inviata === true, 'post con autore scritto diversamente: arriva al profilo', r);
+  check((await tutte(db))[0].recipient_session_id === 'sidP', 'telefono del profilo');
 });
 
 sezione('P2. privilegi di notify_event e register_my_post', async (db) => {
