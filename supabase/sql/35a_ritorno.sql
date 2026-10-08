@@ -6,6 +6,8 @@
 BEGIN;
 
 -- ── 1. Funzioni nuove: tolte ───────────────────────────────────────────────
+DROP FUNCTION IF EXISTS public.notify_event(text, text, text, text, text);
+DROP FUNCTION IF EXISTS public.register_my_post(uuid, text, text, text);
 DROP FUNCTION IF EXISTS public.mark_my_notification_read(uuid, text, text, text);
 DROP FUNCTION IF EXISTS public.get_my_notifications(text, text, text);
 DROP FUNCTION IF EXISTS public.notifica_bloccata(text, text, text, text);
@@ -21,7 +23,8 @@ DROP INDEX IF EXISTS public.notifications_nickname_non_lette;
 ALTER TABLE public.notifications
   DROP COLUMN IF EXISTS recipient_session_id,
   DROP COLUMN IF EXISTS sender_session_id,
-  DROP COLUMN IF EXISTS sender_nickname;
+  DROP COLUMN IF EXISTS sender_nickname,
+  DROP COLUMN IF EXISTS oggetto;
 
 NOTIFY pgrst, 'reload schema';
 COMMIT;

@@ -11,7 +11,8 @@ BEGIN;
 ALTER TABLE public.notifications
   ADD COLUMN IF NOT EXISTS recipient_session_id text,
   ADD COLUMN IF NOT EXISTS sender_session_id    text,
-  ADD COLUMN IF NOT EXISTS sender_nickname      text;
+  ADD COLUMN IF NOT EXISTS sender_nickname      text,
+  ADD COLUMN IF NOT EXISTS oggetto              text;  -- id del rituale/post (serve solo all'anti-raffica di notify_event)
 
 CREATE INDEX IF NOT EXISTS notifications_recipient_non_lette
   ON public.notifications (recipient_session_id) WHERE read = false;
@@ -86,6 +87,119 @@ REVOKE ALL ON FUNCTION public.get_my_notifications(text, text, text)            
 REVOKE ALL ON FUNCTION public.mark_my_notification_read(uuid, text, text, text)    FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_my_notifications(text, text, text)            TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.mark_my_notification_read(uuid, text, text, text) TO anon, authenticated;
+
+-- ════ D. Creazione da fatto verificato ═══════════════════════════════════════
+-- Il server trova il destinatario, controlla il fatto e scrive il testo. L'app non decide nulla.
+-- p_oggetto è text (non uuid): i rituali hanno id bigint, i post uuid. Un valore che non è un id
+-- valido per quel tipo vale «non_trovato».
+CREATE OR REPLACE FUNCTION public.notify_event(p_session_id text, p_password_hash text, p_nickname text, p_tipo text, p_oggetto text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_nome      text;
+  v_dest_sid  text;
+  v_dest_nick text;
+  v_ogg       text;
+  v_ritual    rituals%ROWTYPE;
+  v_post      consciousness_posts%ROWTYPE;
+  v_fatto     boolean;
+  v_msg       text;
+BEGIN
+  v_nome := notifica_chi_sono(p_session_id, p_password_hash, p_nickname);
+
+  IF p_tipo IS NULL OR p_tipo NOT IN ('ritual_join', 'ritual_comment', 'comment') THEN
+    RETURN jsonb_build_object('ok', true, 'inviata', false, 'motivo', 'tipo_sconosciuto');
+  END IF;
+
+  -- Oggetto e destinatario.
+  IF p_tipo IN ('ritual_join', 'ritual_comment') THEN
+    BEGIN
+      SELECT * INTO v_ritual FROM rituals WHERE id = p_oggetto::bigint;
+    EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+      v_ritual := NULL;
+    END;
+    IF v_ritual.id IS NULL THEN
+      RETURN jsonb_build_object('ok', true, 'inviata', false, 'motivo', 'non_trovato');
+    END IF;
+    v_ogg := v_ritual.id::text;
+    v_dest_sid := v_ritual.creator_id;
+    v_dest_nick := v_ritual.creator;
+  ELSE
+    BEGIN
+      SELECT * INTO v_post FROM consciousness_posts WHERE id = p_oggetto::uuid;
+    EXCEPTION WHEN invalid_text_representation THEN
+      v_post := NULL;
+    END;
+    IF v_post.id IS NULL THEN
+      RETURN jsonb_build_object('ok', true, 'inviata', false, 'motivo', 'non_trovato');
+    END IF;
+    v_ogg := v_post.id::text;
+    v_dest_nick := v_post.author_nickname;
+    SELECT a.session_id INTO v_dest_sid FROM consciousness_post_autori a WHERE a.post_id = v_post.id;
+    IF v_dest_sid IS NULL THEN
+      SELECT p.session_id INTO v_dest_sid FROM profiles p WHERE p.nickname = v_post.author_nickname;
+    END IF;
+    IF v_dest_sid IS NULL THEN  -- post di un ospite di cui non sappiamo il telefono
+      RETURN jsonb_build_object('ok', true, 'inviata', false, 'motivo', 'non_trovato');
+    END IF;
+  END IF;
+
+  -- Il fatto.
+  IF p_tipo = 'ritual_join' THEN
+    v_fatto := v_ritual.participants @> jsonb_build_array(p_session_id);
+    v_msg := v_nome || ' si è unito/a al tuo rituale "' || v_ritual.name || '"';
+  ELSIF p_tipo = 'ritual_comment' THEN
+    v_fatto := EXISTS (SELECT 1 FROM ritual_comments c WHERE c.ritual_id = v_ritual.id
+                         AND c.author_nickname = v_nome AND c.created_at > now() - interval '10 minutes');
+    v_msg := v_nome || ' ha commentato il tuo rituale "' || v_ritual.name || '"';
+  ELSE
+    v_fatto := EXISTS (SELECT 1 FROM consciousness_comments c WHERE c.post_id = v_post.id
+                         AND c.author_nickname = v_nome AND c.created_at > now() - interval '10 minutes');
+    v_msg := v_nome || ' ha commentato il tuo post';
+  END IF;
+  IF NOT coalesce(v_fatto, false) THEN
+    RETURN jsonb_build_object('ok', true, 'inviata', false, 'motivo', 'fatto_non_verificato');
+  END IF;
+
+  IF v_dest_sid = p_session_id OR v_dest_nick = v_nome THEN
+    RETURN jsonb_build_object('ok', true, 'inviata', false, 'motivo', 'a_me_stesso');
+  END IF;
+  IF notifica_bloccata(p_session_id, v_nome, v_dest_sid, v_dest_nick) THEN
+    RETURN jsonb_build_object('ok', true, 'inviata', false, 'motivo', 'bloccato');
+  END IF;
+
+  -- Anti-raffica: una sola notifica identica (tipo + oggetto + mittente → destinatario) ogni 10 minuti.
+  -- Il lock serializza due chiamate identiche in corsa.
+  PERFORM pg_advisory_xact_lock(hashtext('notify_event:' || p_tipo || ':' || v_ogg || ':' || p_session_id || ':' || v_dest_sid));
+  IF EXISTS (SELECT 1 FROM notifications n
+              WHERE n.type = p_tipo AND n.oggetto = v_ogg AND n.sender_session_id = p_session_id
+                AND n.recipient_session_id = v_dest_sid AND n.created_at > now() - interval '10 minutes') THEN
+    RETURN jsonb_build_object('ok', true, 'inviata', false, 'motivo', 'gia_inviata');
+  END IF;
+
+  INSERT INTO notifications (user_nickname, recipient_session_id, sender_session_id, sender_nickname, type, message, oggetto)
+  VALUES (v_dest_nick, v_dest_sid, p_session_id, v_nome, p_tipo, v_msg, v_ogg);
+  RETURN jsonb_build_object('ok', true, 'inviata', true, 'motivo', NULL);
+END $$;
+
+-- Chi è l'autore di un post: l'app lo dice subito dopo averlo scritto; il server controlla che il
+-- post sia davvero del chiamante (nickname effettivo), recente (5 minuti) e senza autore già registrato.
+CREATE OR REPLACE FUNCTION public.register_my_post(p_post_id uuid, p_session_id text, p_password_hash text, p_nickname text)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_nome text; v_righe integer;
+BEGIN
+  v_nome := notifica_chi_sono(p_session_id, p_password_hash, p_nickname);
+  INSERT INTO consciousness_post_autori (post_id, session_id)
+  SELECT p.id, p_session_id FROM consciousness_posts p
+   WHERE p.id = p_post_id AND p.author_nickname = v_nome AND p.created_at > now() - interval '5 minutes'
+  ON CONFLICT (post_id) DO NOTHING;
+  GET DIAGNOSTICS v_righe = ROW_COUNT;
+  RETURN v_righe > 0;
+END $$;
+
+REVOKE ALL ON FUNCTION public.notify_event(text, text, text, text, text)      FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.register_my_post(uuid, text, text, text)        FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.notify_event(text, text, text, text, text)   TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.register_my_post(uuid, text, text, text)     TO anon, authenticated;
 
 NOTIFY pgrst, 'reload schema';
 COMMIT;

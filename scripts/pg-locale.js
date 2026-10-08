@@ -127,7 +127,7 @@ const SCHEMA_TELEPATIA = `
     read boolean DEFAULT false, created_at timestamptz DEFAULT now());
   GRANT ALL ON notifications TO anon, authenticated;
   CREATE TABLE consciousness_posts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), author_nickname text, created_at timestamptz DEFAULT now());
-  CREATE TABLE consciousness_comments (author_nickname text);
+  CREATE TABLE consciousness_comments (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), post_id uuid, author_nickname text, content text, created_at timestamptz DEFAULT now());
   CREATE TABLE magic_links (email text); CREATE TABLE password_resets (email text);
   CREATE TABLE content_reports (reporter_nickname text);
 

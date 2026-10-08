@@ -146,6 +146,146 @@ sezione('S1. schema: colonne, tabella, cascata', async (db) => {
   check((await uno(db, `SELECT count(*)::int n FROM consciousness_post_autori`)).n === 0, 'cancellare il post cancella l\'autore (CASCADE)');
 });
 
+// ── creazione (Task 2) ──
+const rituale = async (db, o = {}) => (await uno(db,
+  `INSERT INTO rituals (creator, creator_id, name, type, sacred_number, date, time, duration, participants)
+   VALUES ($1, $2, $3, 'consciousness', 11, '2099-01-01', '10:00', 3, $4::jsonb) RETURNING id`,
+  [o.creator || 'Creatrice', o.creatorId || 'sidC', o.name || 'Alba', JSON.stringify(o.partecipanti || [])])).id;
+const commentoRituale = (db, rid, nick, minutiFa = 1) => db.query(
+  `INSERT INTO ritual_comments (ritual_id, author_nickname, content, created_at) VALUES ($1, $2, 'ciao', now() - make_interval(mins => $3))`, [rid, nick, minutiFa]);
+const post = async (db, nick, minutiFa = 1) => (await uno(db,
+  `INSERT INTO consciousness_posts (author_nickname, created_at) VALUES ($1, now() - make_interval(mins => $2)) RETURNING id`, [nick, minutiFa])).id;
+const commentoPost = (db, pid, nick, minutiFa = 1) => db.query(
+  `INSERT INTO consciousness_comments (post_id, author_nickname, content, created_at) VALUES ($1, $2, 'ciao', now() - make_interval(mins => $3))`, [pid, nick, minutiFa]);
+const notifica = (db, sid, nick, tipo, ogg, hash = null) => chiama(db, 'notify_event', { ...G(sid, nick, hash), p_tipo: tipo, p_oggetto: String(ogg) });
+const tutte = (db) => righe(db, `SELECT * FROM notifications ORDER BY created_at`);
+
+sezione('N1. ritual_join: fatto vero, falso, inesistente', async (db) => {
+  const rid = await rituale(db, { partecipanti: ['sidL'] });
+  const r = await notifica(db, 'sidL', 'Luna', 'ritual_join', rid);
+  check(r.ok === true && r.inviata === true && r.motivo === null, 'inviata', r);
+  const n = await tutte(db);
+  check(n.length === 1 && n[0].user_nickname === 'Creatrice' && n[0].recipient_session_id === 'sidC'
+    && n[0].sender_session_id === 'sidL' && n[0].sender_nickname === 'Luna' && n[0].type === 'ritual_join', 'riga completa', n);
+  check(n[0].message === 'Luna si è unito/a al tuo rituale "Alba"', 'testo esatto', n[0].message);
+  const f = await notifica(db, 'sidX', 'Xena', 'ritual_join', rid);
+  check(f.inviata === false && f.motivo === 'fatto_non_verificato', 'sid non fra i partecipanti: fatto_non_verificato', f);
+  const nf = await notifica(db, 'sidL', 'Luna', 'ritual_join', 999999);
+  check(nf.inviata === false && nf.motivo === 'non_trovato', 'rituale inesistente: non_trovato', nf);
+  check((await tutte(db)).length === 1, 'nessuna riga in più');
+});
+
+sezione('N2. ritual_comment: fatto, finestra 10 minuti, testo, nickname effettivo', async (db) => {
+  await iscritto(db, 'sidR', 'Stella', 'h');
+  const rid = await rituale(db);
+  const f = await notifica(db, 'sidR', 'Stella', 'ritual_comment', rid, 'h');
+  check(f.motivo === 'fatto_non_verificato', 'nessun commento: fatto_non_verificato', f);
+  await commentoRituale(db, rid, 'Stella', 11);
+  const v = await notifica(db, 'sidR', 'Stella', 'ritual_comment', rid, 'h');
+  check(v.motivo === 'fatto_non_verificato', 'commento di 11 minuti fa: non vale', v);
+  await commentoRituale(db, rid, 'Stella', 2);
+  const r = await notifica(db, 'sidR', 'NomeFalso', 'ritual_comment', rid, 'h');
+  check(r.inviata === true, 'commento recente: inviata (nickname passato ignorato)', r);
+  const n = await tutte(db);
+  check(n.length === 1 && n[0].message === 'Stella ha commentato il tuo rituale "Alba"' && n[0].sender_nickname === 'Stella'
+    && n[0].recipient_session_id === 'sidC' && n[0].user_nickname === 'Creatrice', 'testo e riga col nickname del profilo', n);
+  const altro = await notifica(db, 'sidQ', 'Quinn', 'ritual_comment', rid);
+  check(altro.motivo === 'fatto_non_verificato', 'il commento di un altro non vale', altro);
+});
+
+sezione('N3. comment: ospite (autore registrato), registrato (profilo), senza autore', async (db) => {
+  await iscritto(db, 'sidP', 'Paola', 'h');
+  const pOsp = await post(db, 'Luna');
+  const pReg = await post(db, 'Paola');
+  const pSenza = await post(db, 'Orfano');
+  await commentoPost(db, pOsp, 'Mario'); await commentoPost(db, pReg, 'Mario'); await commentoPost(db, pSenza, 'Mario');
+  check(await chiama(db, 'register_my_post', { p_post_id: pOsp, ...G('sidL', 'Luna') }) === true, 'autore ospite registrato');
+  const a = await notifica(db, 'sidM', 'Mario', 'comment', pOsp);
+  check(a.inviata === true, 'commento a post di ospite: inviata', a);
+  const b = await notifica(db, 'sidM', 'Mario', 'comment', pReg);
+  check(b.inviata === true, 'commento a post di registrato: inviata (telefono dal profilo)', b);
+  const c = await notifica(db, 'sidM', 'Mario', 'comment', pSenza);
+  check(c.inviata === false && c.motivo === 'non_trovato', 'post di ospite senza autore: non_trovato', c);
+  const n = await righe(db, `SELECT * FROM notifications ORDER BY recipient_session_id`);
+  check(n.length === 2 && n[0].recipient_session_id === 'sidL' && n[1].recipient_session_id === 'sidP', 'due righe, ai telefoni giusti', n);
+  check(n.every((x) => x.message === 'Mario ha commentato il tuo post' && x.type === 'comment' && x.sender_session_id === 'sidM' && x.sender_nickname === 'Mario'), 'testo e mittente', n);
+  check(n[0].user_nickname === 'Luna' && n[1].user_nickname === 'Paola', 'user_nickname = autore');
+  const d = await notifica(db, 'sidM', 'Mario', 'comment', '00000000-0000-0000-0000-000000000000');
+  check(d.motivo === 'non_trovato', 'post inesistente: non_trovato', d);
+  const e = await notifica(db, 'sidQ', 'Quinn', 'comment', pOsp);
+  check(e.motivo === 'fatto_non_verificato', 'senza commento mio: fatto_non_verificato', e);
+});
+
+sezione('N4. a_me_stesso, tipo sconosciuto, blocchi, raffica', async (db) => {
+  const rid = await rituale(db, { partecipanti: ['sidC', 'sidL'] });
+  const s = await notifica(db, 'sidC', 'Creatrice', 'ritual_join', rid);
+  check(s.inviata === false && s.motivo === 'a_me_stesso', 'creatrice che entra nel proprio rituale: a_me_stesso', s);
+  const t = await notifica(db, 'sidL', 'Luna', 'inventato', rid);
+  check(t.inviata === false && t.motivo === 'tipo_sconosciuto', 'tipo_sconosciuto', t);
+  await db.query(`INSERT INTO user_blocks (blocker_nickname, blocked_nickname) VALUES ('Creatrice', 'Luna')`);
+  const b1 = await notifica(db, 'sidL', 'Luna', 'ritual_join', rid);
+  check(b1.motivo === 'bloccato', 'bloccato da lei', b1);
+  await db.query(`DELETE FROM user_blocks`);
+  await db.query(`INSERT INTO user_blocks (blocker_nickname, blocked_nickname) VALUES ('Luna', 'Creatrice')`);
+  const b2 = await notifica(db, 'sidL', 'Luna', 'ritual_join', rid);
+  check(b2.motivo === 'bloccato', 'bloccata da me, senso inverso', b2);
+  await db.query(`DELETE FROM user_blocks`);
+  await db.query(`INSERT INTO telepathy_invite_blocks (blocker_session, blocked_session) VALUES ('sidC', 'sidL')`);
+  const b3 = await notifica(db, 'sidL', 'Luna', 'ritual_join', rid);
+  check(b3.motivo === 'bloccato', 'blocco per session', b3);
+  await db.query(`DELETE FROM telepathy_invite_blocks`);
+  check((await tutte(db)).length === 0, 'nessuna riga creata finora');
+  const ok = await notifica(db, 'sidL', 'Luna', 'ritual_join', rid);
+  check(ok.inviata === true, 'sbloccato: inviata', ok);
+  const bis = await notifica(db, 'sidL', 'Luna', 'ritual_join', rid);
+  check(bis.inviata === false && bis.motivo === 'gia_inviata', 'seconda identica: gia_inviata', bis);
+  check((await tutte(db)).length === 1, 'una sola riga');
+  await db.query(`UPDATE notifications SET created_at = now() - interval '11 minutes'`);
+  const dopo = await notifica(db, 'sidL', 'Luna', 'ritual_join', rid);
+  check(dopo.inviata === true, 'dopo 11 minuti si invia di nuovo', dopo);
+  const rid2 = await rituale(db, { partecipanti: ['sidL'], name: 'Tramonto' });
+  const altro = await notifica(db, 'sidL', 'Luna', 'ritual_join', rid2);
+  check(altro.inviata === true, 'altro oggetto: non è identica', altro);
+  const rid3 = await rituale(db, { partecipanti: ['sidK'] });
+  await db.query(`UPDATE rituals SET participants = '["sidL","sidK"]' WHERE id = $1`, [rid3]);
+  const altroMitt = await notifica(db, 'sidK', 'Kira', 'ritual_join', rid3);
+  check(altroMitt.inviata === true, 'altro mittente: non è identica', altroMitt);
+  await iscritto(db, 'sidR', 'Stella', 'h');
+  const e = await errore(notifica(db, 'sidR', 'Stella', 'ritual_join', rid, 'sbagliato'));
+  check(/Auth failed/.test(e || ''), 'registrato con hash sbagliato: Auth failed', e);
+});
+
+sezione('N5. register_my_post', async (db) => {
+  const mio = await post(db, 'Luna', 1);
+  const altrui = await post(db, 'Mario', 1);
+  const vecchio = await post(db, 'Luna', 6);
+  const reg = (pid, sid, nick, h) => chiama(db, 'register_my_post', { p_post_id: pid, ...G(sid, nick, h) });
+  check(await reg(mio, 'sidL', 'Luna') === true, 'post mio e recente: true');
+  check(await reg(altrui, 'sidL', 'Luna') === false, 'post di un altro nickname: false');
+  check(await reg(vecchio, 'sidL', 'Luna') === false, 'post di 6 minuti fa: false');
+  check(await reg('00000000-0000-0000-0000-000000000000', 'sidL', 'Luna') === false, 'post inesistente: false');
+  check(await reg(mio, 'sidUsurpatore', 'Luna') === false, 'seconda registrazione: false');
+  const a = await righe(db, `SELECT session_id FROM consciousness_post_autori`);
+  check(a.length === 1 && a[0].session_id === 'sidL', 'l\'autore resta il primo', a);
+  await iscritto(db, 'sidR', 'Stella', 'h');
+  const pr = await post(db, 'Stella');
+  check(await reg(pr, 'sidR', 'Falso', 'h') === true, 'registrato: vale il nickname del profilo, non quello passato');
+  const e = await errore(reg(await post(db, 'Stella'), 'sidR', 'Stella', 'sbagliato'));
+  check(/Auth failed/.test(e || ''), 'hash sbagliato: Auth failed', e);
+});
+
+sezione('P2. privilegi di notify_event e register_my_post', async (db) => {
+  const rid = await rituale(db, { partecipanti: ['sidL'] });
+  const r = await comeAnon(db, () => notifica(db, 'sidL', 'Luna', 'ritual_join', rid));
+  check(r.inviata === true, 'anon esegue notify_event e crea la notifica (SECURITY DEFINER)', r);
+  const p = await post(db, 'Luna');
+  const ok = await comeAnon(db, () => chiama(db, 'register_my_post', { p_post_id: p, ...G('sidL', 'Luna') }));
+  check(ok === true, 'anon esegue register_my_post');
+  const pubblici = await righe(db, `SELECT proname FROM pg_proc WHERE proname IN ('notify_event','register_my_post')
+    AND has_function_privilege('public', oid, 'EXECUTE')`);
+  check(pubblici.length === 0, 'PUBLIC non ha EXECUTE', pubblici);
+});
+
 sezione('R1. idempotenza e ritorno', async () => {
   const db = await creaDbTelepatia({ con35a: false });
   await db.query(`INSERT INTO notifications (user_nickname, type, message) VALUES ('Luna', 'comment', 'prima')`);
@@ -153,7 +293,7 @@ sezione('R1. idempotenza e ritorno', async () => {
   check(!(await errore(applicaFile(db, F35A))), '35a applicata due volte: nessun errore');
   check(!(await errore(applicaFile(db, 'supabase/sql/35a_ritorno.sql'))), '35a_ritorno si applica');
   check(!(await errore(applicaFile(db, 'supabase/sql/35a_ritorno.sql'))), '35a_ritorno due volte: nessun errore');
-  const f = await righe(db, `SELECT proname FROM pg_proc WHERE proname IN ('notifica_chi_sono','notifica_bloccata','get_my_notifications','mark_my_notification_read')`);
+  const f = await righe(db, `SELECT proname FROM pg_proc WHERE proname IN ('notifica_chi_sono','notifica_bloccata','get_my_notifications','mark_my_notification_read','notify_event','register_my_post')`);
   check(f.length === 0, 'funzioni tolte', f);
   const t = await righe(db, `SELECT 1 FROM pg_tables WHERE tablename = 'consciousness_post_autori'`);
   check(t.length === 0, 'tabella tolta');
