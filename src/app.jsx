@@ -4275,10 +4275,16 @@
 
           useEffect(() => {
             if (!nickname) return;
+            // Lettura via RPC (35a): la tabella non è più leggibile con la chiave pubblica.
+            // Il server restituisce solo le mie non lette, le più recenti prima.
             const loadNotifications = async () => {
-              const { data } = await supabase.from('notifications').select('*')
-                .eq('user_nickname', nickname).eq('read', false).order('created_at', { ascending: false });
-              if (data) setNotifItems(data);
+              const { data, error } = await supabase.rpc('get_my_notifications', {
+                p_session_id: sessionIdRef.current || sessionId,
+                p_password_hash: passwordHashRef.current || null,
+                p_nickname: nickname
+              });
+              if (error || !Array.isArray(data)) return;  // rete o rifiuto: la lista resta com'era
+              setNotifItems(data);
             };
             loadNotifications();
             const interval = setInterval(loadNotifications, 10000);
@@ -4286,10 +4292,13 @@
           }, [nickname]);
 
           const markOneNotifRead = async (notif, tabTarget) => {
-            await fetch(
-              `${SUPABASE_URL}/rest/v1/notifications?id=eq.${notif.id}`,
-              { method: 'PATCH', headers: SB_HEADERS, body: JSON.stringify({ read: true }) }
-            );
+            // «Letta» via RPC (35a): il server la segna solo se la notifica è mia.
+            await supabase.rpc('mark_my_notification_read', {
+              p_id: notif.id,
+              p_session_id: sessionIdRef.current || sessionId,
+              p_password_hash: passwordHashRef.current || null,
+              p_nickname: nickname
+            });
             setNotifItems(prev => prev.filter(n => n.id !== notif.id));
             setShowNotifPanel(false);
             // Una notifica d'invito è «viva» solo se il server ha un invito aperto per me:
@@ -4643,6 +4652,21 @@
             try { await iscriviPush(); } catch (_) { /* si riproverà al prossimo Partecipa */ }
           };
 
+          // Notifiche nate da un'azione (35a): l'app dice solo cosa è successo e su quale oggetto
+          // (id del rituale o del post, come testo); destinatario e testo li sceglie il server.
+          // Esito ed errori si ignorano: non devono mai fermare l'azione di chi la fa.
+          const notificaEvento = async (tipo, oggetto) => {
+            try {
+              await supabase.rpc('notify_event', {
+                p_session_id: sessionIdRef.current || sessionId,
+                p_password_hash: passwordHashRef.current || null,
+                p_nickname: nickname,
+                p_tipo: tipo,
+                p_oggetto: oggetto
+              });
+            } catch (_) { /* in silenzio */ }
+          };
+
           // Adesioni in corso: due tocchi rapidi su «Partecipa» mandavano due notifiche al creatore.
           const joiningRef = useRef(new Set());
           const joinRitual = async (ritualId) => {
@@ -4657,12 +4681,10 @@
             // ricaricamento successivo (fino a 10 secondi in cui sembrava non fosse successo niente).
             setRituals(prev => prev.map(r => r.id === ritualId && !r.participants.includes(sessionId)
               ? { ...r, participants: [...r.participants, sessionId] } : r));
+            // La notifica al creatore la scrive il server (35a): trova lui destinatario e testo e
+            // controlla che io sia davvero fra i partecipanti. Un rifiuto o un errore si ignorano.
             if (ritual.creator && ritual.creator !== nickname) {
-              await supabase.from('notifications').insert({
-                user_nickname: ritual.creator,
-                type: 'ritual_join',
-                message: `${nickname} si è unito/a al tuo rituale "${ritual.name}"`
-              });
+              await notificaEvento('ritual_join', String(ritualId));
             }
             await valutaPush();
           };
@@ -4950,11 +4972,7 @@
             setNewRitualCommentContents(prev => ({ ...prev, [ritualId]: '' }));
             const ritual = rituals.find(r => r.id === ritualId);
             if (ritual && ritual.creator && ritual.creator !== nickname) {
-              await supabase.from('notifications').insert({
-                user_nickname: ritual.creator,
-                type: 'ritual_comment',
-                message: `${nickname} ha commentato il tuo rituale "${ritual.name}"`
-              });
+              await notificaEvento('ritual_comment', String(ritualId));
             }
           };
 
@@ -4971,12 +4989,26 @@
             setPosts(prev => [optimistic, ...prev]);
             setNewPostContent('');
             setSavingContent(true);
-            const { error } = await supabase.from('consciousness_posts').insert({ author_nickname: nickname, content });
+            const { data, error } = await supabase.from('consciousness_posts').insert({ author_nickname: nickname, content });
             setSavingContent(false);
             if (error) {
               setPosts(prev => prev.filter(p => p.id !== optimistic.id));  // rollback
               setNewPostContent(content);                                   // ripristina testo
               showErrorToast();
+              return;
+            }
+            // Il server ricorda chi ha scritto il post (35a): servirà per notificargli i commenti.
+            // L'insert restituisce già la riga (return=representation). Esito ed errori si ignorano.
+            const nuovo = Array.isArray(data) ? data[0] : data;
+            if (nuovo && nuovo.id) {
+              try {
+                await supabase.rpc('register_my_post', {
+                  p_post_id: nuovo.id,
+                  p_session_id: sessionIdRef.current || sessionId,
+                  p_password_hash: passwordHashRef.current || null,
+                  p_nickname: nickname
+                });
+              } catch (_) { /* in silenzio */ }
             }
           };
 
@@ -5012,11 +5044,7 @@
             }
             const post = posts.find(p => p.id === postId);
             if (post && post.author_nickname !== nickname) {
-              await supabase.from('notifications').insert({
-                user_nickname: post.author_nickname,
-                type: 'comment',
-                message: `${nickname} ha commentato il tuo post`
-              });
+              await notificaEvento('comment', String(postId));
             }
           };
 
@@ -5919,7 +5947,7 @@ ${ritual.description || ''}` })}
                           alt={t.worldMapAlt}
                           style={{width: '100%', height: '100%', objectFit: 'cover'}}
                         />
-                        {onlineUsers.map(user => {
+                        {onlineUsers.filter(u => !isBlocked(u.nickname)).map(user => {
                           const x = ((user.lng + 180) / 360) * 100;
                           const y = ((90 - user.lat) / 180) * 100;
 
@@ -5949,7 +5977,7 @@ ${ritual.description || ''}` })}
                       <div id="community-section" className="mt-6">
                         <h3 className="text-xl font-bold text-white mb-3">{t.social.community}</h3>
                         <div className="bg-glass rounded-2xl border-glass p-4" style={{maxHeight: '300px', overflowY: 'auto'}}>
-                          {onlineUsers.map(user => (
+                          {onlineUsers.filter(u => !isBlocked(u.nickname)).map(user => (
                             <div
                               key={user.id}
                               className="flex items-center gap-3 p-3 rounded-xl transition-all"

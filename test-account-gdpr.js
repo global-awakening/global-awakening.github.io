@@ -9,7 +9,7 @@
  * Esecuzione: node test-account-gdpr.js
  * Prerequisito: applicati supabase/sql/06_account_gdpr.sql e 17_fix_delete_account.sql.
  */
-const { getServiceKey, requireServiceKey, createTestAccount, deleteTestAccount } = require('./test-helpers');
+const { purge, getServiceKey, requireServiceKey, createTestAccount, deleteTestAccount } = require('./test-helpers');
 requireServiceKey();
 
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
@@ -61,7 +61,8 @@ async function cleanup() {
   await sb(`consciousness_posts?author_nickname=eq.${encodeURIComponent(NICK)}`, { method: 'DELETE' });
   await sb(`consciousness_posts?author_nickname=eq.${encodeURIComponent('Utente eliminato')}&content=eq.${encodeURIComponent('post di test')}`, { method: 'DELETE' });
   await sb(`private_messages?sender_name=eq.${encodeURIComponent(NICK)}`, { method: 'DELETE' });
-  await sb(`notifications?user_nickname=eq.${encodeURIComponent(OTHER)}`, { method: 'DELETE' });
+  // Dalla 35b la tabella non è più accessibile con la chiave pubblica: pulizia con la chiave di servizio.
+  await purge(SUPABASE_URL, [`notifications?user_nickname=eq.${encodeURIComponent(OTHER)}`], { label: 'account-gdpr' });
 }
 
 (async () => {
