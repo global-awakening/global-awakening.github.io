@@ -248,7 +248,11 @@ sezione('R1. 36a_ritorno', async (db) => {
   const cat = catalogo();
   const diversi = [];
   for (const fn of CINQUE) if ((await definizione(db, fn)) !== cat[fn]) diversi.push(fn);
-  check(diversi.length === 0, 'le cinque funzioni sono identiche al catalogo live', diversi);
+  for (const fn of ['toggle_ritual_candle', 'get_my_messages']) if ((await definizione(db, fn)) !== cat[fn]) diversi.push(fn);
+  check(diversi.length === 0, 'le sette funzioni sono identiche al catalogo live', diversi);
+  const pa = await righe(db, `SELECT p.proname, has_function_privilege('anon', p.oid, 'EXECUTE') AS anon FROM pg_proc p
+    WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('toggle_ritual_candle', 'get_my_messages')`);
+  check(pa.length === 2 && pa.every((p) => p.anon), 'toggle_ritual_candle e get_my_messages restano eseguibili da anon', pa);
   const priv = await righe(db, `SELECT p.proname, has_function_privilege('anon', p.oid, 'EXECUTE') AS anon,
     has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth
     FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname = ANY($1) ORDER BY 1`, [CINQUE]);
@@ -261,6 +265,53 @@ sezione('R1. 36a_ritorno', async (db) => {
   const dopo = await mieiInviti(db, 'sidB');
   check(dopo.in_arrivo && dopo.in_arrivo.from_id === await pub(db, 'sidA'), 'e il from_id torna pubblico', dopo.in_arrivo);
 });
+
+// ── Candela e messaggi: le risposte non portano session_id (sezioni F e G della 36a) ──
+const MINUTO = 60000;
+const ritualeVivo = async (db, sid) => (await uno(db, `SELECT * FROM create_ritual('Ada', $1, 'Candela', '', 'consciousness', 11, $2, $3, 30, NULL)`,
+  [sid, new Date(Date.now() - 5 * MINUTO).toISOString().slice(0, 10), new Date(Date.now() - 5 * MINUTO).toISOString().slice(11, 16)])).id;
+const candela = (db, id, sid, nome) => comeAnon(db, () => righe(db, `SELECT * FROM toggle_ritual_candle($1, $2, $3, NULL)`, [id, sid, nome]));
+const provaCandela = async (db) => {
+  const id = await ritualeVivo(db, 'sidA');
+  await comeAnon(db, () => chiama(db, 'join_ritual', { p_ritual_id: id, p_session_id: 'sidB' })).catch(() => null);
+  await comeAnon(db, () => db.query(`SELECT segna_presenza_rituale($1, 'sidB')`, [id]));
+  const r = await candela(db, id, 'sidB', 'Bea');
+  check(r.length === 1 && r[0].id === id && r[0].name === 'Candela', 'toggle_ritual_candle: una riga, quella del rituale', r);
+  check(nessunSid(r, ['sidA', 'sidB']), 'toggle_ritual_candle: nessun session_id nella risposta', r);
+  check(r[0].creator_id === '' && JSON.stringify(r[0].participants) === '[]' && JSON.stringify(r[0].candles) === '[]'
+    && JSON.stringify(r[0].candles_nomi) === '{}', 'creator_id, participants, candles e candles_nomi vuoti', r[0]);
+  const vera = await uno(db, `SELECT candles, candles_nomi FROM rituals WHERE id = $1`, [id]);
+  check(JSON.stringify(vera.candles) === '["sidB"]' && vera.candles_nomi.sidB === 'Bea', 'la candela è accesa davvero nella tabella', vera);
+  const spenta = await candela(db, id, 'sidB', 'Bea');
+  check(spenta.length === 1 && nessunSid(spenta, ['sidA', 'sidB']), 'spegnere: una riga, nessun session_id', spenta);
+  const e1 = await comeAnon(db, () => errore(candela(db, id, 'sidC', 'Cia')));
+  check(/not_present/.test(e1 || ''), 'senza presenza: not_present come prima', e1);
+  const futuro = (await uno(db, `SELECT * FROM create_ritual('Ada', 'sidA', 'Dopo', '', 'consciousness', 11, $1, '10:00', 30, NULL)`,
+    [new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10)])).id;
+  const e2 = await comeAnon(db, () => errore(candela(db, futuro, 'sidB', 'Bea')));
+  check(/not_live/.test(e2 || ''), 'fuori orario: not_live come prima', e2);
+  const e3 = await comeAnon(db, () => errore(candela(db, id, '', 'Bea')));
+  check(/session_required/.test(e3 || ''), 'senza session_id: session_required come prima', e3);
+};
+const provaMessaggi = async (db) => {
+  await iscritto(db, 'sidR', 'Rosa', 'h1');
+  await iscritto(db, 'sidS', 'Sole', 'h2');
+  await comeAnon(db, () => chiama(db, 'send_private_message',
+    { p_sender_id: 'sidR', p_sender_name: 'Rosa', p_receiver_name: 'Sole', p_content: 'ciao', p_sender_password_hash: 'h1' }));
+  const m = await comeAnon(db, () => righe(db, `SELECT * FROM get_my_messages('Sole', 'h2')`));
+  check(m.length === 1 && m[0].content === 'ciao' && m[0].sender_name === 'Rosa' && m[0].receiver_name === 'Sole' && m[0].is_read === false,
+    'get_my_messages: il messaggio arriva, colonne come prima', m);
+  check(m[0].sender_id === await pub(db, 'sidR'), 'sender_id è l\'id pubblico del mittente', m[0].sender_id);
+  check(nessunSid(m, ['sidR', 'sidS']), 'get_my_messages: nessun session_id', m);
+  const col = Object.keys(m[0]).join(',');
+  check(col === 'id,sender_id,sender_name,receiver_name,content,is_read,created_at', 'colonne nell\'ordine della tabella', col);
+  const e = await comeAnon(db, () => errore(righe(db, `SELECT * FROM get_my_messages('Sole', 'sbagliata')`)));
+  check(/Auth failed/.test(e || ''), 'password sbagliata: Auth failed come prima', e);
+};
+sezione('K1. candela (36a)', provaCandela);
+sezione('K2. candela (dopo la 36b)', provaCandela, { con35a: true, con36a: true, con36b: true });
+sezione('M1. messaggi (36a)', provaMessaggi);
+sezione('M2. messaggi (dopo la 36b)', provaMessaggi, { con35a: true, con36a: true, con36b: true });
 
 // ── 36b: chiusura ──
 const comeRuolo = async (db, ruolo, fn) => { await db.query(`SET ROLE ${ruolo}`); try { return await fn(); } finally { await db.query('RESET ROLE'); } };
@@ -326,7 +377,7 @@ sezione('B1. chiusura', async (db) => {
 
 sezione('B2. conversione partite e niente più grezzo', async (db) => {
   const P = {};
-  for (const s of ['sidA', 'sidB', 'sidC', 'sidD', 'sidE', 'sidF', 'sidG', 'sidH', 'sidI', 'sidJ', 'sidK']) P[s] = await pub(db, s);
+  for (const s of ['sidA', 'sidB', 'sidC', 'sidD', 'sidE', 'sidF', 'sidG', 'sidH', 'sidI', 'sidJ', 'sidK', 'sidL', 'sidM']) P[s] = await pub(db, s);
   const ins = (u1, u2, extra = '') => uno(db, `INSERT INTO telepathy_matches (user1_id, user2_id, ended_by, ended_at, ultima_attivita)
     VALUES ($1, $2, $3, $4, $5) RETURNING id`, [u1, u2, extra.ended_by || null, extra.ended_at || null, extra.attivita || new Date()]).then((r) => r.id);
   const m1 = await ins('sidA', 'sidB', { ended_by: 'sidA' });                                 // viva, grezza
@@ -338,6 +389,8 @@ sezione('B2. conversione partite e niente più grezzo', async (db) => {
   const m7 = await ins(P.sidJ, P.sidI);                                                        // …e viva pubblica della stessa coppia
   const m8 = await ins('sidK', null);                                                          // un lato vuoto
   const m9 = await ins('sidC', 'sidE', { ended_at: new Date() });                              // conclusa grezza, senza doppione
+  const m10 = await ins(P.sidL, P.sidM, { ended_at: new Date() });                            // conclusa già pubblica…
+  const m11 = await ins('sidM', 'sidL');                                                       // …e viva grezza della stessa coppia
   const att = async (id) => uno(db, `SELECT ultima_attivita::text AS u, giocato FROM telepathy_matches WHERE id = $1`, [id]);
   const att1 = await att(m1);
   const e1 = await errore(applicaFile(db, F36B));
@@ -355,6 +408,8 @@ sezione('B2. conversione partite e niente più grezzo', async (db) => {
   const r8 = await per(m8);
   check(r8 && r8.user1_id === P.sidK && r8.user2_id === null, 'lato vuoto: resta vuoto, l\'altro convertito', r8);
   check(!(await per(m9)), 'le concluse non convertite si tolgono');
+  const r11 = await per(m11);
+  check(!(await per(m10)) && r11 && r11.user1_id === P.sidM && r11.user2_id === P.sidL, 'conclusa pubblica e viva grezza della stessa coppia: resta la viva, convertita', r11);
   const grezze = await righe(db, `SELECT id FROM telepathy_matches WHERE user1_id NOT LIKE 'pub\\_%' OR user2_id NOT LIKE 'pub\\_%' OR ended_by NOT LIKE 'pub\\_%'`);
   check(grezze.length === 0, 'nessun session_id resta in telepathy_matches', grezze);
   const prima = JSON.stringify(await righe(db, `SELECT id, user1_id, user2_id, ended_by FROM telepathy_matches ORDER BY id`));

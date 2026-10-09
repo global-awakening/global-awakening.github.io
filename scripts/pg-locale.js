@@ -29,8 +29,9 @@ const SCHEMA = `
   GRANT ALL ON rituals TO ${RUOLO_SERVIZIO};
   CREATE TABLE ritual_comments (id bigserial PRIMARY KEY, ritual_id bigint, author_nickname text,
     content text, created_at timestamptz DEFAULT now());
-  CREATE TABLE private_messages (id bigserial PRIMARY KEY, sender_name text, receiver_name text,
-    content text, created_at timestamptz DEFAULT now());
+  -- Colonne nell'ordine del DB vero (catalogo 09/10): get_my_messages della 36a le elenca così.
+  CREATE TABLE private_messages (id bigserial PRIMARY KEY, sender_id text, sender_name text, receiver_name text,
+    content text, is_read boolean DEFAULT false, created_at timestamptz DEFAULT now());
   CREATE TABLE push_subscriptions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), session_id text);
   CREATE TABLE ritual_notifications_sent (
     ritual_id bigint NOT NULL REFERENCES rituals(id) ON DELETE CASCADE,

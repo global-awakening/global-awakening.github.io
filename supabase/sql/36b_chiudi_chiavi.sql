@@ -7,8 +7,8 @@
 --
 -- Cosa fa:
 --  1. telepathy_matches: i session_id diventano id pubblici. Prima si tolgono le partite concluse
---     non convertite e, fra due partite vive della stessa coppia, la più vecchia (preferendo quella
---     già pubblica): altrimenti la conversione urterebbe l'indice unico telepathy_matches_pair_unique.
+--     non convertite e, fra due partite della stessa coppia, ne resta una sola: la viva prima della
+--     conclusa, poi la già pubblica, poi la più recente: altrimenti la conversione urterebbe l'indice unico telepathy_matches_pair_unique.
 --     Il trigger dell'attività è spento durante la conversione, che non è un'attività: senza,
 --     ogni partita convertita sembrerebbe giocata adesso (in training per 10 minuti).
 --  2. online_users, telepathy_queue, rituals: via le policy (nomi letti dal DB vero il 09/10),
@@ -32,14 +32,15 @@ DELETE FROM public.telepathy_matches
  WHERE ended_at IS NOT NULL
    AND (user1_id NOT LIKE 'pub\_%' OR user2_id NOT LIKE 'pub\_%');
 
--- Vive della stessa coppia dopo la conversione (es. una dell'app vecchia e una della nuova):
--- resta la già pubblica, poi la più recente.
+-- Righe della stessa coppia dopo la conversione (es. una dell'app vecchia e una della nuova):
+-- resta quella viva, poi la già pubblica, poi la più recente.
 DELETE FROM public.telepathy_matches m
  USING (SELECT x.id, row_number() OVER (
                PARTITION BY least(x.c1, x.c2), greatest(x.c1, x.c2)
-               ORDER BY coalesce(x.user1_id LIKE 'pub\_%', true) AND coalesce(x.user2_id LIKE 'pub\_%', true) DESC,
+               ORDER BY (x.ended_at IS NULL) DESC,
+                        coalesce(x.user1_id LIKE 'pub\_%', true) AND coalesce(x.user2_id LIKE 'pub\_%', true) DESC,
                         x.ultima_attivita DESC, x.created_at DESC, x.id) AS n
-          FROM (SELECT t.id, t.user1_id, t.user2_id, t.ultima_attivita, t.created_at,
+          FROM (SELECT t.id, t.user1_id, t.user2_id, t.ended_at, t.ultima_attivita, t.created_at,
                        CASE WHEN t.user1_id LIKE 'pub\_%' THEN t.user1_id ELSE public.id_pubblico(t.user1_id) END AS c1,
                        CASE WHEN t.user2_id LIKE 'pub\_%' THEN t.user2_id ELSE public.id_pubblico(t.user2_id) END AS c2
                   FROM public.telepathy_matches t) x
@@ -207,7 +208,7 @@ BEGIN
   END IF;
   RETURN jsonb_build_object('ok', true, 'status', v_stato, 'responded_at', now(), 'adesso', now());
 END $function$;
-REVOKE ALL ON FUNCTION public.respond_telepathy_invite(uuid, text, text, boolean, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.respond_telepathy_invite(uuid, text, text, boolean, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.respond_telepathy_invite(uuid, text, text, boolean, uuid) TO anon, authenticated;
 
 NOTIFY pgrst, 'reload schema';

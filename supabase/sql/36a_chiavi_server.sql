@@ -272,7 +272,7 @@ BEGIN
   END IF;
   RETURN jsonb_build_object('ok', true, 'status', v_stato, 'responded_at', now(), 'adesso', now());
 END $function$;
-REVOKE ALL ON FUNCTION public.respond_telepathy_invite(uuid, text, text, boolean, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.respond_telepathy_invite(uuid, text, text, boolean, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.respond_telepathy_invite(uuid, text, text, boolean, uuid) TO anon, authenticated;
 
 CREATE OR REPLACE FUNCTION public.get_my_telepathy_invites(p_session_id text, p_password_hash text)
@@ -336,6 +336,137 @@ BEGIN
 END $function$;
 REVOKE ALL ON FUNCTION public.get_telepathy_invite(uuid, text, text)                    FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_telepathy_invite(uuid, text, text)                    TO anon, authenticated;
+
+-- ════ F. Candela: la risposta non porta session_id ═════════════════════════════
+-- toggle_ritual_candle (anon, SECURITY DEFINER) restituiva la riga intera di rituals: creator_id,
+-- participants, candles e le chiavi di candles_nomi sono session_id. App vecchia e nuova guardano
+-- solo che arrivi una riga e poi rileggono la vista: stessa firma e stesso tipo, quei quattro campi
+-- vuoti, tutto il resto com'era. Testo copiato dal catalogo live del 09/10 (identico alla 30_);
+-- cambiano solo le righe marcate «-- 36a:». I privilegi restano quelli di oggi (CREATE OR REPLACE
+-- li conserva); il GRANT è quello della 30_.
+CREATE OR REPLACE FUNCTION public.toggle_ritual_candle(p_ritual_id bigint, p_session_id text, p_nickname text DEFAULT NULL::text, p_password_hash text DEFAULT NULL::text)
+ RETURNS SETOF rituals
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'                                    -- 36a: era solo 'public'
+AS $function$
+DECLARE v rituals%ROWTYPE; v_occ timestamptz; v_nome text; v_candles jsonb; v_accende boolean;
+BEGIN
+  IF p_session_id IS NULL OR p_session_id = '' THEN RAISE EXCEPTION 'session_required'; END IF;
+  IF length(p_session_id) > 255 THEN RAISE EXCEPTION 'session_id_too_long'; END IF;
+  -- FOR UPDATE: due accensioni insieme non superano il tetto e non si perdono a vicenda.
+  SELECT * INTO v FROM rituals WHERE id = p_ritual_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'ritual_not_found'; END IF;
+  v_occ := rituale_occorrenza_corrente(v);
+  -- Stessa finestra della stanza e delle presenze: condizione identica, carattere per carattere, a
+  -- quella di segna_presenza_rituale (28_), anche con duration NULL (lì non scatta not_live).
+  IF v_occ IS NULL OR now() < v_occ OR now() >= v_occ + make_interval(mins => v.duration) THEN
+    RAISE EXCEPTION 'not_live';
+  END IF;
+  -- Registrato: stesso cancello di leave_ritual. Senza la sua credenziale nessuno accende o
+  -- spegne a suo nome (nemmeno un'app vecchia che non la manda).
+  IF EXISTS (SELECT 1 FROM profiles WHERE session_id = p_session_id AND email IS NOT NULL)
+     AND NOT EXISTS (SELECT 1 FROM profiles WHERE session_id = p_session_id AND password_hash = p_password_hash) THEN
+    RAISE EXCEPTION 'Auth failed';
+  END IF;
+  -- Le candele (e i nomi) di un appuntamento passato si spengono prima di accendere quella nuova.
+  -- candles_occorrenza NULL = «quello corrente» (vedi 28_).
+  UPDATE rituals SET candles = '[]'::jsonb, candles_nomi = '{}'::jsonb
+   WHERE id = p_ritual_id AND candles_occorrenza IS NOT NULL AND candles_occorrenza IS DISTINCT FROM v_occ;
+  SELECT candles INTO v_candles FROM rituals WHERE id = p_ritual_id;
+  v_accende := NOT (v_candles @> to_jsonb(array[p_session_id]));
+  -- Spegnere la propria candela si può sempre; accenderla solo da dentro la stanza. Ma se le
+  -- presenze dell'appuntamento hanno già raggiunto il tetto di segna_presenza_rituale (500, 28_),
+  -- la presenza di chi arriva non si scrive più: chiederla bloccherebbe tutti gli utenti veri
+  -- (bastano 500 presenze finte). In quel caso il cancello si toglie invece di chiudere la porta.
+  IF v_accende THEN
+    IF (SELECT count(*) FROM ritual_presence WHERE ritual_id = p_ritual_id AND occorrenza = v_occ) < 500
+       AND NOT EXISTS (SELECT 1 FROM ritual_presence
+                    WHERE ritual_id = p_ritual_id AND occorrenza = v_occ AND session_id = p_session_id
+                      AND visto_il > now() - interval '60 seconds') THEN
+      RAISE EXCEPTION 'not_present';
+    END IF;
+    -- Stesso tetto delle presenze (28_).
+    IF jsonb_array_length(v_candles) >= 500 THEN RAISE EXCEPTION 'too_many_candles'; END IF;
+  END IF;
+  -- Il nome. Registrato: quello del profilo, qualunque cosa dica l'app. Ospite: quello mandato,
+  -- ripulito perché non si travesta da un altro: prima NFKC (le lettere «larghe» come Ａ diventano
+  -- A, molti spazi speciali diventano spazi), poi via caratteri di controllo, a larghezza zero, di
+  -- direzione del testo e i riempitivi invisibili (trattino morbido U+00AD, CGJ U+034F, ALM U+061C,
+  -- riempitivi hangul U+115F/U+1160/U+3164/U+FFA0, MVS U+180E, U+2060–U+2064, BOM U+FEFF), poi
+  -- ogni spazio Unicode rimasto diventa uno spazio normale e gli spazi di fila uno solo; infine al
+  -- massimo 50 caratteri. Se non resta niente, o se è il nome di un altro profilo (maiuscole e
+  -- spazi attorno a parte), 'Anonymous' come per il creatore in create_ritual.
+  SELECT nullif(btrim(nickname), '') INTO v_nome FROM profiles WHERE session_id = p_session_id;
+  IF v_nome IS NULL THEN
+    v_nome := regexp_replace(normalize(coalesce(p_nickname, ''), NFKC),
+                '[[:cntrl:]\u00AD\u034F\u061C\u115F\u1160\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\u3164\uFEFF\uFFA0]',
+                '', 'g');
+    v_nome := regexp_replace(v_nome, '[[:space:]\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+', ' ', 'g');
+    v_nome := nullif(btrim(left(btrim(v_nome), 50)), '');
+    IF v_nome IS NOT NULL AND EXISTS (SELECT 1 FROM profiles
+                                        WHERE lower(btrim(nickname)) = lower(btrim(v_nome))
+                                          AND session_id <> p_session_id) THEN
+      v_nome := NULL;
+    END IF;
+  END IF;
+  v_nome := coalesce(v_nome, 'Anonymous');
+  UPDATE rituals                                                              -- 36a: era RETURN QUERY UPDATE
+       SET candles = CASE
+             WHEN NOT v_accende THEN
+               coalesce((SELECT jsonb_agg(e) FROM jsonb_array_elements(candles) e
+                          WHERE e <> to_jsonb(p_session_id)), '[]'::jsonb)
+             ELSE candles || to_jsonb(p_session_id) END,
+           candles_nomi = CASE
+             WHEN NOT v_accende THEN candles_nomi - p_session_id
+             ELSE candles_nomi || jsonb_build_object(p_session_id, v_nome) END,
+           candles_occorrenza = v_occ
+     WHERE id = p_ritual_id
+     RETURNING * INTO v;                                                     -- 36a: era RETURNING *
+  -- 36a: la riga torna senza session_id; l'app guarda solo che arrivi, poi rilegge la vista.
+  IF FOUND THEN                                                               -- 36a
+    v.creator_id := ''; v.participants := '[]'::jsonb; v.candles := '[]'::jsonb; v.candles_nomi := '{}'::jsonb;  -- 36a
+    RETURN NEXT v;                                                            -- 36a
+  END IF;                                                                     -- 36a
+END;
+$function$;
+GRANT EXECUTE ON FUNCTION public.toggle_ritual_candle(bigint, text, text, text) TO anon;
+
+-- ════ G. Messaggi privati: il mittente non consegna la sua chiave ════════════════
+-- get_my_messages (anon, SECURITY DEFINER) restituiva m.*: sender_id è il session_id grezzo di chi
+-- ha scritto, quindi chi riceve un messaggio ne riceveva la credenziale. L'app non legge
+-- sender_id da queste righe: diventa l'id pubblico. Stessa firma, stesso tipo, stessi privilegi
+-- (CREATE OR REPLACE li conserva; il GRANT è quello della 05_). Testo del catalogo live del 09/10;
+-- cambiano solo le righe marcate «-- 36a:». Le colonne sono quelle di private_messages, nell'ordine
+-- del DB vero (id, sender_id, sender_name, receiver_name, content, is_read, created_at).
+-- send_private_message resta com'è: restituisce solo la riga appena scritta da chi chiama.
+CREATE OR REPLACE FUNCTION public.get_my_messages(p_nickname text, p_password_hash text)
+ RETURNS SETOF private_messages
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'                                    -- 36a: era solo 'public'
+AS $function$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM profiles
+     WHERE nickname = p_nickname AND password_hash = p_password_hash
+  ) THEN
+    RAISE EXCEPTION 'Auth failed';
+  END IF;
+
+  RETURN QUERY
+    SELECT m.id, id_pubblico(m.sender_id), m.sender_name, m.receiver_name,      -- 36a: era m.*; sender_id pubblico
+           m.content, m.is_read, m.created_at                                  -- 36a: colonne nell'ordine della tabella
+      FROM private_messages m                                                  -- 36a
+     WHERE (m.sender_name = p_nickname OR m.receiver_name = p_nickname)
+       AND NOT EXISTS (
+         SELECT 1 FROM user_blocks b
+          WHERE b.blocker_nickname = p_nickname
+            AND b.blocked_nickname IN (m.sender_name, m.receiver_name)
+       )
+     ORDER BY m.created_at;
+END $function$;
+GRANT EXECUTE ON FUNCTION public.get_my_messages(text, text) TO anon;
 
 NOTIFY pgrst, 'reload schema';
 COMMIT;
