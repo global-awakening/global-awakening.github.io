@@ -151,13 +151,18 @@ sezione('T1. inviti e partite', async (db) => {
   const inv = await invita(db, 'sidA', 'Ada', pB);
   check(inv.ok === true, 'A invita B con l\'id pubblico di B', inv);
   check((await uno(db, `SELECT to_id FROM telepathy_invites WHERE id = $1`, [inv.id])).to_id === 'sidB', 'l\'invito resta intestato al session_id di B (interno)');
+  // Ruling 12: fino alla 36b from_id resta grezzo (l'app vecchia ci crea la partita e ci calcola il
+  // suo posto); l'app nuova legge from_id_pubblico. Il «nessun session_id» vale dopo la 36b (B2).
   const miei = await mieiInviti(db, 'sidB');
-  check(miei.in_arrivo && miei.in_arrivo.from_id === pA, 'get_my_telepathy_invites: from_id pubblico', miei.in_arrivo);
-  check(nessunSid(miei, ['sidA', 'sidB']), 'get_my_telepathy_invites: nessun session_id', miei);
+  check(miei.in_arrivo && miei.in_arrivo.from_id === 'sidA' && miei.in_arrivo.from_id_pubblico === pA,
+    'get_my_telepathy_invites (36a): from_id grezzo per l\'app vecchia, from_id_pubblico per la nuova', miei.in_arrivo);
+  check(nessunSid(miei, ['sidB']), 'get_my_telepathy_invites: il session_id del destinatario non esce', miei);
   const uno1 = await unInvito(db, inv.id, 'sidB');
-  check(uno1.ok === true && uno1.invito.from_id === pA && nessunSid(uno1, ['sidA', 'sidB']), 'get_telepathy_invite (destinatario): from_id pubblico', uno1);
+  check(uno1.ok === true && uno1.invito.from_id === 'sidA' && uno1.invito.from_id_pubblico === pA,
+    'get_telepathy_invite (destinatario, 36a): from_id grezzo e from_id_pubblico', uno1);
   const uno2 = await unInvito(db, inv.id, 'sidA');
-  check(uno2.ok === true && uno2.invito.from_id === null, 'get_telepathy_invite (mittente): nessun from_id', uno2);
+  check(uno2.ok === true && uno2.invito.from_id === null && uno2.invito.from_id_pubblico === null, 'get_telepathy_invite (mittente): nessun from_id', uno2);
+  check(nessunSid(uno2, ['sidA', 'sidB']), 'get_telepathy_invite (mittente): nessun session_id', uno2);
   const xa = await accetta(db, inv.id, 'sidB', await partita(db, pA, pB));
   check(xa.ok === true && xa.status === 'accepted', '(a) partita pubblico/pubblico (app nuove): accettata', xa);
   check(await inTraining(db, 'sidA') === true && await inTraining(db, 'sidB') === true, 'dopo l\'accettazione A e B sono in training (partita con id pubblici)');
@@ -263,7 +268,7 @@ sezione('R1. 36a_ritorno', async (db) => {
   const e3 = await errore(applicaFile(db, F36A));
   check(!e3, 'dopo il ritorno la 36a si riapplica', e3);
   const dopo = await mieiInviti(db, 'sidB');
-  check(dopo.in_arrivo && dopo.in_arrivo.from_id === await pub(db, 'sidA'), 'e il from_id torna pubblico', dopo.in_arrivo);
+  check(dopo.in_arrivo && dopo.in_arrivo.from_id === 'sidA' && dopo.in_arrivo.from_id_pubblico === await pub(db, 'sidA'), 'e torna from_id_pubblico (from_id grezzo, come nella 36a)', dopo.in_arrivo);
 });
 
 // ── Candela e messaggi: le risposte non portano session_id (sezioni F e G della 36a) ──
@@ -434,6 +439,12 @@ sezione('B2. conversione partite e niente più grezzo', async (db) => {
   check(l.find((u) => u.nickname === 'Ada').busy === false, 'busy non conta partite col session_id grezzo', l);
   const inv = await invita(db, 'sidA', 'Ada', pB);
   check(inv.ok === true, 'invito con l\'id pubblico', inv);
+  const mieiB = await mieiInviti(db, 'sidB');
+  check(mieiB.in_arrivo && mieiB.in_arrivo.from_id === pA && mieiB.in_arrivo.from_id_pubblico === pA, 'get_my_telepathy_invites (36b): from_id e from_id_pubblico pubblici', mieiB.in_arrivo);
+  check(nessunSid(mieiB, ['sidA', 'sidB']), 'get_my_telepathy_invites (36b): nessun session_id', mieiB);
+  const unoB = await unInvito(db, inv.id, 'sidB');
+  check(unoB.ok === true && unoB.invito.from_id === pA && unoB.invito.from_id_pubblico === pA && nessunSid(unoB, ['sidA', 'sidB']),
+    'get_telepathy_invite (36b): tutti e due pubblici, nessun session_id', unoB);
   await db.query(`UPDATE telepathy_matches SET giocato = false WHERE id = $1`, [crudo]);
   const x = await accetta(db, inv.id, 'sidB', crudo);
   check(x.ok === false && x.motivo === 'match_non_valido', 'respond con partita a lati grezzi: match_non_valido', x);
@@ -453,7 +464,8 @@ sezione('R2. 36b_ritorno', async (db) => {
   await rif.exec(`CREATE POLICY "Enable all for users" ON online_users FOR ALL TO public USING (true) WITH CHECK (true);
     CREATE POLICY "Enable all for telepathy" ON telepathy_queue FOR ALL TO public USING (true) WITH CHECK (true);`);
   const defRif = {};
-  for (const fn of QUATTRO) defRif[fn] = await definizione(rif, fn);
+  const SEI = [...QUATTRO, 'get_my_telepathy_invites', 'get_telepathy_invite'];
+  for (const fn of SEI) defRif[fn] = await definizione(rif, fn);
   const invRif = await invoker(rif);
   const polRif = await politiche(rif), privRif = await privilegi(rif), pfRif = await privFunzioni(rif);
 
@@ -462,8 +474,8 @@ sezione('R2. 36b_ritorno', async (db) => {
   const e1 = await errore(applicaFile(db, RITORNO_B));
   check(!e1, 'il ritorno si applica', e1);
   const diversi = [];
-  for (const fn of QUATTRO) if ((await definizione(db, fn)) !== defRif[fn]) diversi.push(fn);
-  check(diversi.length === 0, 'le quattro funzioni tornano identiche alla 36a', diversi);
+  for (const fn of SEI) if ((await definizione(db, fn)) !== defRif[fn]) diversi.push(fn);
+  check(diversi.length === 0, 'le sei funzioni tornano identiche alla 36a', diversi);
   check(JSON.stringify(await politiche(db)) === JSON.stringify(polRif), 'policy come prima della 36b', { ora: await politiche(db), prima: polRif });
   // Presenze e coda: come il DB locale prima della 36b. rituals e rituali_correnti: come il DB vero
   // (catalogo 09/10, default di Supabase: tutti i privilegi), che lo schema locale non riproduce.

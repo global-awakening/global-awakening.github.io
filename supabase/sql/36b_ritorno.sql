@@ -10,6 +10,8 @@
 --     CHECK true; nomi letti dal DB vero il 09/10) e GRANT ALL ad anon/authenticated.
 --  4. aggiorna_presenza, telepatia_risolvi, telepatia_in_training, respond_telepathy_invite: le
 --     versioni della 36a (testo identico, che accetta anche il session_id grezzo), stessi privilegi.
+--  5. get_my_telepathy_invites, get_telepathy_invite: le versioni della 36a (from_id grezzo per
+--     l'app vecchia, from_id_pubblico per la nuova), stessi privilegi.
 -- ⚠️ Cosa NON torna: le partite convertite dalla 36b restano con gli id pubblici (e quelle concluse
 --    o doppie tolte dalla 36b non ricompaiono). Con la 36a le funzioni le riconoscono comunque.
 -- Per tornare a prima della 36a: questo, poi 36a_ritorno.sql.
@@ -177,6 +179,71 @@ BEGIN
 END $function$;
 REVOKE ALL ON FUNCTION public.respond_telepathy_invite(uuid, text, text, boolean, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.respond_telepathy_invite(uuid, text, text, boolean, uuid) TO anon, authenticated;
+
+-- ── 5. Inviti: versioni della 36a (from_id grezzo + from_id_pubblico; testo copiato da 36a_chiavi_server.sql) ──
+CREATE OR REPLACE FUNCTION public.get_my_telepathy_invites(p_session_id text, p_password_hash text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE v_in jsonb; v_out jsonb;
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  -- La risposta non mente anche se il cron è in ritardo.
+  UPDATE telepathy_invites SET status = 'expired', responded_at = now()
+   WHERE status = 'pending' AND expires_at <= now() AND (from_id = p_session_id OR to_id = p_session_id);
+  SELECT jsonb_build_object('id', i.id, 'nome', i.from_name, 'from_id', i.from_id, 'status', i.status,
+                            'from_id_pubblico', id_pubblico(i.from_id),  -- 36a: chiave nuova per l'app nuova; from_id resta grezzo fino alla 36b (l'app vecchia ci crea la partita)
+                            'expires_at', i.expires_at, 'created_at', i.created_at, 'responded_at', i.responded_at,
+                            'match_id', i.match_id, 'push_saltata', i.push_saltata)
+    INTO v_in
+    FROM telepathy_invites i
+   WHERE i.to_id = p_session_id AND i.status = 'pending' AND i.expires_at > now()
+     AND NOT telepatia_bloccati(i.from_id, i.from_name, i.to_id, i.to_name)
+   ORDER BY i.created_at DESC LIMIT 1;
+  SELECT jsonb_build_object('id', o.id, 'nome', o.to_name, 'status', o.status, 'expires_at', o.expires_at,
+                            'created_at', o.created_at, 'responded_at', o.responded_at, 'match_id', o.match_id,
+                            'push_saltata', o.push_saltata)
+    INTO v_out
+    FROM telepathy_invites o
+   WHERE o.from_id = p_session_id AND o.created_at > now() - interval '24 hours'
+   ORDER BY o.created_at DESC LIMIT 1;
+  RETURN jsonb_build_object('ok', true, 'adesso', now(), 'in_arrivo', v_in, 'in_uscita', v_out);
+END $function$;
+REVOKE ALL ON FUNCTION public.get_my_telepathy_invites(text, text)                      FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_my_telepathy_invites(text, text)                      TO anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.get_telepathy_invite(p_invite_id uuid, p_session_id text, p_password_hash text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE v telepathy_invites%ROWTYPE; v_ruolo text;
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  SELECT * INTO v FROM telepathy_invites WHERE id = p_invite_id AND (from_id = p_session_id OR to_id = p_session_id);
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovato', 'adesso', now()); END IF;
+  v_ruolo := CASE WHEN v.to_id = p_session_id THEN 'destinatario' ELSE 'mittente' END;
+  IF v_ruolo = 'destinatario' AND telepatia_bloccati(v.from_id, v.from_name, v.to_id, v.to_name) THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovato', 'adesso', now());
+  END IF;
+  IF v.status = 'pending' AND v.expires_at <= now() THEN
+    UPDATE telepathy_invites SET status = 'expired', responded_at = now() WHERE id = v.id AND status = 'pending';
+    v.status := 'expired';
+  END IF;
+  RETURN jsonb_build_object('ok', true, 'adesso', now(), 'invito', jsonb_build_object(
+    'id', v.id, 'ruolo', v_ruolo,
+    'nome', CASE WHEN v_ruolo = 'destinatario' THEN v.from_name ELSE v.to_name END,
+    'status', v.status, 'expires_at', v.expires_at, 'created_at', v.created_at,
+    'responded_at', v.responded_at, 'match_id', v.match_id, 'push_saltata', v.push_saltata,
+    'match_attivo', EXISTS (SELECT 1 FROM telepathy_matches m WHERE m.id = v.match_id AND m.ended_at IS NULL),
+    'from_id', CASE WHEN v_ruolo = 'destinatario' AND v.status = 'pending' THEN v.from_id END,
+    'from_id_pubblico', CASE WHEN v_ruolo = 'destinatario' AND v.status = 'pending' THEN id_pubblico(v.from_id) END));  -- 36a: chiave nuova; from_id resta grezzo fino alla 36b
+END $function$;
+REVOKE ALL ON FUNCTION public.get_telepathy_invite(uuid, text, text)                    FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_telepathy_invite(uuid, text, text)                    TO anon, authenticated;
 
 NOTIFY pgrst, 'reload schema';
 COMMIT;

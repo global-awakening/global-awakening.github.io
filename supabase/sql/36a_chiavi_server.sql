@@ -287,7 +287,8 @@ BEGIN
   -- La risposta non mente anche se il cron è in ritardo.
   UPDATE telepathy_invites SET status = 'expired', responded_at = now()
    WHERE status = 'pending' AND expires_at <= now() AND (from_id = p_session_id OR to_id = p_session_id);
-  SELECT jsonb_build_object('id', i.id, 'nome', i.from_name, 'from_id', id_pubblico(i.from_id), 'status', i.status,  -- 36a: from_id pubblico
+  SELECT jsonb_build_object('id', i.id, 'nome', i.from_name, 'from_id', i.from_id, 'status', i.status,
+                            'from_id_pubblico', id_pubblico(i.from_id),  -- 36a: chiave nuova per l'app nuova; from_id resta grezzo fino alla 36b (l'app vecchia ci crea la partita)
                             'expires_at', i.expires_at, 'created_at', i.created_at, 'responded_at', i.responded_at,
                             'match_id', i.match_id, 'push_saltata', i.push_saltata)
     INTO v_in
@@ -332,7 +333,8 @@ BEGIN
     'status', v.status, 'expires_at', v.expires_at, 'created_at', v.created_at,
     'responded_at', v.responded_at, 'match_id', v.match_id, 'push_saltata', v.push_saltata,
     'match_attivo', EXISTS (SELECT 1 FROM telepathy_matches m WHERE m.id = v.match_id AND m.ended_at IS NULL),
-    'from_id', CASE WHEN v_ruolo = 'destinatario' AND v.status = 'pending' THEN id_pubblico(v.from_id) END));  -- 36a: from_id pubblico
+    'from_id', CASE WHEN v_ruolo = 'destinatario' AND v.status = 'pending' THEN v.from_id END,
+    'from_id_pubblico', CASE WHEN v_ruolo = 'destinatario' AND v.status = 'pending' THEN id_pubblico(v.from_id) END));  -- 36a: chiave nuova; from_id resta grezzo fino alla 36b
 END $function$;
 REVOKE ALL ON FUNCTION public.get_telepathy_invite(uuid, text, text)                    FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_telepathy_invite(uuid, text, text)                    TO anon, authenticated;
