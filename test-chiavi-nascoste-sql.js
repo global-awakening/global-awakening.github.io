@@ -5,7 +5,7 @@
  * Niente Supabase: PGlite con lo schema del catalogo (scripts/pg-locale.js) e le migration vere.
  * Ogni sezione gira su un database nuovo.
  */
-const { creaDbTelepatia, applicaFile, F36A } = require('./scripts/pg-locale');
+const { creaDbTelepatia, applicaFile, F36A, F36B } = require('./scripts/pg-locale');
 let passed = 0, failed = 0;
 const check = (c, m, x) => { if (c) { console.log(`  ✅ ${m}`); passed++; } else { console.log(`  ❌ ${m}${x !== undefined ? ' — ' + JSON.stringify(x) : ''}`); failed++; process.exitCode = 1; } };
 const errore = async (p) => { try { await p; return null; } catch (e) { return e.message; } };
@@ -261,6 +261,176 @@ sezione('R1. 36a_ritorno', async (db) => {
   const dopo = await mieiInviti(db, 'sidB');
   check(dopo.in_arrivo && dopo.in_arrivo.from_id === await pub(db, 'sidA'), 'e il from_id torna pubblico', dopo.in_arrivo);
 });
+
+// ── 36b: chiusura ──
+const comeRuolo = async (db, ruolo, fn) => { await db.query(`SET ROLE ${ruolo}`); try { return await fn(); } finally { await db.query('RESET ROLE'); } };
+const CHIUSE = ['online_users', 'telepathy_queue', 'rituals', 'rituali_correnti'];
+const QUATTRO = ['telepatia_risolvi', 'telepatia_in_training', 'respond_telepathy_invite', 'aggiorna_presenza'];
+const politiche = (db) => righe(db, `SELECT tablename AS t, policyname AS p, cmd, roles::text AS r, qual, with_check AS w FROM pg_policies
+  WHERE schemaname = 'public' AND tablename IN ('online_users', 'telepathy_queue', 'rituals') ORDER BY 1, 2`);
+const privilegi = (db) => righe(db, `SELECT table_name AS t, grantee AS g, string_agg(privilege_type, ',' ORDER BY privilege_type) AS p
+  FROM information_schema.role_table_grants WHERE table_schema = 'public' AND table_name = ANY($1)
+   AND grantee IN ('anon', 'authenticated', 'PUBLIC') GROUP BY 1, 2 ORDER BY 1, 2`, [CHIUSE]);
+const privFunzioni = (db) => righe(db, `SELECT p.proname AS f, has_function_privilege('anon', p.oid, 'EXECUTE') AS anon,
+  has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth FROM pg_proc p
+  WHERE p.pronamespace = 'public'::regnamespace AND p.proname = ANY($1) ORDER BY 1`, [QUATTRO]);
+const invoker = (db) => uno(db, `SELECT coalesce(array_to_string(reloptions, ','), '') AS o FROM pg_class WHERE relname = 'rituali_correnti'`).then((r) => r.o);
+const rituale = (db, sid, nick) => uno(db, `INSERT INTO rituals (creator, creator_id, name, type, sacred_number, date, time, duration, participants)
+  VALUES ($2, $1, 'r', 'meditation', 7, to_char(now() + interval '1 day', 'YYYY-MM-DD'), '10:00:00', 3, jsonb_build_array($1::text)) RETURNING id`, [sid, nick]).then((r) => r.id);
+
+sezione('B1. chiusura', async (db) => {
+  for (const ruolo of ['anon', 'authenticated']) {
+    for (const t of CHIUSE) {
+      const e = await comeRuolo(db, ruolo, () => errore(righe(db, `SELECT * FROM ${t}`)));
+      check(/permission denied/.test(e || ''), `${ruolo} non legge ${t}`, e);
+      const w = await comeRuolo(db, ruolo, () => errore(db.query(`DELETE FROM ${t}`)));
+      check(w !== null, `${ruolo} non cancella da ${t}`, w);
+    }
+    for (const t of ['online_users', 'telepathy_queue']) {
+      const i = await comeRuolo(db, ruolo, () => errore(db.query(`INSERT INTO ${t} (id, nickname) VALUES ('sidZ', 'Zed')`)));
+      check(/permission denied/.test(i || ''), `${ruolo} non scrive in ${t}`, i);
+    }
+  }
+  check((await politiche(db)).length === 0, 'nessuna policy resta sulle tre tabelle', await politiche(db));
+  check((await privilegi(db)).length === 0, 'nessun privilegio ad anon/authenticated/PUBLIC su tabelle e rituali_correnti', await privilegi(db));
+  const rls = await righe(db, `SELECT relname, relrowsecurity FROM pg_class WHERE relname IN ('online_users', 'telepathy_queue', 'rituals') ORDER BY 1`);
+  check(rls.length === 3 && rls.every((r) => r.relrowsecurity), 'RLS resta accesa', rls);
+  // La vista pubblica gira coi diritti del proprietario: con un rituale vero, anon la legge ancora
+  // (comprese le funzioni delle occorrenze, che anon esegue dentro la vista).
+  const rid = await rituale(db, 'sidA', 'Ada');
+  const vista = await comeAnon(db, () => righe(db, `SELECT * FROM rituali_pubblici`));
+  check(vista.length === 1 && vista[0].id === rid && vista[0].creator_id === await pub(db, 'sidA') && vista[0].occorrenza_numero !== undefined,
+    'anon legge rituali_pubblici con un rituale vero', vista);
+  check(nessunSid(vista, ['sidA']), 'nessun session_id nella vista', vista);
+  const vAuth = await comeRuolo(db, 'authenticated', () => righe(db, `SELECT id FROM rituali_pubblici`));
+  check(vAuth.length === 1, 'anche authenticated legge rituali_pubblici', vAuth);
+  check(await invoker(db) === 'security_invoker=false', 'rituali_correnti gira coi diritti del proprietario (la vista pubblica regge)', await invoker(db));
+  const lista = await comeAnon(db, () => chiama(db, 'aggiorna_presenza', { ...G('sidA', 'Ada'), p_lat: 1, p_lng: 1 }));
+  check(Array.isArray(lista) && lista.length === 1 && nessunSid(lista, ['sidA']), 'le RPC funzionano a tabelle chiuse (presenze)', lista);
+  check(await comeAnon(db, () => chiama(db, 'presenza_di', { p_id_pubblico: lista[0].id })) !== null, 'presenza_di a tabelle chiuse');
+  await comeAnon(db, () => chiama(db, 'coda_entra', G('sidA', 'Ada')));
+  await comeAnon(db, () => chiama(db, 'coda_entra', G('sidB', 'Bea')));
+  const coda = await comeAnon(db, () => chiama(db, 'coda_leggi', { p_session_id: 'sidB' }));
+  check(coda.length === 1 && coda[0].nickname === 'Ada' && nessunSid(coda, ['sidA', 'sidB']), 'la coda funziona a tabelle chiuse', coda);
+  // Le funzioni delle occorrenze restano eseguibili da anon (servono alla vista).
+  const occ = await righe(db, `SELECT p.proname FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace
+    AND p.proname IN ('rituale_occorrenza_corrente', 'rituale_occorrenza_numero', 'rituale_occorrenze', 'rituale_occorrenze_totali', 'rituale_presenti_ora')
+    AND NOT has_function_privilege('anon', p.oid, 'EXECUTE')`);
+  check(occ.length === 0, 'funzioni delle occorrenze ancora eseguibili da anon', occ);
+  // telepathy_matches resta aperta (motore della telepatia, sotto-progetto 2).
+  check(!(await comeAnon(db, () => errore(righe(db, `SELECT * FROM telepathy_matches`)))), 'telepathy_matches resta leggibile dall\'app');
+  const pf = await privFunzioni(db);
+  const atteso = { telepatia_risolvi: false, telepatia_in_training: false, respond_telepathy_invite: true, aggiorna_presenza: true };
+  check(pf.length === 4 && pf.every((p) => p.anon === atteso[p.f] && p.auth === atteso[p.f]), 'privilegi delle quattro funzioni come nella 36a', pf);
+}, { con35a: true, con36a: true, con36b: true });
+
+sezione('B2. conversione partite e niente più grezzo', async (db) => {
+  const P = {};
+  for (const s of ['sidA', 'sidB', 'sidC', 'sidD', 'sidE', 'sidF', 'sidG', 'sidH', 'sidI', 'sidJ', 'sidK']) P[s] = await pub(db, s);
+  const ins = (u1, u2, extra = '') => uno(db, `INSERT INTO telepathy_matches (user1_id, user2_id, ended_by, ended_at, ultima_attivita)
+    VALUES ($1, $2, $3, $4, $5) RETURNING id`, [u1, u2, extra.ended_by || null, extra.ended_at || null, extra.attivita || new Date()]).then((r) => r.id);
+  const m1 = await ins('sidA', 'sidB', { ended_by: 'sidA' });                                 // viva, grezza
+  const m2 = await ins(P.sidC, P.sidD);                                                        // già pubblica
+  const m3 = await ins(P.sidE, 'sidF');                                                        // mista (app vecchia da un lato)
+  const m4 = await ins('sidG', 'sidH', { ended_at: new Date(), ended_by: 'sidG' });           // conclusa, grezza…
+  const m5 = await ins(P.sidH, P.sidG);                                                        // …e la stessa coppia già pubblica
+  const m6 = await ins('sidI', 'sidJ', { attivita: new Date(Date.now() - 60000) });           // viva grezza…
+  const m7 = await ins(P.sidJ, P.sidI);                                                        // …e viva pubblica della stessa coppia
+  const m8 = await ins('sidK', null);                                                          // un lato vuoto
+  const m9 = await ins('sidC', 'sidE', { ended_at: new Date() });                              // conclusa grezza, senza doppione
+  const att = async (id) => uno(db, `SELECT ultima_attivita::text AS u, giocato FROM telepathy_matches WHERE id = $1`, [id]);
+  const att1 = await att(m1);
+  const e1 = await errore(applicaFile(db, F36B));
+  check(!e1, 'la 36b si applica su partite grezze, miste e doppie', e1);
+  check(JSON.stringify(await att(m1)) === JSON.stringify(att1), 'la conversione non è un\'attività: ultima_attivita e giocato invariati', { prima: att1, dopo: await att(m1) });
+  const per = async (id) => uno(db, `SELECT user1_id, user2_id, ended_by FROM telepathy_matches WHERE id = $1`, [id]);
+  const r1 = await per(m1);
+  check(r1 && r1.user1_id === P.sidA && r1.user2_id === P.sidB && r1.ended_by === P.sidA, 'partita grezza convertita (anche ended_by)', r1);
+  const r2 = await per(m2);
+  check(r2 && r2.user1_id === P.sidC && r2.user2_id === P.sidD && r2.ended_by === null, 'partita già pubblica: invariata', r2);
+  const r3 = await per(m3);
+  check(r3 && r3.user1_id === P.sidE && r3.user2_id === P.sidF, 'partita mista convertita', r3);
+  check(!(await per(m4)) && !!(await per(m5)), 'conclusa grezza con doppione pubblico: tolta, la pubblica resta (nessun urto sull\'indice)');
+  check(!(await per(m6)) && !!(await per(m7)), 'due vive della stessa coppia: resta la pubblica');
+  const r8 = await per(m8);
+  check(r8 && r8.user1_id === P.sidK && r8.user2_id === null, 'lato vuoto: resta vuoto, l\'altro convertito', r8);
+  check(!(await per(m9)), 'le concluse non convertite si tolgono');
+  const grezze = await righe(db, `SELECT id FROM telepathy_matches WHERE user1_id NOT LIKE 'pub\\_%' OR user2_id NOT LIKE 'pub\\_%' OR ended_by NOT LIKE 'pub\\_%'`);
+  check(grezze.length === 0, 'nessun session_id resta in telepathy_matches', grezze);
+  const prima = JSON.stringify(await righe(db, `SELECT id, user1_id, user2_id, ended_by FROM telepathy_matches ORDER BY id`));
+  const e2 = await errore(applicaFile(db, F36B));
+  check(!e2, 'la 36b si applica una seconda volta', e2);
+  const dopo = JSON.stringify(await righe(db, `SELECT id, user1_id, user2_id, ended_by FROM telepathy_matches ORDER BY id`));
+  check(prima === dopo && !dopo.includes('pub_pub_'), 'seconda volta: nulla cambia, nessun doppio prefisso');
+
+  // Niente più grezzo: risolvi, in_training, busy, respond.
+  await db.query(`DELETE FROM telepathy_matches`);
+  const { pA, pB } = await coppia(db);
+  let r = await risolvi(db, 'sidB');
+  check(r.o_sid === null, 'telepatia_risolvi col session_id grezzo: nessuno', r);
+  r = await risolvi(db, pB);
+  check(r.o_sid === 'sidB', 'telepatia_risolvi con l\'id pubblico: sidB', r);
+  const g = await invita(db, 'sidA', 'Ada', 'sidB');
+  check(g.ok === false && g.motivo === 'non_disponibile', 'invito col session_id grezzo: non_disponibile', g);
+  const crudo = await partita(db, 'sidA', 'sidB');
+  await db.query(`UPDATE telepathy_matches SET giocato = true WHERE id = $1`, [crudo]);
+  check(await inTraining(db, 'sidA') === false, 'telepatia_in_training non vede partite col session_id grezzo');
+  const l = await presente(db, 'sidA', 'Ada');
+  check(l.find((u) => u.nickname === 'Ada').busy === false, 'busy non conta partite col session_id grezzo', l);
+  const inv = await invita(db, 'sidA', 'Ada', pB);
+  check(inv.ok === true, 'invito con l\'id pubblico', inv);
+  await db.query(`UPDATE telepathy_matches SET giocato = false WHERE id = $1`, [crudo]);
+  const x = await accetta(db, inv.id, 'sidB', crudo);
+  check(x.ok === false && x.motivo === 'match_non_valido', 'respond con partita a lati grezzi: match_non_valido', x);
+  await db.query(`DELETE FROM telepathy_matches`);
+  const y = await accetta(db, inv.id, 'sidB', await partita(db, pA, pB));
+  check(y.ok === true && y.status === 'accepted', 'respond con partita pubblica: accettata', y);
+  check(await inTraining(db, 'sidA') === true, 'dopo l\'accettazione sidA è in training (partita pubblica)');
+  const l2 = await presente(db, 'sidA', 'Ada');
+  check(l2.find((u) => u.nickname === 'Ada').busy === true, 'busy con la partita pubblica', l2);
+}, { con35a: true, con36a: true });
+
+const RITORNO_B = 'supabase/sql/36b_ritorno.sql';
+sezione('R2. 36b_ritorno', async (db) => {
+  // Riferimento: un DB con la sola 36a (stato da ripristinare).
+  const rif = await creaDbTelepatia({ con35a: true, con36a: true });
+  // Le policy di produzione (catalogo 09/10) che il DB locale non ha: si aggiungono al riferimento.
+  await rif.exec(`CREATE POLICY "Enable all for users" ON online_users FOR ALL TO public USING (true) WITH CHECK (true);
+    CREATE POLICY "Enable all for telepathy" ON telepathy_queue FOR ALL TO public USING (true) WITH CHECK (true);`);
+  const defRif = {};
+  for (const fn of QUATTRO) defRif[fn] = await definizione(rif, fn);
+  const invRif = await invoker(rif);
+  const polRif = await politiche(rif), privRif = await privilegi(rif), pfRif = await privFunzioni(rif);
+
+  await presente(db, 'sidA', 'Ada');
+  const m = await partita(db, await pub(db, 'sidA'), await pub(db, 'sidB'));
+  const e1 = await errore(applicaFile(db, RITORNO_B));
+  check(!e1, 'il ritorno si applica', e1);
+  const diversi = [];
+  for (const fn of QUATTRO) if ((await definizione(db, fn)) !== defRif[fn]) diversi.push(fn);
+  check(diversi.length === 0, 'le quattro funzioni tornano identiche alla 36a', diversi);
+  check(JSON.stringify(await politiche(db)) === JSON.stringify(polRif), 'policy come prima della 36b', { ora: await politiche(db), prima: polRif });
+  check(JSON.stringify(await privilegi(db)) === JSON.stringify(privRif), 'privilegi sulle tabelle come prima della 36b', { ora: await privilegi(db), prima: privRif });
+  check(await invoker(db) === invRif, 'rituali_correnti torna security_invoker', { ora: await invoker(db), prima: invRif });
+  check(JSON.stringify(await privFunzioni(db)) === JSON.stringify(pfRif), 'privilegi delle funzioni come prima', await privFunzioni(db));
+  check(Array.isArray(await comeAnon(db, () => righe(db, `SELECT * FROM online_users`))), 'anon rilegge online_users');
+  await rituale(db, 'sidA', 'Ada');
+  check((await comeAnon(db, () => righe(db, `SELECT * FROM rituals`))).length === 1, 'anon rilegge rituals');
+  check((await comeAnon(db, () => righe(db, `SELECT * FROM rituali_correnti`))).length === 1, 'anon rilegge rituali_correnti');
+  check(!(await comeAnon(db, () => errore(db.query(`INSERT INTO online_users (id, nickname, last_seen) VALUES ('sidV', 'Vec', now())`)))), 'anon riscrive online_users (app vecchia)');
+  check((await risolvi(db, 'sidA')).o_sid === 'sidA', 'telepatia_risolvi riaccetta il grezzo');
+  const pm = await uno(db, `SELECT user1_id FROM telepathy_matches WHERE id = $1`, [m]);
+  check(pm.user1_id === await pub(db, 'sidA'), 'le partite convertite restano pubbliche', pm);
+  const e2 = await errore(applicaFile(db, RITORNO_B));
+  check(!e2, 'il ritorno si applica una seconda volta', e2);
+  check(JSON.stringify(await politiche(db)) === JSON.stringify(polRif), 'seconda volta: policy invariate (nessun doppione)');
+  const e3 = await errore(applicaFile(db, F36B));
+  check(!e3, 'dopo il ritorno la 36b si riapplica', e3);
+  check(/permission denied/.test(await comeAnon(db, () => errore(righe(db, `SELECT * FROM online_users`))) || ''), 'e richiude');
+  const e4 = await errore(applicaFile(db, RITORNO_B));
+  const e5 = await errore(applicaFile(db, RITORNO));
+  check(!e4 && !e5, 'catena 36b_ritorno → 36a_ritorno senza errori', { e4, e5 });
+}, { con35a: true, con36a: true, con36b: true });
 
 // ── esecuzione ──
 (async () => {
