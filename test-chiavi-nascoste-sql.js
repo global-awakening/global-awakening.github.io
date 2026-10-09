@@ -197,6 +197,27 @@ sezione('T2. un ospite che si chiama pub_<id di B>', async (db) => {
   check(await inTraining(db, 'sidB') === false, 'sanità: B non in training');
 });
 
+// Fix round 1: l'impostore riceve un invito intestato al suo session_id «pub(B)» (da una
+// disponibilità o da una scrittura diretta dell'app vecchia) e prova a farsi valere come B.
+sezione('T3. l\'impostore pub(B) non valida partite di B', async (db) => {
+  const { pA, pB } = await coppia(db);
+  const inv = (await uno(db, `INSERT INTO telepathy_invites (from_id, from_name, to_id, to_name, status, expires_at)
+    VALUES ('sidA', 'Ada', $1, 'Eco', 'pending', now() + interval '45 seconds') RETURNING id`, [pB])).id;
+  const m = await partita(db, pA, pB);
+  const x = await accetta(db, inv, pB, m);
+  check(x.ok === false && x.motivo === 'match_non_valido', 'l\'impostore non accetta con la partita pub(A)/pub(B)', x);
+  check(await inTraining(db, 'sidB') === false, 'telepatia_in_training(sidB) resta false (nessun invito accettato a nome di B)');
+  await db.query(`UPDATE telepathy_matches SET giocato = true WHERE id = $1`, [m]);
+  check(await inTraining(db, pB) === false, 'telepatia_in_training col sid pub(B) non vede la partita di B');
+  await db.query(`DELETE FROM telepathy_matches`);
+  await db.query(`UPDATE telepathy_invites SET status = 'cancelled', responded_at = now() WHERE id = $1`, [inv]);
+  // Ruoli scambiati: B come user1, A come user2.
+  const inv2 = await invita(db, 'sidA', 'Ada', pB);
+  check(inv2.ok === true, 'invito vero di A a B', inv2);
+  const y = await accetta(db, inv2.id, 'sidB', await partita(db, pB, pA));
+  check(y.ok === false && y.motivo === 'match_non_valido', 'partita coi lati scambiati: match_non_valido', y);
+});
+
 const RITORNO = 'supabase/sql/36a_ritorno.sql';
 // I blocchi del catalogo live (testo di pg_get_functiondef), per nome di funzione.
 const catalogo = () => {

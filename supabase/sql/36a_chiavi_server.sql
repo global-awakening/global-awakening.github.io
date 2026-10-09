@@ -176,11 +176,11 @@ BEGIN
       FROM telepathy_availability a WHERE a.id = p_disponibilita_id;
   ELSIF p_session_online IS NOT NULL AND length(p_session_online) <= 255 THEN  -- 36a: l'online si controlla sotto, per tutte e due le forme
     SELECT u.id, nome_pubblico(u.id, u.nickname) INTO o_sid, o_nome
-      FROM online_users u
+      FROM online_users u                                                         -- 36a: stessa tabella, WHERE riscritto
      WHERE (id_pubblico(u.id) = p_session_online                                  -- 36a: l'id pubblico della lista
             OR (p_session_online NOT LIKE 'pub\_%' AND u.id = p_session_online))  -- 36a: il grezzo solo fino alla 36b
        AND u.last_seen::timestamptz > now() - interval '30 seconds'               -- 36a: era telepatia_online(p_session_online)
-     ORDER BY u.last_seen::timestamptz DESC LIMIT 1;
+     ORDER BY u.last_seen::timestamptz DESC LIMIT 1;                              -- 36a: era sulla riga del FROM
   END IF;
 END $function$;
 REVOKE ALL ON FUNCTION public.telepatia_risolvi(uuid, text)                    FROM PUBLIC, anon, authenticated;
@@ -193,7 +193,8 @@ CREATE OR REPLACE FUNCTION public.telepatia_in_training(p_session_id text, p_esc
 AS $function$
   SELECT EXISTS (
     SELECT 1 FROM telepathy_matches m
-     WHERE (m.user1_id IN (p_session_id, id_pubblico(p_session_id)) OR m.user2_id IN (p_session_id, id_pubblico(p_session_id)))  -- 36a: le due forme fino alla 36b
+     WHERE (m.user1_id = id_pubblico(p_session_id) OR (p_session_id NOT LIKE 'pub\_%' AND m.user1_id = p_session_id)     -- 36a: id pubblico, o il grezzo (non pub_) fino alla 36b
+         OR m.user2_id = id_pubblico(p_session_id) OR (p_session_id NOT LIKE 'pub\_%' AND m.user2_id = p_session_id))    -- 36a: idem per user2
        AND m.ended_at IS NULL
        AND m.ultima_attivita > now() - interval '10 minutes'
        AND (p_escludi IS NULL OR m.id <> p_escludi)
@@ -225,7 +226,8 @@ BEGIN
     IF p_match_id IS NULL OR NOT EXISTS (
          SELECT 1 FROM telepathy_matches m
           WHERE m.id = p_match_id AND m.ended_at IS NULL
-            AND m.user1_id IN (v.from_id, id_pubblico(v.from_id)) AND m.user2_id IN (v.to_id, id_pubblico(v.to_id))) THEN  -- 36a: ciascun lato pubblico o grezzo
+            AND (m.user1_id = id_pubblico(v.from_id) OR (v.from_id NOT LIKE 'pub\_%' AND m.user1_id = v.from_id))  -- 36a: id pubblico, o il grezzo (non pub_) fino alla 36b
+            AND (m.user2_id = id_pubblico(v.to_id) OR (v.to_id NOT LIKE 'pub\_%' AND m.user2_id = v.to_id))) THEN  -- 36a: idem per user2
       RETURN jsonb_build_object('ok', false, 'motivo', 'match_non_valido');
     END IF;
     -- Nessuno si ritrova in due sessioni.
