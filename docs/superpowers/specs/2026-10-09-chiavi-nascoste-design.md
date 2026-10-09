@@ -8,14 +8,14 @@ Segue «notifiche chiuse» (35a/35b, live il 09/10). Irene: autonomia con le opz
 Per un ospite il `session_id` è l'intera credenziale: chi lo conosce può agire a suo nome nelle
 RPC che chiedono solo quello (unirsi o lasciare un rituale, segnare la presenza, accettare inviti,
 leggere le sue notifiche). Oggi quel valore è leggibile da chiunque abbia la chiave pubblica,
-in cinque punti (verificato sul DB vero il 09/10 con `has_table_privilege` + policy):
+in sei punti (verificato sul DB vero il 09/10 con `has_table_privilege` + policy):
 
 | Dove | Colonna | Accesso anon oggi |
 |---|---|---|
 | `online_users` | `id` = session_id | policy `allow all`: lettura **e** scrittura (presenze falsificabili) |
 | `telepathy_queue` | `id` = session_id | policy `allow all`: lettura e scrittura |
 | `telepathy_matches` | `user1_id`, `user2_id` | policy `allow all`: lettura e scrittura |
-| `rituals` e vista `rituali_correnti` | `creator_id`, `participants[]` | lettura pubblica (scrittura solo via RPC) |
+| `rituals` e vista `rituali_correnti` | `creator_id`, `participants[]`, `candles[]`, chiavi di `candles_nomi` | lettura pubblica (scrittura solo via RPC) |
 | RPC degli inviti (`aggiornaInviti`, `respond_telepathy_invite`) | `from_id` restituito a chi riceve | consegnato al destinatario dell'invito |
 
 L'app usa il session_id anche come **identità pubblica**: confronta `participants.includes(sessionId)`,
@@ -34,14 +34,18 @@ agli inviti e alle partite. Il valore è sempre lo stesso: la chiave fa anche da
 ## Id pubblico
 
 - `id_pubblico(sid text) RETURNS text` = `'pub_'` seguito dai primi 32 caratteri esadecimali di
-  `extensions.hmac(sid, segreto, 'sha256')` (36 caratteri). Il prefisso lo rende inconfondibile con
+  `sha256(segreto || convert_to(sid, 'UTF8'))` in esadecimale (36 caratteri in tutto). Si usa `sha256()`
+  di Postgres e non `extensions.hmac` perché PGlite, il Postgres delle prove locali, non ha pgcrypto: così
+  si prova lo stesso codice che va online. Con un segreto di 32 byte in testa la forza bruta non è possibile. Il prefisso lo rende inconfondibile con
   un session_id: sul DB vero ce ne sono di 8, 32 e 33 caratteri. Il segreto è una riga nuova di `app_secrets`
-  (`nome = 'id_pubblico_salt'`, 32 byte casuali generati nella 36a, mai fuori dal DB). Stesso
+  (`nome = 'id_pubblico_salt'`, 32 byte casuali generati nella 36a con `gen_random_uuid()` concatenati, mai fuori dal DB). Stesso
   schema della 26 (`login_salt`).
-- Perché HMAC e non un semplice sha256: ci sono session_id legacy di 8 caratteri. Un hash puro
+- Perché un segreto e non un semplice sha256 del session_id: ci sono session_id legacy di 8 caratteri. Un hash puro
   di 8 caratteri si rovescia per forza bruta in pochi minuti; con il segreto lato server, no.
 - `STABLE` (legge `app_secrets`), SECURITY DEFINER, **non** concessa ad anon. NULL in ingresso → NULL.
-  Un valore che inizia già con `pub_` resta com'è (idempotente: utile nei confronti a due forme).
+  Un valore che inizia con `pub_` dà NULL: non è un session_id valido. Altrimenti chi si sceglie come
+  session_id `pub_<id di un altro>` assumerebbe la sua identità pubblica (e riceverebbe i suoi inviti).
+  Per lo stesso motivo le RPC nuove rifiutano un `p_session_id` che inizia con `pub_`.
 - RPC pubblica `mio_id_pubblico(p_session_id text) RETURNS text`: l'app la chiama una volta
   all'avvio (e a ogni cambio di sessione) e tiene il valore in memoria (`myPublicId`).
   Non è un oracolo utile: dà l'id pubblico di una chiave che si conosce già.
@@ -67,14 +71,14 @@ Se l'identità non regge, la RPC non scrive e restituisce la lista senza di me.
     `busy` = è in una partita viva (`telepathy_matches` con `ended_at` nullo), calcolato sul server:
     toglie all'app la lettura di `telepathy_matches` fatta solo per questo.
   - Tetto: chiamata ogni 4 s, nessun anti-raffica oltre l'upsert (una riga per sid).
-- `esci_presenza(p_session_id) RETURNS void`: cancella la mia riga (all'uscita).
+- `esci_presenza(p_session_id, p_password_hash) RETURNS void`: cancella la mia riga (all'uscita).
 - `presenza_di(p_id_pubblico text) RETURNS timestamptz`: `last_seen` della persona con quell'id
   pubblico, o NULL. Sostituisce le 3 letture `online_users.select('last_seen').eq('id', partner.id)`.
 
 ### Coda della telepatia (abbinamento casuale)
 - `coda_entra(p_session_id, p_password_hash, p_nickname) RETURNS void`: upsert con nome verificato
   e timestamp attuale; pulisce le righe oltre 60 s (come oggi).
-- `coda_esci(p_session_id) RETURNS void`.
+- `coda_esci(p_session_id, p_password_hash) RETURNS void`.
 - `coda_leggi(p_session_id) RETURNS jsonb`: le altre righe in ordine di arrivo,
   `[{id: id_pubblico(id), nickname, timestamp}]`.
 
@@ -97,7 +101,8 @@ Se l'identità non regge, la RPC non scrive e restituisce la lista senza di me.
 - Vista nuova `rituali_pubblici` (36a): stesse colonne di `rituali_correnti`, costruita sopra di
   essa, **senza** `security_invoker` (gira coi diritti del proprietario), con
   `creator_id = id_pubblico(creator_id)` e
-  `participants = array(select id_pubblico(x) from unnest(participants))`. Nomi di colonna
+  `participants` e `candles` mappati elemento per elemento (stesso ordine), `candles_nomi` con le
+  chiavi mappate. Nomi di colonna
   invariati: l'app cambia solo il nome della vista letta e i confronti (con `myPublicId`).
 - `rituali_correnti` resta com'è (`security_invoker`) per le funzioni interne; nella 36b anon perde
   il SELECT su di essa e su `rituals`, quindi non la legge più.
@@ -135,14 +140,14 @@ oggi sono 7 righe).
   partner → `presenza_di`. Niente più lettura di `telepathy_matches` per `busy`.
 - Coda: le 10 operazioni dirette su `telepathy_queue` → `coda_entra`/`coda_esci`/`coda_leggi`.
 - Partite: ovunque l'app scrive o confronta `sessionId` con `user1_id/user2_id`, usa `myPublicId`.
-- Rituali: lettura da `rituali_pubblici`; `participants.includes(sessionId)` e
-  `creator_id === sessionId` → `myPublicId`. Le RPC dei rituali continuano a ricevere `sessionId`.
+- Rituali: lettura da `rituali_pubblici`; `participants.includes(sessionId)`, `candles.includes(sessionId)`,
+  `candles_nomi[sid]` e `creator_id === sessionId` → `myPublicId`. Le RPC dei rituali continuano a ricevere `sessionId`.
 - Le RPC continuano a ricevere il **mio** session_id: la chiave viaggia solo dal mio telefono al server.
 
 ## Prove
 
 - **SQL locale (PGlite, `scripts/pg-locale.js`)**, `test-chiavi-nascoste-sql.js`:
-  - `id_pubblico`: deterministica, `pub_` + 32 caratteri esadecimali, idempotente, cambia col segreto, NULL→NULL,
+  - `id_pubblico`: deterministica, `pub_` + 32 caratteri esadecimali, `pub_…` in ingresso → NULL, cambia col segreto, NULL→NULL,
     non eseguibile da anon;
   - presenze: scrivo solo la mia riga, col nome verificato (un nickname falso non passa); la lista
     non contiene alcun session_id; `busy` corretto; pulizia dei 2 minuti;
