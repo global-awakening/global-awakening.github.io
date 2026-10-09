@@ -1,5 +1,5 @@
 -- ============================================================================
--- 36a_chiavi_server.sql — chiavi nascoste, parte additiva (spec 2026-10-09, Task 1: sezioni A-C).
+-- 36a_chiavi_server.sql — chiavi nascoste, parte additiva (spec 2026-10-09; sezioni A-C Task 1, D-E Task 2).
 -- Scopo: il session_id di un ospite è la sua unica credenziale e oggi sta in chiaro in
 -- online_users e telepathy_queue, leggibili da chiunque. Qui nasce l'id pubblico `pub_…`
 -- (hash col segreto del server) e presenze e coda passano da funzioni che restituiscono
@@ -135,6 +135,212 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.coda_leggi(text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.coda_leggi(text) TO anon, authenticated;
+
+-- ════ D. Vista pubblica dei rituali ══════════════════════════════════════════
+-- Stesse colonne di rituali_correnti, nello stesso ordine; i session_id diventano id pubblici
+-- (participants e candles elemento per elemento, nello stesso ordine; candles_nomi sulle chiavi).
+-- Gira coi diritti del proprietario (niente security_invoker): dopo la 36b anon non legge
+-- rituals né rituali_correnti, solo questa vista.
+-- 36a: niente chiamate a id_pubblico qui dentro. In una vista le TABELLE si leggono coi diritti
+-- del proprietario, ma le FUNZIONI si eseguono coi diritti di chi legge: anon non può eseguire
+-- id_pubblico (e non deve). Quindi la stessa formula di id_pubblico è scritta in linea, col sale
+-- letto da app_secrets coi diritti del proprietario. Se cambia la formula di id_pubblico, va
+-- cambiata anche qui: il test V1 confronta la vista con id_pubblico.
+CREATE OR REPLACE VIEW public.rituali_pubblici AS
+SELECT rc.id, rc.creator,
+       CASE WHEN rc.creator_id NOT LIKE 'pub\_%' THEN 'pub_' || left(encode(sha256(s.sale || convert_to(rc.creator_id, 'UTF8')), 'hex'), 32) END AS creator_id,
+       rc.name, rc.description, rc.type, rc.sacred_number,
+       rc.date, rc."time", rc.duration,
+       coalesce((SELECT jsonb_agg(CASE WHEN x NOT LIKE 'pub\_%' THEN 'pub_' || left(encode(sha256(s.sale || convert_to(x, 'UTF8')), 'hex'), 32) END ORDER BY o)
+                   FROM jsonb_array_elements_text(rc.participants) WITH ORDINALITY AS t(x, o)), '[]'::jsonb) AS participants,
+       rc.energy, rc.created_at,
+       coalesce((SELECT jsonb_agg(CASE WHEN x NOT LIKE 'pub\_%' THEN 'pub_' || left(encode(sha256(s.sale || convert_to(x, 'UTF8')), 'hex'), 32) END ORDER BY o)
+                   FROM jsonb_array_elements_text(rc.candles) WITH ORDINALITY AS t(x, o)), '[]'::jsonb) AS candles,
+       rc.ripeti_giorni, rc.ripeti_fino, rc.fuso, rc.ora_locale, rc.data_inizio_locale, rc.fermato_il, rc.candles_occorrenza,
+       rc.prima_date, rc.prima_time, rc.occorrenza_numero, rc.occorrenze_totali, rc.presenti_ora,
+       coalesce((SELECT jsonb_object_agg('pub_' || left(encode(sha256(s.sale || convert_to(k, 'UTF8')), 'hex'), 32), v)
+                   FROM jsonb_each(rc.candles_nomi) AS e(k, v) WHERE k NOT LIKE 'pub\_%' AND s.sale IS NOT NULL), '{}'::jsonb) AS candles_nomi
+  FROM rituali_correnti rc
+  LEFT JOIN (SELECT valore AS sale FROM app_secrets WHERE nome = 'id_pubblico_salt') s ON true;
+REVOKE ALL ON public.rituali_pubblici FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.rituali_pubblici TO anon, authenticated;
+
+-- ════ E. Inviti e partite: funzioni ridefinite ═══════════════════════════════
+-- Testo copiato dal catalogo live del 09/10 (docs/superpowers/plans/catalogo-chiavi-36.txt);
+-- cambiano solo le righe marcate «-- 36a:». REVOKE/GRANT come nella 32a.
+-- send_telepathy_invite, block_telepathy_inviter e cancel_telepathy_invite non cambiano: passano
+-- da telepatia_risolvi e non restituiscono session_id.
+
+CREATE OR REPLACE FUNCTION public.telepatia_risolvi(p_disponibilita_id uuid, p_session_online text, OUT o_sid text, OUT o_nome text)
+ RETURNS record
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+BEGIN
+  IF p_disponibilita_id IS NOT NULL THEN
+    SELECT a.session_id, nome_pubblico(a.session_id, a.nickname) INTO o_sid, o_nome
+      FROM telepathy_availability a WHERE a.id = p_disponibilita_id;
+  ELSIF p_session_online IS NOT NULL AND length(p_session_online) <= 255 THEN  -- 36a: l'online si controlla sotto, per tutte e due le forme
+    SELECT u.id, nome_pubblico(u.id, u.nickname) INTO o_sid, o_nome
+      FROM online_users u
+     WHERE (id_pubblico(u.id) = p_session_online                                  -- 36a: l'id pubblico della lista
+            OR (p_session_online NOT LIKE 'pub\_%' AND u.id = p_session_online))  -- 36a: il grezzo solo fino alla 36b
+       AND u.last_seen::timestamptz > now() - interval '30 seconds'               -- 36a: era telepatia_online(p_session_online)
+     ORDER BY u.last_seen::timestamptz DESC LIMIT 1;
+  END IF;
+END $function$;
+REVOKE ALL ON FUNCTION public.telepatia_risolvi(uuid, text)                    FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.telepatia_in_training(p_session_id text, p_escludi uuid DEFAULT NULL::uuid)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  SELECT EXISTS (
+    SELECT 1 FROM telepathy_matches m
+     WHERE (m.user1_id IN (p_session_id, id_pubblico(p_session_id)) OR m.user2_id IN (p_session_id, id_pubblico(p_session_id)))  -- 36a: le due forme fino alla 36b
+       AND m.ended_at IS NULL
+       AND m.ultima_attivita > now() - interval '10 minutes'
+       AND (p_escludi IS NULL OR m.id <> p_escludi)
+       AND (m.giocato OR EXISTS (SELECT 1 FROM telepathy_invites i WHERE i.match_id = m.id AND i.status = 'accepted')));
+$function$;
+REVOKE ALL ON FUNCTION public.telepatia_in_training(text, uuid)                FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.respond_telepathy_invite(p_invite_id uuid, p_session_id text, p_password_hash text, p_accept boolean, p_match_id uuid DEFAULT NULL::uuid)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE v telepathy_invites%ROWTYPE; v_stato text; v_nid uuid;
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  IF p_invite_id IS NULL OR p_accept IS NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'dati_non_validi'); END IF;
+  SELECT * INTO v FROM telepathy_invites WHERE id = p_invite_id AND to_id = p_session_id;
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovato'); END IF;
+  IF v.status = 'pending' AND v.expires_at <= now() THEN
+    UPDATE telepathy_invites SET status = 'expired', responded_at = now() WHERE id = v.id AND status = 'pending';
+    v.status := 'expired';
+  END IF;
+  IF v.status <> 'pending' THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', telepatia_motivo_stato(v.status));
+  END IF;
+
+  IF p_accept THEN
+    IF p_match_id IS NULL OR NOT EXISTS (
+         SELECT 1 FROM telepathy_matches m
+          WHERE m.id = p_match_id AND m.ended_at IS NULL
+            AND m.user1_id IN (v.from_id, id_pubblico(v.from_id)) AND m.user2_id IN (v.to_id, id_pubblico(v.to_id))) THEN  -- 36a: ciascun lato pubblico o grezzo
+      RETURN jsonb_build_object('ok', false, 'motivo', 'match_non_valido');
+    END IF;
+    -- Nessuno si ritrova in due sessioni.
+    IF telepatia_in_training(p_session_id, p_match_id) OR telepatia_in_training(v.from_id, p_match_id) THEN
+      RETURN jsonb_build_object('ok', false, 'motivo', 'in_match');
+    END IF;
+    UPDATE telepathy_invites SET status = 'accepted', match_id = p_match_id, responded_at = now()
+     WHERE id = v.id AND status = 'pending' AND expires_at > now();
+    IF NOT FOUND THEN
+      -- Un altro telefono ha risposto un istante prima, o la scadenza è arrivata adesso.
+      SELECT status INTO v_stato FROM telepathy_invites WHERE id = v.id;
+      RETURN jsonb_build_object('ok', false, 'motivo', telepatia_motivo_stato(coalesce(v_stato, 'expired')));
+    END IF;
+    -- Chi sta per giocare non può restare invitante di qualcun altro.
+    UPDATE telepathy_invites SET status = 'cancelled', responded_at = now()
+     WHERE from_id = p_session_id AND status = 'pending';
+    -- Anche per gli inviti da 45 s: chi ha invitato può aver posato il telefono.
+    PERFORM telepatia_chiama_motore(jsonb_build_object('invito', v.id, 'tipo', 'accettato'));
+    v_stato := 'accepted';
+  ELSE
+    UPDATE telepathy_invites SET status = 'declined', responded_at = now()
+     WHERE id = v.id AND status = 'pending' AND expires_at > now();
+    IF NOT FOUND THEN
+      SELECT status INTO v_stato FROM telepathy_invites WHERE id = v.id;
+      RETURN jsonb_build_object('ok', false, 'motivo', telepatia_motivo_stato(coalesce(v_stato, 'expired')));
+    END IF;
+    -- NUOVO (35): se fra i due c'è un blocco, in un senso o nell'altro, chi ha invitato non
+    -- riceve nulla; il rifiuto va comunque a buon fine.
+    IF NOT notifica_bloccata(v.from_id, v.from_name, p_session_id, v.to_name) THEN
+      INSERT INTO notifications (user_nickname, sender_nickname, type, message)
+      VALUES (v.from_name, v.to_name, 'telepathy_declined',
+              v.to_name || ' ha rifiutato il tuo invito al training telepatico')
+      RETURNING id INTO v_nid;
+      INSERT INTO notifiche_instradamento (notifica_id, recipient_session_id, sender_session_id)
+      VALUES (v_nid, v.from_id, p_session_id);
+    END IF;
+    -- Per un invito da 45 s chi ha invitato è online e lo vede nell'app.
+    IF telepatia_era_da_dieci(v.created_at, v.expires_at) THEN
+      PERFORM telepatia_chiama_motore(jsonb_build_object('invito', v.id, 'tipo', 'rifiutato'));
+    END IF;
+    v_stato := 'declined';
+  END IF;
+  RETURN jsonb_build_object('ok', true, 'status', v_stato, 'responded_at', now(), 'adesso', now());
+END $function$;
+REVOKE ALL ON FUNCTION public.respond_telepathy_invite(uuid, text, text, boolean, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.respond_telepathy_invite(uuid, text, text, boolean, uuid) TO anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.get_my_telepathy_invites(p_session_id text, p_password_hash text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE v_in jsonb; v_out jsonb;
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  -- La risposta non mente anche se il cron è in ritardo.
+  UPDATE telepathy_invites SET status = 'expired', responded_at = now()
+   WHERE status = 'pending' AND expires_at <= now() AND (from_id = p_session_id OR to_id = p_session_id);
+  SELECT jsonb_build_object('id', i.id, 'nome', i.from_name, 'from_id', id_pubblico(i.from_id), 'status', i.status,  -- 36a: from_id pubblico
+                            'expires_at', i.expires_at, 'created_at', i.created_at, 'responded_at', i.responded_at,
+                            'match_id', i.match_id, 'push_saltata', i.push_saltata)
+    INTO v_in
+    FROM telepathy_invites i
+   WHERE i.to_id = p_session_id AND i.status = 'pending' AND i.expires_at > now()
+     AND NOT telepatia_bloccati(i.from_id, i.from_name, i.to_id, i.to_name)
+   ORDER BY i.created_at DESC LIMIT 1;
+  SELECT jsonb_build_object('id', o.id, 'nome', o.to_name, 'status', o.status, 'expires_at', o.expires_at,
+                            'created_at', o.created_at, 'responded_at', o.responded_at, 'match_id', o.match_id,
+                            'push_saltata', o.push_saltata)
+    INTO v_out
+    FROM telepathy_invites o
+   WHERE o.from_id = p_session_id AND o.created_at > now() - interval '24 hours'
+   ORDER BY o.created_at DESC LIMIT 1;
+  RETURN jsonb_build_object('ok', true, 'adesso', now(), 'in_arrivo', v_in, 'in_uscita', v_out);
+END $function$;
+REVOKE ALL ON FUNCTION public.get_my_telepathy_invites(text, text)                      FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_my_telepathy_invites(text, text)                      TO anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.get_telepathy_invite(p_invite_id uuid, p_session_id text, p_password_hash text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE v telepathy_invites%ROWTYPE; v_ruolo text;
+BEGIN
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  SELECT * INTO v FROM telepathy_invites WHERE id = p_invite_id AND (from_id = p_session_id OR to_id = p_session_id);
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovato', 'adesso', now()); END IF;
+  v_ruolo := CASE WHEN v.to_id = p_session_id THEN 'destinatario' ELSE 'mittente' END;
+  IF v_ruolo = 'destinatario' AND telepatia_bloccati(v.from_id, v.from_name, v.to_id, v.to_name) THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovato', 'adesso', now());
+  END IF;
+  IF v.status = 'pending' AND v.expires_at <= now() THEN
+    UPDATE telepathy_invites SET status = 'expired', responded_at = now() WHERE id = v.id AND status = 'pending';
+    v.status := 'expired';
+  END IF;
+  RETURN jsonb_build_object('ok', true, 'adesso', now(), 'invito', jsonb_build_object(
+    'id', v.id, 'ruolo', v_ruolo,
+    'nome', CASE WHEN v_ruolo = 'destinatario' THEN v.from_name ELSE v.to_name END,
+    'status', v.status, 'expires_at', v.expires_at, 'created_at', v.created_at,
+    'responded_at', v.responded_at, 'match_id', v.match_id, 'push_saltata', v.push_saltata,
+    'match_attivo', EXISTS (SELECT 1 FROM telepathy_matches m WHERE m.id = v.match_id AND m.ended_at IS NULL),
+    'from_id', CASE WHEN v_ruolo = 'destinatario' AND v.status = 'pending' THEN id_pubblico(v.from_id) END));  -- 36a: from_id pubblico
+END $function$;
+REVOKE ALL ON FUNCTION public.get_telepathy_invite(uuid, text, text)                    FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_telepathy_invite(uuid, text, text)                    TO anon, authenticated;
 
 NOTIFY pgrst, 'reload schema';
 COMMIT;

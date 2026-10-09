@@ -5,7 +5,7 @@
  * Niente Supabase: PGlite con lo schema del catalogo (scripts/pg-locale.js) e le migration vere.
  * Ogni sezione gira su un database nuovo.
  */
-const { creaDbTelepatia } = require('./scripts/pg-locale');
+const { creaDbTelepatia, applicaFile, F36A } = require('./scripts/pg-locale');
 let passed = 0, failed = 0;
 const check = (c, m, x) => { if (c) { console.log(`  ✅ ${m}`); passed++; } else { console.log(`  ❌ ${m}${x !== undefined ? ' — ' + JSON.stringify(x) : ''}`); failed++; process.exitCode = 1; } };
 const errore = async (p) => { try { await p; return null; } catch (e) { return e.message; } };
@@ -90,6 +90,153 @@ sezione('C1. coda', async (db) => {
   check((await comeAnon(db, () => chiama(db, 'coda_leggi', { p_session_id: 'sidA' }))).length === 0, 'oltre 60 s si esce');
   await comeAnon(db, () => chiama(db, 'coda_esci', { p_session_id: 'sidA', p_password_hash: null }));
   check((await righe(db, `SELECT 1 FROM telepathy_queue WHERE id = 'sidA'`)).length === 0, 'coda_esci');
+});
+
+sezione('V1. vista rituali_pubblici', async (db) => {
+  const rid = (await uno(db, `INSERT INTO rituals (creator, creator_id, name, type, sacred_number, date, time, duration, participants, candles)
+    VALUES ('Ada', 'sidA', 'r', 'meditation', 7, to_char(now() + interval '1 day', 'YYYY-MM-DD'), '10:00:00', 3,
+            '["sidA","sidB"]'::jsonb, '["sidB","sidA"]'::jsonb) RETURNING id`)).id;
+  await db.query(`UPDATE rituals SET candles_nomi = '{"sidA":"Ada","sidB":"Bea"}'::jsonb WHERE id = $1`, [rid]);
+  const pA = await pub(db, 'sidA'), pB = await pub(db, 'sidB');
+  const [r] = await comeAnon(db, () => righe(db, `SELECT * FROM rituali_pubblici WHERE id = $1`, [rid]));
+  check(r.creator_id === pA, 'creator_id pubblico', r.creator_id);
+  check(JSON.stringify(r.participants) === JSON.stringify([pA, pB]), 'participants pubblici, stesso ordine', r.participants);
+  check(JSON.stringify(r.candles) === JSON.stringify([pB, pA]), 'candles pubbliche, ordine di accensione', r.candles);
+  check(r.candles_nomi && r.candles_nomi[pA] === 'Ada' && r.candles_nomi[pB] === 'Bea' && Object.keys(r.candles_nomi).length === 2,
+    'candles_nomi con chiavi pubbliche', r.candles_nomi);
+  check(nessunSid(r, ['sidA', 'sidB']), 'nessun session_id nella riga', r);
+  const colP = (await righe(db, `SELECT column_name FROM information_schema.columns WHERE table_name = 'rituali_pubblici' ORDER BY ordinal_position`)).map((x) => x.column_name);
+  const colC = (await righe(db, `SELECT column_name FROM information_schema.columns WHERE table_name = 'rituali_correnti' ORDER BY ordinal_position`)).map((x) => x.column_name);
+  check(colC.length > 0 && JSON.stringify(colP) === JSON.stringify(colC), 'stesse colonne di rituali_correnti, stesso ordine', { colP, colC });
+  const w = await comeAnon(db, () => errore(db.query(`UPDATE rituali_pubblici SET name = 'x'`)));
+  check(w !== null, 'anon non scrive dalla vista', w);
+  const priv = await righe(db, `SELECT grantee, privilege_type FROM information_schema.role_table_grants
+                                 WHERE table_name = 'rituali_pubblici' AND grantee IN ('anon', 'authenticated', 'PUBLIC') ORDER BY 1, 2`);
+  check(JSON.stringify(priv) === JSON.stringify([{ grantee: 'anon', privilege_type: 'SELECT' }, { grantee: 'authenticated', privilege_type: 'SELECT' }]),
+    'anon e authenticated: solo SELECT', priv);
+  // Ritual vuoto: liste vuote, non NULL.
+  const rid2 = (await uno(db, `INSERT INTO rituals (creator, creator_id, name, type, sacred_number, date, time, duration)
+    VALUES ('Bea', 'sidB', 'r2', 'meditation', 7, to_char(now() + interval '1 day', 'YYYY-MM-DD'), '11:00:00', 3) RETURNING id`)).id;
+  const [r2] = await comeAnon(db, () => righe(db, `SELECT participants, candles, candles_nomi FROM rituali_pubblici WHERE id = $1`, [rid2]));
+  check(JSON.stringify(r2) === '{"participants":[],"candles":[],"candles_nomi":{}}', 'rituale senza partecipanti: liste vuote', r2);
+});
+
+// ── Inviti e partite ──
+const presente = (db, sid, nick) => comeAnon(db, () => chiama(db, 'aggiorna_presenza', { ...G(sid, nick), p_lat: 0, p_lng: 0 }));
+const coppia = async (db) => { await presente(db, 'sidA', 'Ada'); await presente(db, 'sidB', 'Bea'); return { pA: await pub(db, 'sidA'), pB: await pub(db, 'sidB') }; };
+const invita = (db, sid, nick, online) => comeAnon(db, () => chiama(db, 'send_telepathy_invite', { ...G(sid, nick), p_session_online: online }));
+const mieiInviti = (db, sid) => comeAnon(db, () => chiama(db, 'get_my_telepathy_invites', { p_session_id: sid, p_password_hash: null }));
+const unInvito = (db, id, sid) => comeAnon(db, () => chiama(db, 'get_telepathy_invite', { p_invite_id: id, p_session_id: sid, p_password_hash: null }));
+const accetta = (db, id, sid, match) => comeAnon(db, () => chiama(db, 'respond_telepathy_invite',
+  { p_invite_id: id, p_session_id: sid, p_password_hash: null, p_accept: true, p_match_id: match }));
+const partita = async (db, u1, u2) => (await uno(db, `INSERT INTO telepathy_matches (user1_id, user2_id, da_invito) VALUES ($1, $2, true) RETURNING id`, [u1, u2])).id;
+const risolvi = (db, online) => uno(db, `SELECT o_sid, o_nome FROM telepatia_risolvi(NULL::uuid, $1)`, [online]);
+const inTraining = (db, sid) => uno(db, `SELECT telepatia_in_training($1) AS t`, [sid]).then((r) => r.t);
+// Su un DB nuovo: A invita B (come dice `destinatario`), poi B accetta la partita (u1, u2).
+const accettazione = async (destinatario, u1, u2) => {
+  const db = await creaDbTelepatia({ con35a: true, con36a: true });
+  const ids = await coppia(db);
+  const nomi = { pA: ids.pA, pB: ids.pB, sidA: 'sidA', sidB: 'sidB', pC: await pub(db, 'sidC') };
+  const inv = await invita(db, 'sidA', 'Ada', nomi[destinatario]);
+  const x = inv.ok ? await accetta(db, inv.id, 'sidB', await partita(db, nomi[u1], nomi[u2])) : null;
+  return { inv, x };
+};
+
+sezione('T1. inviti e partite', async (db) => {
+  const { pA, pB } = await coppia(db);
+  const nessuno = await invita(db, 'sidA', 'Ada', 'pub_' + '0'.repeat(32));
+  check(nessuno.ok === false && nessuno.motivo === 'non_disponibile', 'invito a un id pubblico che non c\'è: non_disponibile', nessuno);
+  const inv = await invita(db, 'sidA', 'Ada', pB);
+  check(inv.ok === true, 'A invita B con l\'id pubblico di B', inv);
+  check((await uno(db, `SELECT to_id FROM telepathy_invites WHERE id = $1`, [inv.id])).to_id === 'sidB', 'l\'invito resta intestato al session_id di B (interno)');
+  const miei = await mieiInviti(db, 'sidB');
+  check(miei.in_arrivo && miei.in_arrivo.from_id === pA, 'get_my_telepathy_invites: from_id pubblico', miei.in_arrivo);
+  check(nessunSid(miei, ['sidA', 'sidB']), 'get_my_telepathy_invites: nessun session_id', miei);
+  const uno1 = await unInvito(db, inv.id, 'sidB');
+  check(uno1.ok === true && uno1.invito.from_id === pA && nessunSid(uno1, ['sidA', 'sidB']), 'get_telepathy_invite (destinatario): from_id pubblico', uno1);
+  const uno2 = await unInvito(db, inv.id, 'sidA');
+  check(uno2.ok === true && uno2.invito.from_id === null, 'get_telepathy_invite (mittente): nessun from_id', uno2);
+  const xa = await accetta(db, inv.id, 'sidB', await partita(db, pA, pB));
+  check(xa.ok === true && xa.status === 'accepted', '(a) partita pubblico/pubblico (app nuove): accettata', xa);
+  check(await inTraining(db, 'sidA') === true && await inTraining(db, 'sidB') === true, 'dopo l\'accettazione A e B sono in training (partita con id pubblici)');
+
+  const b = await accettazione('pB', 'pA', 'sidB');
+  check(b.inv.ok === true && b.x.ok === true, '(b) partita pubblico/grezzo (B con l\'app vecchia): accettata', b);
+  const c = await accettazione('sidB', 'sidA', 'sidB');
+  check(c.inv.ok === true, 'invito col session_id grezzo (app vecchia, fino alla 36b): ok', c.inv);
+  check(c.x && c.x.ok === true, '(c) partita grezzo/grezzo (app vecchie): accettata', c.x);
+  const t = await accettazione('pB', 'pC', 'pB');
+  check(t.inv.ok === true && t.x.ok === false && t.x.motivo === 'match_non_valido', 'partita con l\'id pubblico di un terzo: match_non_valido', t);
+
+  const d = await creaDbTelepatia({ con35a: true, con36a: true });
+  const m = await partita(d, await pub(d, 'sidA'), 'altro');
+  check(await inTraining(d, 'sidA') === false, 'partita pubblica mai giocata, senza invito: non è un training');
+  await d.query(`UPDATE telepathy_matches SET giocato = true WHERE id = $1`, [m]);
+  check(await inTraining(d, 'sidA') === true, 'partita pubblica viva e giocata: sidA in training');
+  check(await inTraining(d, 'sidB') === false, 'gli altri no');
+});
+
+sezione('T2. un ospite che si chiama pub_<id di B>', async (db) => {
+  const { pB } = await coppia(db);
+  const l = await presente(db, pB, 'Eco');
+  check(!l.some((u) => u.nickname === 'Eco'), 'aggiorna_presenza col session_id pub_… non scrive', l);
+  check((await righe(db, `SELECT 1 FROM online_users WHERE id = $1`, [pB])).length === 0, 'nessuna riga pub_… in online_users');
+  let r = await risolvi(db, pB);
+  check(r.o_sid === 'sidB', 'telepatia_risolvi(pub(B)) risolve ancora sidB', r);
+  // Fino alla 36b online_users è scrivibile direttamente (app vecchia): l'impostore ci prova da lì.
+  await comeAnon(db, () => db.query(`INSERT INTO online_users (id, nickname, last_seen) VALUES ($1, 'Eco', now())`, [pB]));
+  r = await risolvi(db, pB);
+  check(r.o_sid === 'sidB', 'anche con una riga pub_… scritta a mano, risolve sidB', r);
+  await db.query(`UPDATE online_users SET last_seen = now() - interval '31 seconds' WHERE id = 'sidB'`);
+  r = await risolvi(db, pB);
+  check(r.o_sid === null, 'B non più online: nessuno, e non l\'impostore', r);
+  const x = await invita(db, 'sidA', 'Ada', pB);
+  check(x.ok === false && x.motivo === 'non_disponibile', 'l\'invito a pub(B) non arriva all\'impostore', x);
+  check(await inTraining(db, 'sidB') === false, 'sanità: B non in training');
+});
+
+const RITORNO = 'supabase/sql/36a_ritorno.sql';
+// I blocchi del catalogo live (testo di pg_get_functiondef), per nome di funzione.
+const catalogo = () => {
+  const t = require('fs').readFileSync(require('path').join(__dirname, 'docs/superpowers/plans/catalogo-chiavi-36.txt'), 'utf8').replace(/\r/g, '');
+  const m = {};
+  for (const b of t.split(/^-- ===== /m).slice(1)) m[b.slice(0, b.indexOf('('))] = b.slice(b.indexOf('\n') + 1).trim();
+  return m;
+};
+const CINQUE = ['telepatia_risolvi', 'telepatia_in_training', 'respond_telepathy_invite', 'get_my_telepathy_invites', 'get_telepathy_invite'];
+const definizione = (db, fn) => uno(db, `SELECT pg_get_functiondef(p.oid) AS d FROM pg_proc p WHERE p.proname = $1 AND p.pronamespace = 'public'::regnamespace`, [fn])
+  .then((r) => r.d.replace(/\r/g, '').trim());
+
+sezione('R1. 36a_ritorno', async (db) => {
+  check(!(await errore(applicaFile(db, F36A))), 'la 36a si applica due volte di fila senza errori');
+  await coppia(db);
+  const inv = await invita(db, 'sidA', 'Ada', 'sidB');
+  check(inv.ok === true, 'invito prima del ritorno', inv);
+  const e1 = await errore(applicaFile(db, RITORNO));
+  check(!e1, 'il ritorno si applica', e1);
+  const via = await uno(db, `SELECT to_regclass('public.rituali_pubblici') AS v, to_regprocedure('public.id_pubblico(text)') AS f,
+    (SELECT count(*)::int FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname IN
+      ('mio_id_pubblico', 'aggiorna_presenza', 'esci_presenza', 'presenza_di', 'coda_entra', 'coda_esci', 'coda_leggi',
+       'chiavi_chi_sono', 'chiavi_sid_valido', 'id_pubblico')) AS n,
+    (SELECT count(*)::int FROM app_secrets WHERE nome = 'id_pubblico_salt') AS sale`);
+  check(via.v === null && via.f === null && via.n === 0 && via.sale === 0, 'vista, funzioni nuove e sale tolti', via);
+  const miei = await mieiInviti(db, 'sidB');
+  check(miei.in_arrivo && miei.in_arrivo.from_id === 'sidA', 'get_my_telepathy_invites dà di nuovo il from_id grezzo', miei.in_arrivo);
+  const cat = catalogo();
+  const diversi = [];
+  for (const fn of CINQUE) if ((await definizione(db, fn)) !== cat[fn]) diversi.push(fn);
+  check(diversi.length === 0, 'le cinque funzioni sono identiche al catalogo live', diversi);
+  const priv = await righe(db, `SELECT p.proname, has_function_privilege('anon', p.oid, 'EXECUTE') AS anon,
+    has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth
+    FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname = ANY($1) ORDER BY 1`, [CINQUE]);
+  const atteso = { telepatia_risolvi: false, telepatia_in_training: false, respond_telepathy_invite: true, get_my_telepathy_invites: true, get_telepathy_invite: true };
+  check(priv.length === 5 && priv.every((p) => p.anon === atteso[p.proname] && p.auth === atteso[p.proname]), 'privilegi come prima della 36a', priv);
+  const e2 = await errore(applicaFile(db, RITORNO));
+  check(!e2, 'il ritorno si applica una seconda volta', e2);
+  const e3 = await errore(applicaFile(db, F36A));
+  check(!e3, 'dopo il ritorno la 36a si riapplica', e3);
+  const dopo = await mieiInviti(db, 'sidB');
+  check(dopo.in_arrivo && dopo.in_arrivo.from_id === await pub(db, 'sidA'), 'e il from_id torna pubblico', dopo.in_arrivo);
 });
 
 // ── esecuzione ──
