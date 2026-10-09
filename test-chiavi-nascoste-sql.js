@@ -37,10 +37,12 @@ sezione('I1. id_pubblico', async (db) => {
   check(await pub(db, a) === null, 'un valore pub_… dà NULL (non è un session_id)');
   await db.query(`UPDATE app_secrets SET valore = '\\x00' WHERE nome = 'id_pubblico_salt'`);
   check(await pub(db, 'sidA-123') !== a, 'cambia col segreto');
-  const e = await comeAnon(db, () => errore(pub(db, 'x')));
-  check(/permission denied/.test(e || ''), 'anon non esegue id_pubblico', e);
+  // Ruling: id_pubblico è eseguibile dall'app (serve alla vista rituali_pubblici) e non dà nulla
+  // di nuovo: lo stesso valore di mio_id_pubblico, NULL per un pub_….
   const m = await comeAnon(db, () => chiama(db, 'mio_id_pubblico', { p_session_id: 'sidB-123' }));
-  check(m === await pub(db, 'sidB-123'), 'mio_id_pubblico per anon = id_pubblico');
+  const mAnon = await comeAnon(db, () => pub(db, 'sidB-123'));
+  check(mAnon === m && m === await pub(db, 'sidB-123'), 'anon esegue id_pubblico: stesso valore di mio_id_pubblico', { mAnon, m });
+  check(await comeAnon(db, () => pub(db, mAnon)) === null, 'anon: id_pubblico di un pub_… è NULL');
   const e2 = await comeAnon(db, () => errore(chiama(db, 'mio_id_pubblico', { p_session_id: a })));
   check(e2 !== null, 'mio_id_pubblico rifiuta pub_…', e2);
 });

@@ -29,6 +29,9 @@ BEGIN
   RETURN 'pub_' || left(encode(sha256(v || convert_to(p_sid, 'UTF8')), 'hex'), 32);
 END $$;
 REVOKE ALL ON FUNCTION public.id_pubblico(text) FROM PUBLIC, anon, authenticated;
+-- Eseguibile dall'app: da un session_id che si conosce già dà solo il suo id pubblico (come
+-- mio_id_pubblico); un valore pub_… dà NULL. Serve anche alla vista rituali_pubblici.
+GRANT EXECUTE ON FUNCTION public.id_pubblico(text) TO anon, authenticated;
 
 -- Non legge tabelle: SQL puro, senza SECURITY DEFINER.
 CREATE OR REPLACE FUNCTION public.chiavi_sid_valido(p_sid text) RETURNS boolean
@@ -141,27 +144,17 @@ GRANT EXECUTE ON FUNCTION public.coda_leggi(text) TO anon, authenticated;
 -- (participants e candles elemento per elemento, nello stesso ordine; candles_nomi sulle chiavi).
 -- Gira coi diritti del proprietario (niente security_invoker): dopo la 36b anon non legge
 -- rituals né rituali_correnti, solo questa vista.
--- 36a: niente chiamate a id_pubblico qui dentro. In una vista le TABELLE si leggono coi diritti
--- del proprietario, ma le FUNZIONI si eseguono coi diritti di chi legge: anon non può eseguire
--- id_pubblico (e non deve). Quindi la stessa formula di id_pubblico è scritta in linea, col sale
--- letto da app_secrets coi diritti del proprietario. Se cambia la formula di id_pubblico, va
--- cambiata anche qui: il test V1 confronta la vista con id_pubblico.
+-- id_pubblico è eseguibile da anon (sezione A): in una vista le funzioni girano coi diritti di chi legge.
 CREATE OR REPLACE VIEW public.rituali_pubblici AS
-SELECT rc.id, rc.creator,
-       CASE WHEN rc.creator_id NOT LIKE 'pub\_%' THEN 'pub_' || left(encode(sha256(s.sale || convert_to(rc.creator_id, 'UTF8')), 'hex'), 32) END AS creator_id,
-       rc.name, rc.description, rc.type, rc.sacred_number,
+SELECT rc.id, rc.creator, id_pubblico(rc.creator_id) AS creator_id, rc.name, rc.description, rc.type, rc.sacred_number,
        rc.date, rc."time", rc.duration,
-       coalesce((SELECT jsonb_agg(CASE WHEN x NOT LIKE 'pub\_%' THEN 'pub_' || left(encode(sha256(s.sale || convert_to(x, 'UTF8')), 'hex'), 32) END ORDER BY o)
-                   FROM jsonb_array_elements_text(rc.participants) WITH ORDINALITY AS t(x, o)), '[]'::jsonb) AS participants,
+       coalesce((SELECT jsonb_agg(id_pubblico(x) ORDER BY o) FROM jsonb_array_elements_text(rc.participants) WITH ORDINALITY AS t(x, o)), '[]'::jsonb) AS participants,
        rc.energy, rc.created_at,
-       coalesce((SELECT jsonb_agg(CASE WHEN x NOT LIKE 'pub\_%' THEN 'pub_' || left(encode(sha256(s.sale || convert_to(x, 'UTF8')), 'hex'), 32) END ORDER BY o)
-                   FROM jsonb_array_elements_text(rc.candles) WITH ORDINALITY AS t(x, o)), '[]'::jsonb) AS candles,
+       coalesce((SELECT jsonb_agg(id_pubblico(x) ORDER BY o) FROM jsonb_array_elements_text(rc.candles) WITH ORDINALITY AS t(x, o)), '[]'::jsonb) AS candles,
        rc.ripeti_giorni, rc.ripeti_fino, rc.fuso, rc.ora_locale, rc.data_inizio_locale, rc.fermato_il, rc.candles_occorrenza,
        rc.prima_date, rc.prima_time, rc.occorrenza_numero, rc.occorrenze_totali, rc.presenti_ora,
-       coalesce((SELECT jsonb_object_agg('pub_' || left(encode(sha256(s.sale || convert_to(k, 'UTF8')), 'hex'), 32), v)
-                   FROM jsonb_each(rc.candles_nomi) AS e(k, v) WHERE k NOT LIKE 'pub\_%' AND s.sale IS NOT NULL), '{}'::jsonb) AS candles_nomi
-  FROM rituali_correnti rc
-  LEFT JOIN (SELECT valore AS sale FROM app_secrets WHERE nome = 'id_pubblico_salt') s ON true;
+       coalesce((SELECT jsonb_object_agg(id_pubblico(k), v) FROM jsonb_each(rc.candles_nomi) AS e(k, v) WHERE id_pubblico(k) IS NOT NULL), '{}'::jsonb) AS candles_nomi
+  FROM rituali_correnti rc;
 REVOKE ALL ON public.rituali_pubblici FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.rituali_pubblici TO anon, authenticated;
 
