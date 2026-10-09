@@ -146,7 +146,8 @@ async function cleanup() {
     } catch {
       const aBody = await pageA.evaluate(() => document.body.innerText.substring(0, 800).replace(/\s+/g, ' '));
       log('DEBUG', `A body (800 char): ${aBody}`);
-      const ouA = await sbFetch(`online_users?nickname=eq.${encodeURIComponent(NICK_B)}&select=id,nickname,last_seen`);
+      // Dalla 36b online_users si legge solo con la chiave di servizio; l'id (session_id) non si stampa.
+      const ouA = await sbFetchServizio(`online_users?nickname=eq.${encodeURIComponent(NICK_B)}&select=nickname,last_seen`);
       log('DEBUG', `B in online_users: ${JSON.stringify(ouA)}`);
       fail(`${NICK_B} NON compare nella lista di ${NICK_A} entro ${POLL_WAIT / 1000}s`);
     }

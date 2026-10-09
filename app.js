@@ -2247,6 +2247,37 @@ function GlobalAwakeningPlatform() {
     expandedRitualIdRef.current = expandedRitualId;
   }, [expandedRitualId]);
   const [sessionId, setSessionId] = useState(() => localStorage.getItem('ga_session_id') || Date.now() + '-' + Math.random());
+  const [myPublicId, setMyPublicId] = useState(null);
+  const myPublicIdRef = React.useRef(null);
+  React.useEffect(() => {
+    myPublicIdRef.current = null;
+    setMyPublicId(null);
+    if (!sessionId) return;
+    let fermo = false;
+    let timer = null;
+    const chiedi = async riprovaAncora => {
+      const {
+        data,
+        error
+      } = await supabase.rpc('mio_id_pubblico', {
+        p_session_id: sessionId
+      });
+      if (fermo) return;
+      if (!error && typeof data === 'string' && data) {
+        myPublicIdRef.current = data;
+        setMyPublicId(data);
+        return;
+      }
+      if (riprovaAncora > 0) timer = setTimeout(() => chiedi(riprovaAncora - 1), 5000);
+    };
+    chiedi(5);
+    return () => {
+      fermo = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [sessionId]);
+  const eMioId = id => !!myPublicId && id === myPublicId;
+  const contieneMioId = lista => !!myPublicId && Array.isArray(lista) && lista.includes(myPublicId);
   const [guestCode] = useState(() => {
     let c = localStorage.getItem('ga_guest_code');
     if (!c) {
@@ -2255,7 +2286,7 @@ function GlobalAwakeningPlatform() {
     }
     return c;
   });
-  const mySlot = matchUser1Id != null ? sessionId === matchUser1Id ? 'user1' : 'user2' : null;
+  const mySlot = matchUser1Id != null ? eMioId(matchUser1Id) ? 'user1' : 'user2' : null;
   const levelChangeIndex = Math.floor(roundCount / 7);
   const amIChooser = mySlot !== null && mySlot === (levelChangeIndex % 2 === 1 ? 'user1' : 'user2');
   const [tempPassword, setTempPassword] = useState('');
@@ -2631,7 +2662,7 @@ function GlobalAwakeningPlatform() {
     if (IH) setScartoOrologio(IH.scarto(r.adesso, Date.now()));
     const a = r.in_arrivo;
     setIncomingInvite(a && !isBlocked(a.nome) ? {
-      from_id: a.from_id,
+      from_id_pubblico: a.from_id_pubblico,
       from_name: a.nome,
       invite_id: a.id,
       expires_at: a.expires_at
@@ -2688,7 +2719,15 @@ function GlobalAwakeningPlatform() {
           fetch(`${SUPABASE_URL}/rest/v1/telepathy_chat?match_id=eq.${mid}`, opts);
         }
         if (sid) {
-          fetch(`${SUPABASE_URL}/rest/v1/telepathy_queue?id=eq.${sid}`, opts);
+          fetch(`${SUPABASE_URL}/rest/v1/rpc/coda_esci`, {
+            method: 'POST',
+            headers: SB_HEADERS,
+            keepalive: true,
+            body: JSON.stringify({
+              p_session_id: sid,
+              p_password_hash: passwordHashRef.current || null
+            })
+          });
         }
       } catch (e) {}
     };
@@ -2733,24 +2772,19 @@ function GlobalAwakeningPlatform() {
     const updatePresence = async () => {
       try {
         const {
-          error: upsertError
-        } = await supabase.from('online_users').upsert({
-          id: sessionId,
-          nickname: nickname || 'Anonymous',
-          lat: myLat,
-          lng: myLng,
-          last_seen: new Date().toISOString()
-        });
-        if (upsertError) console.warn('Presence upsert error:', upsertError);
-        await supabase.from('online_users').delete().lt('last_seen', new Date(Date.now() - 120000).toISOString());
-        const {
           data,
           error: fetchError
-        } = await supabase.from('online_users').select('*');
-        if (fetchError) {
-          console.warn('Fetch online users error:', fetchError);
+        } = await supabase.rpc('aggiorna_presenza', {
+          p_session_id: sessionId,
+          p_password_hash: passwordHashRef.current || null,
+          p_nickname: nickname || 'Anonymous',
+          p_lat: myLat,
+          p_lng: myLng
+        });
+        if (fetchError || !Array.isArray(data)) {
+          console.warn('Presence update error:', fetchError);
           setOnlineUsers([{
-            id: sessionId,
+            id: myPublicIdRef.current,
             nickname,
             lat: myLat,
             lng: myLng
@@ -2766,25 +2800,14 @@ function GlobalAwakeningPlatform() {
             }
           }
           setOnlineUsers(uniqueUsers.length > 0 ? uniqueUsers : [{
-            id: sessionId,
+            id: myPublicIdRef.current,
             nickname,
             lat: myLat,
             lng: myLng
           }]);
-          const {
-            data: activeMatches
-          } = await supabase.from('telepathy_matches').select('*');
-          const busyIds = new Set();
-          if (activeMatches) {
-            activeMatches.forEach(m => {
-              if (m.ended_at) return;
-              busyIds.add(m.user1_id);
-              busyIds.add(m.user2_id);
-            });
-          }
           const usersWithStatus = uniqueUsers.map(u => ({
             ...u,
-            status: busyIds.has(u.id) ? 'busy' : 'available'
+            status: u.busy ? 'busy' : 'available'
           }));
           setOnlineUsersForTelepathy(usersWithStatus.filter(u => u.nickname !== nickname && !isBlocked(u.nickname)));
           await aggiornaInviti();
@@ -2792,7 +2815,7 @@ function GlobalAwakeningPlatform() {
       } catch (err) {
         console.warn('Presence update failed:', err);
         setOnlineUsers([{
-          id: sessionId,
+          id: myPublicIdRef.current,
           nickname,
           lat: myLat,
           lng: myLng
@@ -2808,14 +2831,17 @@ function GlobalAwakeningPlatform() {
     return () => {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisible);
-      supabase.from('online_users').delete().eq('id', sessionId);
+      supabase.rpc('esci_presenza', {
+        p_session_id: sessionId,
+        p_password_hash: passwordHashRef.current || null
+      });
     };
   }, [nickname, sessionId]);
   useEffect(() => {
     const loadData = async () => {
       const {
         data: ritualsData
-      } = await supabase.from('rituali_correnti').select('*').order('created_at', {
+      } = await supabase.from('rituali_pubblici').select('*').order('created_at', {
         ascending: false
       });
       if (ritualsData) {
@@ -2860,22 +2886,21 @@ function GlobalAwakeningPlatform() {
     };
     loadData();
     const interval = setInterval(loadData, 10000);
-    const ritualsChannel = supabase.channel('rituals-channel').on('postgres_changes', {
-      event: '*',
-      schema: 'public',
-      table: 'rituals'
-    }, () => loadData()).subscribe();
     return () => {
       clearInterval(interval);
-      ritualsChannel.unsubscribe();
     };
   }, []);
   const [queuePosition, setQueuePosition] = useState(0);
   const [queueSize, setQueueSize] = useState(0);
   useEffect(() => {
     if (!searchingPartner) return;
+    const esciDallaCoda = () => supabase.rpc('coda_esci', {
+      p_session_id: sessionId,
+      p_password_hash: passwordHashRef.current || null
+    });
     const findPartner = async () => {
-      await supabase.from('telepathy_queue').delete().lt('timestamp', Date.now() - 60000);
+      const me = myPublicIdRef.current;
+      if (!me) return;
       const adesso = Date.now();
       await supabase.from('telepathy_matches').delete().lt('ended_at', new Date(adesso - 60000).toISOString());
       await supabase.from('telepathy_matches').delete().lt('ultima_attivita', new Date(adesso - 600000).toISOString());
@@ -2885,15 +2910,15 @@ function GlobalAwakeningPlatform() {
         data: matches
       } = await supabase.from('telepathy_matches').select('*');
       if (matches) {
-        const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && vivo(m));
+        const myMatch = matches.find(m => (m.user1_id === me || m.user2_id === me) && vivo(m));
         if (myMatch) {
-          const amUser1 = myMatch.user1_id === sessionId;
+          const amUser1 = myMatch.user1_id === me;
           const altroNick = amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname;
           if (isBlocked(altroNick)) {
             try {
               await supabase.rpc('end_telepathy_match', {
                 p_match_id: myMatch.id,
-                p_ended_by: sessionId
+                p_ended_by: me
               });
             } catch (e) {}
             return;
@@ -2905,24 +2930,24 @@ function GlobalAwakeningPlatform() {
           setRole(amUser1 ? myMatch.user1_role : myMatch.user2_role);
           setMatchId(myMatch.id);
           setSearchingPartner(false);
-          await supabase.from('telepathy_queue').delete().eq('id', sessionId);
+          await esciDallaCoda();
           return;
         }
       }
       const {
         data: queue
-      } = await supabase.from('telepathy_queue').select('*').neq('id', sessionId).order('timestamp', {
-        ascending: true
+      } = await supabase.rpc('coda_leggi', {
+        p_session_id: sessionId
       });
-      const queueLibera = (queue || []).filter(q => !isBlocked(q.nickname));
+      const queueLibera = (Array.isArray(queue) ? queue : []).filter(q => !isBlocked(q.nickname));
       if (queueLibera.length > 0) {
         const available = queueLibera[0];
         const {
           data: precheck
         } = await supabase.from('telepathy_matches').select('*');
-        const existingForMe = (precheck || []).find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && vivo(m));
+        const existingForMe = (precheck || []).find(m => (m.user1_id === me || m.user2_id === me) && vivo(m));
         if (existingForMe) {
-          const amUser1 = existingForMe.user1_id === sessionId;
+          const amUser1 = existingForMe.user1_id === me;
           setPartner({
             id: amUser1 ? existingForMe.user2_id : existingForMe.user1_id,
             nickname: amUser1 ? existingForMe.user2_nickname : existingForMe.user1_nickname
@@ -2930,7 +2955,7 @@ function GlobalAwakeningPlatform() {
           setRole(amUser1 ? existingForMe.user1_role : existingForMe.user2_role);
           setMatchId(existingForMe.id);
           setSearchingPartner(false);
-          await supabase.from('telepathy_queue').delete().eq('id', sessionId);
+          await esciDallaCoda();
           return;
         }
         const existingForThem = (precheck || []).find(m => (m.user1_id === available.id || m.user2_id === available.id) && vivo(m));
@@ -2945,7 +2970,7 @@ function GlobalAwakeningPlatform() {
           user1_id: available.id,
           user1_nickname: available.nickname,
           user1_role: theirRole,
-          user2_id: sessionId,
+          user2_id: me,
           user2_nickname: nickname || 'Anonymous',
           user2_role: myRole,
           level: 'lvl3'
@@ -2955,7 +2980,7 @@ function GlobalAwakeningPlatform() {
             data: staleAll
           } = await supabase.from('telepathy_matches').select('*');
           for (const m of staleAll || []) {
-            const isPair = m.user1_id === sessionId && m.user2_id === available.id || m.user1_id === available.id && m.user2_id === sessionId;
+            const isPair = m.user1_id === me && m.user2_id === available.id || m.user1_id === available.id && m.user2_id === me;
             if (isPair && m.ended_at) await supabase.from('telepathy_matches').delete().eq('id', m.id);
           }
           return;
@@ -2963,7 +2988,7 @@ function GlobalAwakeningPlatform() {
         const {
           data: postcheck
         } = await supabase.from('telepathy_matches').select('*');
-        const pairMatches = (postcheck || []).filter(m => !m.ended_at && (m.user1_id === sessionId && m.user2_id === available.id || m.user2_id === sessionId && m.user1_id === available.id));
+        const pairMatches = (postcheck || []).filter(m => !m.ended_at && (m.user1_id === me && m.user2_id === available.id || m.user2_id === me && m.user1_id === available.id));
         let winner = matchData[0];
         if (pairMatches.length > 1) {
           pairMatches.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
@@ -2974,31 +2999,33 @@ function GlobalAwakeningPlatform() {
             }
           }
         }
-        const amUser1 = winner.user1_id === sessionId;
+        const amUser1 = winner.user1_id === me;
         setPartner({
           id: amUser1 ? winner.user2_id : winner.user1_id,
           nickname: amUser1 ? winner.user2_nickname : winner.user1_nickname
         });
         setRole(amUser1 ? winner.user1_role : winner.user2_role);
         setMatchId(winner.id);
-        await supabase.from('telepathy_queue').delete().eq('id', sessionId);
-        await supabase.from('telepathy_queue').delete().eq('id', available.id);
+        await esciDallaCoda();
         setSearchingPartner(false);
       } else {
-        await supabase.from('telepathy_queue').upsert({
-          id: sessionId,
-          nickname: nickname || 'Anonymous',
-          timestamp: Date.now()
-        });
         const {
-          data: allQueue
-        } = await supabase.from('telepathy_queue').select('*').order('timestamp', {
-          ascending: true
+          data: entrato,
+          error: errEntra
+        } = await supabase.rpc('coda_entra', {
+          p_session_id: sessionId,
+          p_password_hash: passwordHashRef.current || null,
+          p_nickname: nickname || 'Anonymous'
         });
-        if (allQueue) {
-          setQueueSize(allQueue.length);
-          const myPos = allQueue.findIndex(q => q.id === sessionId);
-          setQueuePosition(myPos >= 0 ? myPos + 1 : 0);
+        const inCoda = !errEntra && entrato === true;
+        const {
+          data: altri
+        } = await supabase.rpc('coda_leggi', {
+          p_session_id: sessionId
+        });
+        if (Array.isArray(altri)) {
+          setQueueSize(altri.length + (inCoda ? 1 : 0));
+          setQueuePosition(inCoda ? altri.length + 1 : 0);
         }
       }
     };
@@ -3007,7 +3034,7 @@ function GlobalAwakeningPlatform() {
     return () => {
       clearInterval(interval);
       if (searchingPartner) {
-        supabase.from('telepathy_queue').delete().eq('id', sessionId);
+        esciDallaCoda();
       }
     };
   }, [searchingPartner, nickname]);
@@ -3514,6 +3541,7 @@ function GlobalAwakeningPlatform() {
     handleLogout();
   };
   const startSearching = () => {
+    if (!myPublicIdRef.current) return;
     setSearchingPartner(true);
     setPartner(null);
     setRole(null);
@@ -3563,7 +3591,7 @@ function GlobalAwakeningPlatform() {
       }
       const match = data[0];
       if (match.ended_at) {
-        if (match.ended_by && match.ended_by !== sessionId) setPartnerDisconnected(true);
+        if (match.ended_by && match.ended_by !== myPublicIdRef.current) setPartnerDisconnected(true);
         setSessionEnded(true);
         setShowResult(false);
         setWaitingForPartner(false);
@@ -3653,7 +3681,7 @@ function GlobalAwakeningPlatform() {
       }
       const match = data[0];
       if (match.ended_at) {
-        if (match.ended_by && match.ended_by !== sessionId) setPartnerDisconnected(true);
+        if (match.ended_by && match.ended_by !== myPublicIdRef.current) setPartnerDisconnected(true);
         setSessionEnded(true);
         setShowResult(false);
         setWaitingForPartner(false);
@@ -3661,10 +3689,12 @@ function GlobalAwakeningPlatform() {
       }
       if (partner?.id && !attesaInvitanteRef.current) {
         const {
-          data: pu
-        } = await supabase.from('online_users').select('last_seen').eq('id', partner.id);
-        if (pu && pu.length > 0) {
-          const stale = Date.now() - new Date(pu[0].last_seen).getTime() > 35000;
+          data: visto
+        } = await supabase.rpc('presenza_di', {
+          p_id_pubblico: partner.id
+        });
+        if (visto) {
+          const stale = Date.now() - new Date(visto).getTime() > 35000;
           if (stale && matchIdRef.current === matchId) setPartnerDisconnected(true);
         }
       }
@@ -3693,6 +3723,8 @@ function GlobalAwakeningPlatform() {
     return () => clearInterval(interval);
   }, [matchId, showLevelBanner, currentLevel, roundCount]);
   const entraNelMatchDaInvito = async idMatch => {
+    const me = myPublicIdRef.current;
+    if (!me) return null;
     const {
       data,
       error
@@ -3708,7 +3740,7 @@ function GlobalAwakeningPlatform() {
     await supabase.from('telepathy_matches').update({
       round_count: m.round_count || 0
     }).eq('id', m.id);
-    const amUser1 = m.user1_id === sessionId;
+    const amUser1 = m.user1_id === me;
     setPartner({
       id: amUser1 ? m.user2_id : m.user1_id,
       nickname: amUser1 ? m.user2_nickname : m.user1_nickname
@@ -3772,7 +3804,7 @@ function GlobalAwakeningPlatform() {
   }, [invitoInUscita && invitoInUscita.id, partner, sessionId, giroInviti]);
   const rientroFattoRef = React.useRef(null);
   useEffect(() => {
-    if (!nickname || !sessionId || partner || rientroFattoRef.current === sessionId) return;
+    if (!nickname || !sessionId || !myPublicId || partner || rientroFattoRef.current === sessionId) return;
     rientroFattoRef.current = sessionId;
     const sid = sessionId;
     const prova = async restano => {
@@ -3802,7 +3834,7 @@ function GlobalAwakeningPlatform() {
       }
     };
     prova(5);
-  }, [nickname, sessionId]);
+  }, [nickname, sessionId, myPublicId]);
   useEffect(() => {
     if (!matchId) return;
     const loadChat = async () => {
@@ -3862,7 +3894,10 @@ function GlobalAwakeningPlatform() {
       supabase.from('telepathy_chat').delete().eq('match_id', oldMatchId);
     }
     if (sessionId) {
-      supabase.from('telepathy_queue').delete().eq('id', sessionId);
+      supabase.rpc('coda_esci', {
+        p_session_id: sessionId,
+        p_password_hash: passwordHashRef.current || null
+      });
     }
     const uscita = invitoInUscitaRef.current;
     if (uscita && uscita.status === 'pending') rpcInviti('cancel_telepathy_invite', {
@@ -3907,7 +3942,7 @@ function GlobalAwakeningPlatform() {
       try {
         await supabase.rpc('end_telepathy_match', {
           p_match_id: matchId,
-          p_ended_by: sessionId
+          p_ended_by: myPublicIdRef.current
         });
       } catch (e) {}
     }
@@ -3923,7 +3958,7 @@ function GlobalAwakeningPlatform() {
   }, [matchId, sessionEnded, partnerDisconnected, showResult, waitingForPartner, showLevelBanner, amIChooser, effectiveRole, senderHasSent, roundCount, sessionMatches, attesaInvitante]);
   const invioInCorsoRef = React.useRef(false);
   const sendDirectInvite = async targetUser => {
-    if (directInviteTarget || invitoInUscitaRef.current || invioInCorsoRef.current) return;
+    if (directInviteTarget || invitoInUscitaRef.current || invioInCorsoRef.current || !myPublicIdRef.current) return;
     invioInCorsoRef.current = true;
     try {
       await inviaInvito(targetUser);
@@ -3979,6 +4014,8 @@ function GlobalAwakeningPlatform() {
   };
   const accettaInvito = async () => {
     if ((matchId || partner) && !sessionEnded && !partnerDisconnected) return;
+    const me = myPublicIdRef.current;
+    if (!me || !incomingInvite.from_id_pubblico) return;
     if (matchId || partner) resetTelepathy();
     setSearchingPartner(false);
     const invito = incomingInvite;
@@ -3986,7 +4023,7 @@ function GlobalAwakeningPlatform() {
       data: staleAccept
     } = await supabase.from('telepathy_matches').select('*');
     for (const m of staleAccept || []) {
-      const isPair = m.user1_id === invito.from_id && m.user2_id === sessionId || m.user1_id === sessionId && m.user2_id === invito.from_id;
+      const isPair = m.user1_id === invito.from_id_pubblico && m.user2_id === me || m.user1_id === me && m.user2_id === invito.from_id_pubblico;
       if (isPair && m.ended_at) await supabase.from('telepathy_matches').delete().eq('id', m.id);
     }
     const myRole = Math.random() > 0.5 ? 'sender' : 'receiver';
@@ -3995,10 +4032,10 @@ function GlobalAwakeningPlatform() {
       data: matchData,
       error: matchError
     } = await supabase.from('telepathy_matches').insert({
-      user1_id: invito.from_id,
+      user1_id: invito.from_id_pubblico,
       user1_nickname: invito.from_name,
       user1_role: theirRole,
-      user2_id: sessionId,
+      user2_id: me,
       user2_nickname: nickname || 'Anonymous',
       user2_role: myRole,
       level: 'lvl3',
@@ -4050,7 +4087,7 @@ function GlobalAwakeningPlatform() {
     setDirectInviteTarget(null);
     setMatchId(nuovo.id);
     setPartner({
-      id: invito.from_id,
+      id: invito.from_id_pubblico,
       nickname: invito.from_name
     });
     setRole(myRole);
@@ -4096,10 +4133,12 @@ function GlobalAwakeningPlatform() {
       inCorso = true;
       try {
         const {
-          data: pu
-        } = await supabase.from('online_users').select('last_seen').eq('id', partner.id);
+          data: ultimaPresenza
+        } = await supabase.rpc('presenza_di', {
+          p_id_pubblico: partner.id
+        });
         if (fermo) return;
-        const visto = pu && pu.length > 0 ? Date.parse(pu[0].last_seen) : NaN;
+        const visto = ultimaPresenza ? Date.parse(ultimaPresenza) : NaN;
         const risposto = Date.parse(rispostoIlRef.current);
         if (!isNaN(visto) && !isNaN(risposto) && visto > risposto + 5000 && Date.now() - visto < 30000) {
           setAttesaInvitante(null);
@@ -4125,7 +4164,7 @@ function GlobalAwakeningPlatform() {
           try {
             await supabase.rpc('end_telepathy_match', {
               p_match_id: matchId,
-              p_ended_by: sessionId
+              p_ended_by: myPublicIdRef.current
             });
           } catch (_) {}
           const nome = attesaInvitante.nome;
@@ -4146,7 +4185,7 @@ function GlobalAwakeningPlatform() {
     };
   }, [attesaInvitante && attesaInvitante.invitoId, matchId, partner]);
   useEffect(() => {
-    if (!invitoDaAprire || !nickname || !sessionId || !IH) return;
+    if (!invitoDaAprire || !nickname || !sessionId || !myPublicId || !IH) return;
     const {
       invito,
       azione
@@ -4177,7 +4216,7 @@ function GlobalAwakeningPlatform() {
       }
       if (esito.tipo === 'rispondi') {
         setIncomingInvite({
-          from_id: r.invito.from_id,
+          from_id_pubblico: r.invito.from_id_pubblico,
           from_name: r.invito.nome,
           invite_id: r.invito.id,
           expires_at: r.invito.expires_at
@@ -4200,7 +4239,7 @@ function GlobalAwakeningPlatform() {
         nome: esito.nome
       }));
     })();
-  }, [invitoDaAprire, nickname, sessionId]);
+  }, [invitoDaAprire, nickname, sessionId, myPublicId]);
   const confermaBloccoInviti = async () => {
     const c = confermaBlocco;
     if (!c) return;
@@ -4400,8 +4439,10 @@ function GlobalAwakeningPlatform() {
     if (!savedPartner) return;
     const {
       data: presence
-    } = await supabase.from('online_users').select('id,last_seen').eq('id', savedPartner.id);
-    const stillOnline = presence && presence.length > 0 && Date.now() - new Date(presence[0].last_seen).getTime() < 30000;
+    } = await supabase.rpc('presenza_di', {
+      p_id_pubblico: savedPartner.id
+    });
+    const stillOnline = !!presence && Date.now() - new Date(presence).getTime() < 30000;
     if (!stillOnline) {
       alert(t.telepathy.partnerOfflineN(savedPartner.nickname));
       return;
@@ -4410,7 +4451,7 @@ function GlobalAwakeningPlatform() {
       try {
         await supabase.rpc('end_telepathy_match', {
           p_match_id: matchId,
-          p_ended_by: sessionId
+          p_ended_by: myPublicIdRef.current
         });
       } catch (_) {}
     }
@@ -4564,7 +4605,7 @@ function GlobalAwakeningPlatform() {
             error: endErr
           } = await supabase.rpc('end_telepathy_match', {
             p_match_id: matchId,
-            p_ended_by: sessionId
+            p_ended_by: myPublicIdRef.current
           });
           flagSet = !endErr;
         } catch (e) {}
@@ -4794,7 +4835,7 @@ function GlobalAwakeningPlatform() {
     }
     const ritualData = {
       creator: nickname || 'Anonymous',
-      creator_id: sessionId,
+      creator_id: myPublicId,
       name: newRitual.name,
       description: newRitual.description,
       type: newRitual.type,
@@ -4802,7 +4843,7 @@ function GlobalAwakeningPlatform() {
       date: dataUtc,
       time: oraUtc,
       duration: newRitual.duration,
-      participants: [sessionId],
+      participants: [myPublicId],
       energy: 0
     };
     setSavingContent(true);
@@ -4812,7 +4853,7 @@ function GlobalAwakeningPlatform() {
         error
       } = await supabase.rpc('create_ritual', {
         p_creator: ritualData.creator,
-        p_creator_id: ritualData.creator_id,
+        p_creator_id: sessionId,
         p_name: ritualData.name,
         p_description: ritualData.description,
         p_type: ritualData.type,
@@ -5007,7 +5048,7 @@ function GlobalAwakeningPlatform() {
   const joiningRef = useRef(new Set());
   const joinRitual = async ritualId => {
     const ritual = rituals.find(r => r.id === ritualId);
-    if (!ritual || ritual.participants.includes(sessionId)) return;
+    if (!ritual || contieneMioId(ritual.participants)) return;
     if (joiningRef.current.has(ritualId)) return;
     joiningRef.current.add(ritualId);
     const {
@@ -5021,10 +5062,14 @@ function GlobalAwakeningPlatform() {
       showErrorToast();
       return;
     }
-    setRituals(prev => prev.map(r => r.id === ritualId && !r.participants.includes(sessionId) ? {
-      ...r,
-      participants: [...r.participants, sessionId]
-    } : r));
+    if (myPublicId) {
+      setRituals(prev => prev.map(r => r.id === ritualId && !r.participants.includes(myPublicId) ? {
+        ...r,
+        participants: [...r.participants, myPublicId]
+      } : r));
+    } else {
+      await rileggiRituale(ritualId);
+    }
     if (ritual.creator && ritual.creator !== nickname) {
       await notificaEvento('ritual_join', String(ritualId));
     }
@@ -5034,7 +5079,7 @@ function GlobalAwakeningPlatform() {
     const {
       data,
       error
-    } = await supabase.from('rituali_correnti').select('*').eq('id', id);
+    } = await supabase.from('rituali_pubblici').select('*').eq('id', id);
     if (error) return;
     setRituals(prev => {
       const riga = Array.isArray(data) && data[0];
@@ -5156,8 +5201,8 @@ function GlobalAwakeningPlatform() {
     if (r && getRitualStatus(r) === 'live') setStanzaId(r.id);
     setRitualeDaAprire(null);
   }, [ritualeDaAprire, rituals, showNicknamePrompt]);
-  const candelaMiaStanza = !!stanza && (stanza.candles || []).includes(sessionId);
-  const nomiCandeleStanza = stanza ? (stanza.candles || []).map(sid => (stanza.candles_nomi || {})[sid]).filter(n => n && !isBlocked(n)) : [];
+  const candelaMiaStanza = !!stanza && contieneMioId(stanza.candles || []);
+  const nomiCandeleStanza = stanza ? (stanza.candles || []).map(idPub => (stanza.candles_nomi || {})[idPub]).filter(n => n && !isBlocked(n)) : [];
   const stanzaLive = !!stanza && getRitualStatus(stanza) === 'live';
   React.useEffect(() => {
     setPresentiStanza(null);
@@ -5227,7 +5272,7 @@ function GlobalAwakeningPlatform() {
       return next;
     });
   };
-  const ritualeLive = rituals.find(r => (r.id === stanzaId || Array.isArray(r.participants) && r.participants.includes(sessionId)) && getRitualStatus(r) === 'live');
+  const ritualeLive = rituals.find(r => (r.id === stanzaId || contieneMioId(r.participants)) && getRitualStatus(r) === 'live');
   const inLiveRitual = !!ritualeLive;
   const inTelepathySession = !!partner && !sessionEnded;
   const musicOn = (inLiveRitual || inTelepathySession) && !musicMuted;
@@ -6278,9 +6323,9 @@ function GlobalAwakeningPlatform() {
   }, rituals.map(ritual => {
     const status = getRitualStatus(ritual);
     const isLive = status === 'live';
-    const isJoined = ritual.participants.includes(sessionId);
+    const isJoined = contieneMioId(ritual.participants);
     const candleCount = (ritual.candles || []).length;
-    const isCandleLit = (ritual.candles || []).includes(sessionId);
+    const isCandleLit = contieneMioId(ritual.candles || []);
     const ricorrente = Array.isArray(ritual.ripeti_giorni);
     const primoIstante = ricorrente ? new Date(`${ritual.prima_date}T${ritual.prima_time}Z`) : null;
     const serieNonPartita = ricorrente && primoIstante > new Date();
@@ -6396,7 +6441,7 @@ ${ritual.description || ''}`
       style: {
         filter: isCandleLit ? 'none' : 'grayscale(1) opacity(0.6)'
       }
-    }, "\uD83D\uDD6F\uFE0F"), " ", candleCount), ritual.creator_id === sessionId && (ricorrente ? serieNonPartita : status !== 'live' && status !== 'ended') && React.createElement("button", {
+    }, "\uD83D\uDD6F\uFE0F"), " ", candleCount), eMioId(ritual.creator_id) && (ricorrente ? serieNonPartita : status !== 'live' && status !== 'ended') && React.createElement("button", {
       "data-test": "delete-ritual",
       onClick: () => setRitualToDelete(ritual),
       className: "px-4",
@@ -6409,11 +6454,11 @@ ${ritual.description || ''}`
         color: '#fca5a5',
         cursor: 'pointer'
       }
-    }, "\uD83D\uDDD1\uFE0F"), isJoined && ritual.creator_id !== sessionId && React.createElement("button", {
+    }, "\uD83D\uDDD1\uFE0F"), isJoined && !eMioId(ritual.creator_id) && React.createElement("button", {
       "data-test": "leave-ritual",
       className: "btn-secondary px-4",
       onClick: () => leaveRitual(ritual.id)
-    }, t.rituals.leave), ritual.creator_id === sessionId && serieIniziata && !ritual.fermato_il && React.createElement("button", {
+    }, t.rituals.leave), eMioId(ritual.creator_id) && serieIniziata && !ritual.fermato_il && React.createElement("button", {
       "data-test": "stop-ritual",
       onClick: () => setRitualToStop(ritual),
       className: "btn-secondary px-4"
@@ -6874,6 +6919,7 @@ ${ritual.description || ''}`
     className: "text-secondary text-xs"
   }, u.status === 'busy' ? t.telepathy.inSession : t.telepathy.available)), u.status === 'available' && !invitoInUscita && !directInviteTarget && React.createElement("button", {
     onClick: () => sendDirectInvite(u),
+    disabled: !myPublicId,
     className: "btn-primary",
     style: {
       fontSize: '0.75rem',
@@ -6916,6 +6962,7 @@ ${ritual.description || ''}`
       disponibilita_id: u.id,
       nickname: u.nickname
     }),
+    disabled: !myPublicId,
     className: "btn-primary",
     style: {
       fontSize: '0.75rem',
@@ -6923,6 +6970,7 @@ ${ritual.description || ''}`
     }
   }, t.telepathy.propose))))), React.createElement("button", {
     onClick: startSearching,
+    disabled: !myPublicId,
     "data-test": "btn-casuale",
     className: "btn-primary w-full",
     style: {
@@ -8611,6 +8659,7 @@ ${ritual.description || ''}`
   }, !invitoInUscita && !directInviteTarget && !schedaInvito.chi.busy && React.createElement("button", {
     "data-test": "btn-invita",
     className: "btn-primary",
+    disabled: !myPublicId,
     onClick: () => {
       const chi = schedaInvito.chi;
       setSchedaInvito(null);
@@ -8754,6 +8803,7 @@ ${ritual.description || ''}`
   }, React.createElement("button", {
     "data-test": "btn-accetta",
     onClick: acceptInvite,
+    disabled: !myPublicId,
     className: "btn-primary",
     style: {
       flex: 1,

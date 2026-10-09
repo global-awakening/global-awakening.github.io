@@ -412,11 +412,10 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
       const sessionIdB = await pageB.evaluate(() => localStorage.getItem('ga_session_id') || 'no_ga_session_id');
       log('DEBUG', `sessionId di TestUserB (browser B): ${sessionIdB}`);
 
-      // Debug: stato di TestUserB nel DB
-      const ouResp = await fetch(`${SUPABASE_URL}/rest/v1/online_users?select=id,nickname&nickname=eq.TestUserB`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      const ouData = await ouResp.json();
+      // Debug: stato di TestUserB nel DB (dalla 36b online_users si legge solo con la chiave di
+      // servizio; l'id non si stampa: è un session_id).
+      const { body: ouData } = await serviceFetch('online_users?select=nickname,last_seen&nickname=eq.TestUserB')
+        .catch(() => ({ body: [] }));
       log('DEBUG', `TestUserB in online_users: ${JSON.stringify(ouData)}`);
 
       // TestUserB vede il banner nell'updatePresence (ogni 10s) — timeout esteso
