@@ -3,8 +3,9 @@
 -- Riporta il DB allo stato della sola 36a: l'app vecchia (che legge e scrive online_users,
 -- telepathy_queue e rituals direttamente) torna a funzionare.
 -- Cosa fa:
---  1. rituali_correnti torna security_invoker, con SELECT ad anon/authenticated.
---  2. rituals: policy rituals_select_public (FOR SELECT TO anon USING true) e SELECT ad anon/authenticated.
+--  1. rituali_correnti torna security_invoker, con tutti i privilegi ad anon/authenticated (come live).
+--  2. rituals: policy rituals_select_public (FOR SELECT TO anon USING true) e tutti i privilegi ad
+--     anon/authenticated, come sul DB vero (default di Supabase): le righe le limita la policy.
 --  3. online_users e telepathy_queue: le due policy di oggi per tabella (FOR ALL TO public, USING e
 --     CHECK true; nomi letti dal DB vero il 09/10) e GRANT ALL ad anon/authenticated.
 --  4. aggiorna_presenza, telepatia_risolvi, telepatia_in_training, respond_telepathy_invite: le
@@ -18,12 +19,14 @@ BEGIN;
 
 -- ── 1. Vista rituali_correnti ────────────────────────────────────────────────
 ALTER VIEW public.rituali_correnti SET (security_invoker = true);
-GRANT SELECT ON public.rituali_correnti TO anon, authenticated;
+-- Come sul DB vero il 09/10 (default di Supabase): tutti i privilegi; per rituals le righe le
+-- limita la policy (solo SELECT per anon).
+GRANT ALL ON public.rituali_correnti TO anon, authenticated;
 
 -- ── 2. rituals ───────────────────────────────────────────────────────────────
 DROP POLICY IF EXISTS rituals_select_public ON public.rituals;
 CREATE POLICY rituals_select_public ON public.rituals FOR SELECT TO anon USING (true);
-GRANT SELECT ON public.rituals TO anon, authenticated;
+GRANT ALL ON public.rituals TO anon, authenticated;
 
 -- ── 3. Presenze e coda ───────────────────────────────────────────────────────
 DROP POLICY IF EXISTS "Allow all" ON public.online_users;

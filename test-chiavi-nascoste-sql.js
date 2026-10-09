@@ -410,7 +410,15 @@ sezione('R2. 36b_ritorno', async (db) => {
   for (const fn of QUATTRO) if ((await definizione(db, fn)) !== defRif[fn]) diversi.push(fn);
   check(diversi.length === 0, 'le quattro funzioni tornano identiche alla 36a', diversi);
   check(JSON.stringify(await politiche(db)) === JSON.stringify(polRif), 'policy come prima della 36b', { ora: await politiche(db), prima: polRif });
-  check(JSON.stringify(await privilegi(db)) === JSON.stringify(privRif), 'privilegi sulle tabelle come prima della 36b', { ora: await privilegi(db), prima: privRif });
+  // Presenze e coda: come il DB locale prima della 36b. rituals e rituali_correnti: come il DB vero
+  // (catalogo 09/10, default di Supabase: tutti i privilegi), che lo schema locale non riproduce.
+  const tutti = 'DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE';
+  const privOra = await privilegi(db);
+  const soloCoda = (l) => JSON.stringify(l.filter((p) => p.t === 'online_users' || p.t === 'telepathy_queue'));
+  check(soloCoda(privOra) === soloCoda(privRif) && privRif.filter((p) => p.t === 'online_users' || p.t === 'telepathy_queue').length === 4, 'privilegi su presenze e coda come prima della 36b', { ora: privOra, prima: privRif });
+  const privRit = JSON.stringify(privOra.filter((p) => p.t === 'rituals' || p.t === 'rituali_correnti'));
+  const attesoRit = JSON.stringify(['rituali_correnti', 'rituals'].flatMap((t) => ['anon', 'authenticated'].map((g) => ({ t, g, p: tutti }))));
+  check(privRit === attesoRit, 'rituals e rituali_correnti: tutti i privilegi ad anon/authenticated, come sul DB vero', privRit);
   check(await invoker(db) === invRif, 'rituali_correnti torna security_invoker', { ora: await invoker(db), prima: invRif });
   check(JSON.stringify(await privFunzioni(db)) === JSON.stringify(pfRif), 'privilegi delle funzioni come prima', await privFunzioni(db));
   check(Array.isArray(await comeAnon(db, () => righe(db, `SELECT * FROM online_users`))), 'anon rilegge online_users');

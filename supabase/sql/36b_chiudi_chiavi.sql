@@ -20,6 +20,8 @@
 --  3. telepatia_risolvi, telepatia_in_training, respond_telepathy_invite, aggiorna_presenza: solo
 --     id pubblici (righe marcate «-- 36b:»), stessi REVOKE/GRANT della 36a.
 -- telepathy_matches resta aperta all'app (motore della telepatia: sotto-progetto 2).
+-- ⚠️ Una migration futura che ricrei rituali_correnti WITH (security_invoker = true) (come fanno la
+--    28 e la 30) rompe rituali_pubblici per anon: va ricreata senza, o rimessa a false subito dopo.
 -- Idempotente: rilanciata non cambia nulla. Ritorno: 36b_ritorno.sql.
 -- ============================================================================
 BEGIN;
