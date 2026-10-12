@@ -58,11 +58,14 @@ async function seed() {
 
 async function cleanup() {
   await deleteTestAccount(EMAIL);
-  await sb(`consciousness_posts?author_nickname=eq.${encodeURIComponent(NICK)}`, { method: 'DELETE' });
-  await sb(`consciousness_posts?author_nickname=eq.${encodeURIComponent('Utente eliminato')}&content=eq.${encodeURIComponent('post di test')}`, { method: 'DELETE' });
   await sb(`private_messages?sender_name=eq.${encodeURIComponent(NICK)}`, { method: 'DELETE' });
   // Dalla 35b la tabella non è più accessibile con la chiave pubblica: pulizia con la chiave di servizio.
-  await purge(SUPABASE_URL, [`notifications?user_nickname=eq.${encodeURIComponent(OTHER)}`], { label: 'account-gdpr' });
+  // Dalla 38 anche i post.
+  await purge(SUPABASE_URL, [
+    `notifications?user_nickname=eq.${encodeURIComponent(OTHER)}`,
+    `consciousness_posts?author_nickname=eq.${encodeURIComponent(NICK)}`,
+    `consciousness_posts?author_nickname=eq.${encodeURIComponent('Utente eliminato')}&content=eq.${encodeURIComponent('post di test')}`,
+  ], { label: 'account-gdpr' });
 }
 
 (async () => {

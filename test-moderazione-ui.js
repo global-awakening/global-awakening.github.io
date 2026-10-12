@@ -16,7 +16,6 @@ requireServiceKey();
 
 const APP_URL      = 'http://localhost:4321/app.html';
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
 const TIMEOUT      = 20000;
 
 const TS      = Date.now();
@@ -32,23 +31,17 @@ let passed = 0, failed = 0;
 function pass(m) { console.log(`  ✅ ${m}`); passed++; }
 function fail(m) { console.log(`  ❌ ${m}`); failed++; process.exitCode = 1; }
 
-async function sbFetch(path, opts = {}) {
-  return fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`,
-               'Content-Type': 'application/json' }, ...opts });
-}
-
 async function cleanup() {
   const e = encodeURIComponent;
-  for (const n of [NICK_A, NICK_B]) {
-    await sbFetch(`consciousness_posts?author_nickname=eq.${e(n)}`, { method: 'DELETE' });
-  }
   for (const m of [EMAIL_A, EMAIL_B]) {
     await deleteTestAccount(m);
   }
   // Senza chiave privilegiata purge() salta in silenzio e lascia righe in
   // content_reports e user_blocks, col test comunque verde. Meglio un rosso onesto.
   const res = await purge(SUPABASE_URL, [
+    // Dalla 38 i post non si cancellano con la chiave pubblica.
+    `consciousness_posts?author_nickname=eq.${e(NICK_A)}`,
+    `consciousness_posts?author_nickname=eq.${e(NICK_B)}`,
     `user_blocks?blocker_nickname=eq.${e(NICK_A)}`,
     `user_blocks?blocker_nickname=eq.${e(NICK_B)}`,
     `content_reports?reporter_nickname=eq.${e(NICK_A)}`,

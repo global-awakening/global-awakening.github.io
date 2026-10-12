@@ -17,6 +17,7 @@
  */
 
 const { chromium } = require('playwright');
+const { purge } = require('./test-helpers');
 
 const APP_URL      = 'http://localhost:4321/app.html';
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
@@ -71,10 +72,14 @@ async function goToConsciousness(page, nick) {
 
 async function cleanup() {
   try {
-    await sbFetch(`consciousness_posts?author_nickname=eq.${encodeURIComponent(NICK_A)}`, { method: 'DELETE' });
-    await sbFetch(`consciousness_posts?author_nickname=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
-    await sbFetch(`consciousness_comments?author_nickname=eq.${encodeURIComponent(NICK_A)}`, { method: 'DELETE' });
-    await sbFetch(`consciousness_comments?author_nickname=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
+    // Dalla 38 post e commenti non si cancellano con la chiave pubblica: pulizia con quella di servizio.
+    const e = encodeURIComponent;
+    await purge(SUPABASE_URL, [
+      `consciousness_comments?author_nickname=eq.${e(NICK_A)}`,
+      `consciousness_comments?author_nickname=eq.${e(NICK_B)}`,
+      `consciousness_posts?author_nickname=eq.${e(NICK_A)}`,
+      `consciousness_posts?author_nickname=eq.${e(NICK_B)}`,
+    ], { label: 'coscienza' });
   } catch (e) {
     console.warn('  Cleanup parzialmente fallito:', e.message);
   }
