@@ -23,6 +23,11 @@
 -- telepathy_matches resta aperta all'app (motore della telepatia: sotto-progetto 2).
 -- ⚠️ Una migration futura che ricrei rituali_correnti WITH (security_invoker = true) (come fanno la
 --    28 e la 30) rompe rituali_pubblici per anon: va ricreata senza, o rimessa a false subito dopo.
+-- ⚠️ Le schede/PWA già aperte da prima del deploy restano col JS vecchio (sw.js non ricarica):
+--    dopo la 36b non vedono presenze né rituali e non fanno l'abbinamento casuale finché non
+--    si ricaricano. Applicare in un'ora tranquilla e far ricaricare l'app a chi la usa.
+-- ⚠️ Se qualcuno gioca proprio mentre gira, una partita nuova fra la deduplica e la conversione
+--    può far fallire l'indice di coppia: la transazione si annulla per intero, basta rilanciarla.
 -- Idempotente: rilanciata non cambia nulla. Ritorno: 36b_ritorno.sql.
 -- ============================================================================
 BEGIN;

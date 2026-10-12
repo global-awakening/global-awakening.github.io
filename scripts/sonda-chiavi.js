@@ -26,7 +26,7 @@ const TABELLE = ['online_users', 'telepathy_queue', 'telepathy_matches', 'ritual
   'telepathy_invites', 'notifications', 'profiles', 'push_subscriptions', 'telepathy_trials', 'telepathy_scores',
   'ritual_comments', 'consciousness_posts', 'consciousness_comments', 'telepathy_chat', 'user_blocks', 'content_reports'];
 
-let passati = 0, falliti = 0;
+let passati = 0, falliti = 0, aperte = 0;
 const ok = (m) => { console.log(`  ✅ ${m}`); passati++; };
 const ko = (m) => { console.log(`  ❌ ${m}`); falliti++; process.exitCode = 1; };
 const check = (c, m, dettaglio) => (c ? ok(m) : ko(dettaglio === undefined ? m : `${m} — ${JSON.stringify(dettaglio).slice(0, 300)}`));
@@ -80,6 +80,15 @@ const senzaSid = (r) => !r.testo.includes(SID1) && !r.testo.includes(SID2);
       }
       check(r.status === 200 && senzaSid(r), `${tab}: nessun session_id di prova`, r.status === 200 ? 'session_id trovato' : r.body);
     }
+    // profiles: privilegi per colonna (select=* va in 42501 anche se session_id è leggibile).
+    // Falla nota e fuori da questo ramo (session_id degli iscritti, 27_): la si segna senza far
+    // fallire la sonda finché non la chiude la sua migration; poi diventa un controllo vero.
+    const prof = await anon('profiles?select=nickname,session_id');
+    if (chiusa(prof)) ok('profiles.session_id: non leggibile');
+    else if (Array.isArray(prof.body) && prof.body.some((r) => r.session_id)) {
+      aperte++;
+      console.log(`  ⚠️  profiles.session_id leggibile da anon (${prof.body.filter((r) => r.session_id).length} iscritti) — APERTA, prossimo pezzo`);
+    } else ok('profiles.session_id: nessun valore leggibile');
     const presenza = await rpc('aggiorna_presenza', { p_session_id: SID2, p_password_hash: null, p_nickname: NICK2, p_lat: 41.9, p_lng: 12.5 });
     check(presenza.status === 200 && !presenza.testo.includes(SID1), 'aggiorna_presenza del secondo non mostra il session_id del primo', presenza.body);
     const coda = await rpc('coda_leggi', { p_session_id: SID2 });
@@ -93,6 +102,12 @@ const senzaSid = (r) => !r.testo.includes(SID1) && !r.testo.includes(SID2);
 
     if (DOPO_36B) {
       console.log('— Dopo la 36b: tabelle chiuse ad anon —');
+      // Le partite devono avere solo id pubblici (o null): un id grezzo vuol dire un'app vecchia.
+      const pm = await anon('telepathy_matches?select=user1_id,user2_id,ended_by');
+      const grezzi = Array.isArray(pm.body)
+        ? pm.body.flatMap((m) => [m.user1_id, m.user2_id, m.ended_by]).filter((x) => x != null && !String(x).startsWith('pub_'))
+        : null;
+      check(chiusa(pm) || (grezzi && grezzi.length === 0), 'telepathy_matches: solo id pubblici', grezzi && grezzi.length);
       for (const tab of ['online_users', 'telepathy_queue', 'rituals']) {
         check(chiusa(await anon(`${tab}?select=*`)), `${tab}: SELECT chiusa`);
         check(chiusa(await anon(tab, { method: 'POST', body: JSON.stringify({}) })), `${tab}: INSERT chiusa`);
@@ -112,6 +127,6 @@ const senzaSid = (r) => !r.testo.includes(SID1) && !r.testo.includes(SID2);
     const resti = [];
     for (const p of via) { const r = await serviceFetch(`${p}&select=*`); if (Array.isArray(r.body) && r.body.length) resti.push(p); }
     check(resti.length === 0, 'non resta nulla della sonda', resti);
-    console.log(`\nRisultato: ${passati} passati, ${falliti} falliti`);
+    console.log(`\nRisultato: ${passati} passati, ${falliti} falliti${aperte ? `, ${aperte} falla nota aperta` : ''}`);
   }
 })();

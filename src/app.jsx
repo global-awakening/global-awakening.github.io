@@ -1910,14 +1910,20 @@
             if (!sessionId) return;
             let fermo = false;
             let timer = null;
-            const chiedi = async (riprovaAncora) => {
+            // Senza id pubblico Casuale/Invita/Accetta restano spenti: si riprova finché non arriva
+            // (attesa crescente fino a un minuto) e subito quando torna la rete.
+            let tentativo = 0;
+            const chiedi = async () => {
+              if (timer) { clearTimeout(timer); timer = null; }
               const { data, error } = await supabase.rpc('mio_id_pubblico', { p_session_id: sessionId });
-              if (fermo) return;
+              if (fermo || myPublicIdRef.current) return;
               if (!error && typeof data === 'string' && data) { myPublicIdRef.current = data; setMyPublicId(data); return; }
-              if (riprovaAncora > 0) timer = setTimeout(() => chiedi(riprovaAncora - 1), 5000);
+              timer = setTimeout(chiedi, Math.min(5000 * 2 ** tentativo++, 60000));
             };
-            chiedi(5);
-            return () => { fermo = true; if (timer) clearTimeout(timer); };
+            const alRitorno = () => { if (!myPublicIdRef.current) chiedi(); };
+            window.addEventListener('online', alRitorno);
+            chiedi();
+            return () => { fermo = true; if (timer) clearTimeout(timer); window.removeEventListener('online', alRitorno); };
           }, [sessionId]);
           // «È il mio id?»: mai vero finché il mio non è arrivato (la vista dei rituali può
           // contenere null, e null === null direbbe «sì»).
@@ -3389,7 +3395,9 @@
             const { data, error } = await supabase.from('telepathy_matches').select('*').eq('id', idMatch);
             if (error || !Array.isArray(data)) return null;   // null = non so (rete), false = non c'è
             const m = data[0];
-            if (!m || m.ended_at) {
+            // Una partita in cui non compaio (es. creata da un'app vecchia con l'id grezzo) non è
+            // la mia: meglio «non c'è più» che prendermi per user2 e giocare contro me stessa/o.
+            if (!m || m.ended_at || (m.user1_id !== me && m.user2_id !== me)) {
               setDirectInviteTarget(null);
               setInvitoInUscita(null);
               setAvvisoInviti(testoInviti('non_ce_piu'));

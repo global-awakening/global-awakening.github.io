@@ -2255,25 +2255,35 @@ function GlobalAwakeningPlatform() {
     if (!sessionId) return;
     let fermo = false;
     let timer = null;
-    const chiedi = async riprovaAncora => {
+    let tentativo = 0;
+    const chiedi = async () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
       const {
         data,
         error
       } = await supabase.rpc('mio_id_pubblico', {
         p_session_id: sessionId
       });
-      if (fermo) return;
+      if (fermo || myPublicIdRef.current) return;
       if (!error && typeof data === 'string' && data) {
         myPublicIdRef.current = data;
         setMyPublicId(data);
         return;
       }
-      if (riprovaAncora > 0) timer = setTimeout(() => chiedi(riprovaAncora - 1), 5000);
+      timer = setTimeout(chiedi, Math.min(5000 * 2 ** tentativo++, 60000));
     };
-    chiedi(5);
+    const alRitorno = () => {
+      if (!myPublicIdRef.current) chiedi();
+    };
+    window.addEventListener('online', alRitorno);
+    chiedi();
     return () => {
       fermo = true;
       if (timer) clearTimeout(timer);
+      window.removeEventListener('online', alRitorno);
     };
   }, [sessionId]);
   const eMioId = id => !!myPublicId && id === myPublicId;
@@ -3731,7 +3741,7 @@ function GlobalAwakeningPlatform() {
     } = await supabase.from('telepathy_matches').select('*').eq('id', idMatch);
     if (error || !Array.isArray(data)) return null;
     const m = data[0];
-    if (!m || m.ended_at) {
+    if (!m || m.ended_at || m.user1_id !== me && m.user2_id !== me) {
       setDirectInviteTarget(null);
       setInvitoInUscita(null);
       setAvvisoInviti(testoInviti('non_ce_piu'));

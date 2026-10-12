@@ -80,11 +80,12 @@ async function goToTelepathy(page, nick) {
 
 async function cleanup() {
   try {
-    await sbFetch(`online_users?nickname=eq.${encodeURIComponent(NICK_A)}`, { method: 'DELETE' });
-    await sbFetch(`online_users?nickname=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
+    // Dalla 36b anche online_users si pulisce solo con la chiave di servizio (qui sotto).
     // Dalla 32b (inviti) e dalla 35b (notifiche) le tabelle non sono più scrivibili con la chiave
     // pubblica: pulizia con la chiave di servizio.
     await purge(SUPABASE_URL, [
+      `online_users?nickname=eq.${encodeURIComponent(NICK_A)}`,
+      `online_users?nickname=eq.${encodeURIComponent(NICK_B)}`,
       `notifications?user_nickname=eq.${encodeURIComponent(NICK_A)}`,
       `notifications?user_nickname=eq.${encodeURIComponent(NICK_B)}`,
       `telepathy_invites?from_name=eq.${encodeURIComponent(NICK_A)}`,
