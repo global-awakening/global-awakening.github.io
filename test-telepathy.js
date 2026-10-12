@@ -58,8 +58,15 @@ async function cleanupTelepathy(label) {
     // TestUserA/B perennemente 'busy' (status derivato da telepathy_matches, app.jsx:1058)
     // → la lista lobby non mostra il bottone "Proponi" → Test 3 fallisce in modo
     // DETERMINISTICO cross-run. Va pulito qui (pre+post) come le altre tabelle.
-    paths.push(`telepathy_matches?user1_id=eq.${enc(s)}`);
-    paths.push(`telepathy_matches?user2_id=eq.${enc(s)}`);
+    // Dalla 36a l'app nuova scrive le partite con l'id pubblico del SID: si puliscono
+    // entrambe le forme, altrimenti la partita del giro prima resta e il giro dopo è rosso.
+    const { body: pubblico } = await serviceFetch('rpc/id_pubblico', {
+      method: 'POST', body: JSON.stringify({ p_sid: s }),
+    }).catch(() => ({ body: null }));
+    for (const id of [s, typeof pubblico === 'string' ? pubblico : null].filter(Boolean)) {
+      paths.push(`telepathy_matches?user1_id=eq.${enc(id)}`);
+      paths.push(`telepathy_matches?user2_id=eq.${enc(id)}`);
+    }
   }
   await purge(SUPABASE_URL, paths, { label: `telepathy-${label}` });
 }
@@ -412,11 +419,10 @@ async function waitForLobbyAfterPartnerLeft(page, nickname) {
       const sessionIdB = await pageB.evaluate(() => localStorage.getItem('ga_session_id') || 'no_ga_session_id');
       log('DEBUG', `sessionId di TestUserB (browser B): ${sessionIdB}`);
 
-      // Debug: stato di TestUserB nel DB
-      const ouResp = await fetch(`${SUPABASE_URL}/rest/v1/online_users?select=id,nickname&nickname=eq.TestUserB`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      const ouData = await ouResp.json();
+      // Debug: stato di TestUserB nel DB (dalla 36b online_users si legge solo con la chiave di
+      // servizio; l'id non si stampa: è un session_id).
+      const { body: ouData } = await serviceFetch('online_users?select=nickname,last_seen&nickname=eq.TestUserB')
+        .catch(() => ({ body: [] }));
       log('DEBUG', `TestUserB in online_users: ${JSON.stringify(ouData)}`);
 
       // TestUserB vede il banner nell'updatePresence (ogni 10s) — timeout esteso

@@ -59,6 +59,17 @@ async function servizio(percorso, opts = {}) {
   try { return JSON.parse(t); } catch (_) { return t; }
 }
 const q = (s) => encodeURIComponent(s);
+// Dalla 36a l'app scrive le partite (e dalla 36b anche gli inviti) con l'id pubblico del
+// session_id: le letture e la pulizia cercano entrambe le forme.
+const pubblici = {};
+async function pub(sid) {
+  if (!(sid in pubblici)) {
+    const r = await servizio('rpc/id_pubblico', { method: 'POST', body: JSON.stringify({ p_sid: sid }) });
+    pubblici[sid] = typeof r === 'string' ? r : null;
+  }
+  return pubblici[sid];
+}
+const dueForme = async (sid) => q(`(${[sid, await pub(sid)].filter(Boolean).map((x) => `"${x}"`).join(',')})`);
 const leggi = async (tabella, filtro) => { const r = await servizio(`${tabella}?${filtro}`); return Array.isArray(r) ? r : []; };
 const sposta = (tabella, filtro, campi) => servizio(`${tabella}?${filtro}`, { method: 'PATCH', body: JSON.stringify(campi) });
 const faSecondi = (s) => new Date(Date.now() - s * 1000).toISOString();
@@ -81,12 +92,13 @@ async function aTelepatia(p, page = p.page) {
   await page.waitForSelector('text=Telepathy Training', { timeout: 20000 });
 }
 const rigaOnline = (p, di) => p.page.locator('[data-test="riga-online"]').filter({ hasText: di.nick });
-const pendingDa = async (p) => (await leggi('telepathy_invites', `from_id=eq.${q(p.sid)}&status=eq.pending&select=*`))[0] || null;
+const pendingDa = async (p) => (await leggi('telepathy_invites', `from_id=in.${await dueForme(p.sid)}&status=eq.pending&select=*`))[0] || null;
 
 async function pulizia() {
   const sids = tutte.map((p) => p.sid).filter(Boolean);
   if (sids.length === 0) return;
-  const inS = q(`(${sids.map((s) => `"${s}"`).join(',')})`);
+  const tuttiId = [...sids, ...(await Promise.all(sids.map(pub))).filter(Boolean)];
+  const inS = q(`(${tuttiId.map((s) => `"${s}"`).join(',')})`);
   const inN = q(`(${tutte.map((p) => `"${p.nick}"`).join(',')})`);
   await purge(SUPABASE_URL, [
     `telepathy_invites?from_id=in.${inS}`, `telepathy_invites?to_id=in.${inS}`,
@@ -152,8 +164,8 @@ scenario('attesa_di_chi_invita', async (browser) => {
   await B.page.locator('.invite-toast [data-test="btn-accetta"]').click({ timeout: 15000 });
   await A.page.locator('[data-test="partner-nome"]').filter({ hasText: B.nick }).waitFor({ timeout: 15000 });
   ok('B accetta: A entra nel match, col nome del partner preso dal match');
-  const m = (await leggi('telepathy_matches', `user1_id=eq.${q(A.sid)}&select=user2_id,da_invito,giocato`))[0];
-  check(!!m && m.user2_id === B.sid && m.da_invito === true && m.giocato === true,
+  const m = (await leggi('telepathy_matches', `user1_id=in.${await dueForme(A.sid)}&select=user2_id,da_invito,giocato`))[0];
+  check(!!m && (m.user2_id === B.sid || m.user2_id === await pub(B.sid)) && m.da_invito === true && m.giocato === true,
     'è il match dell\'invito, e l\'arrivo di A conta come attività (giocato)', m);
 });
 
@@ -200,12 +212,12 @@ scenario('attesa_di_chi_accetta', async (browser) => {
   check(await invia.isDisabled(), "durante l'attesa chi accetta (sender) non può mandare il simbolo: pulsante disattivato");
   await pausa(95000);   // oltre i 35 s di checkPartnerLeft e i 90 s del timeout A3
   check(await B.page.locator('[data-test="attesa-invitante"]').isVisible(), 'dopo 95 s è ancora in attesa (spenti i controlli dei 35 s e dei 90 s)');
-  const mAttesa = (await leggi('telepathy_matches', `user2_id=eq.${q(B.sid)}&select=sender_symbol,giocato,user2_role`))[0];
+  const mAttesa = (await leggi('telepathy_matches', `user2_id=in.${await dueForme(B.sid)}&select=sender_symbol,giocato,user2_role`))[0];
   check(!!mAttesa && mAttesa.user2_role === 'sender' && mAttesa.sender_symbol == null && mAttesa.giocato !== true,
     "nessun simbolo scritto durante l'attesa: giocato resta spento", mAttesa);
   await sposta('telepathy_invites', `id=eq.${inv.id}`, { responded_at: faSecondi(181) });
   await B.page.locator('[data-test="avviso-inviti"]').filter({ hasText: A.nick }).waitFor({ timeout: 10000 });
-  const m = (await leggi('telepathy_matches', `user2_id=eq.${q(B.sid)}&select=ended_at`))[0];
+  const m = (await leggi('telepathy_matches', `user2_id=in.${await dueForme(B.sid)}&select=ended_at`))[0];
   check(!m || !!m.ended_at, 'a 3 minuti dall\'accettazione (ora del server) il match si chiude e si torna alla lobby', m);
 });
 
@@ -224,7 +236,7 @@ scenario('rifiuto_e_due_schede', async (browser) => {
   const secondo = await attendi(async () => (await B2.locator('[data-test="avviso-inviti"]').count()) > 0
     || (await B2.locator('.invite-toast').count()) === 0, 10000);
   check(!!secondo, 'la seconda scheda non entra in un secondo training: messaggio o banner sparito', null);
-  const aperti = await leggi('telepathy_matches', `user2_id=eq.${q(B.sid)}&ended_at=is.null&select=id`);
+  const aperti = await leggi('telepathy_matches', `user2_id=in.${await dueForme(B.sid)}&ended_at=is.null&select=id`);
   check(aperti.length === 1, 'resta un match solo (quello della seconda scheda si cancella)', aperti);
   await B.page.locator('[data-test="partner-nome"]').waitFor({ timeout: 10000 }).catch(() => {});
   const C = await entra(browser, 'C5');
@@ -278,7 +290,7 @@ scenario('attesa_con_presenza_vecchia', async (browser) => {
   // Doppio tocco su «Accetta»: il secondo, col primo in volo, si ignora.
   await B.page.locator('.invite-toast [data-test="btn-accetta"]').dblclick({ timeout: 15000 });
   await B.page.locator('[data-test="attesa-invitante"]').waitFor({ timeout: 10000 });
-  const aperti = await leggi('telepathy_matches', `user2_id=eq.${q(B.sid)}&ended_at=is.null&select=id`);
+  const aperti = await leggi('telepathy_matches', `user2_id=in.${await dueForme(B.sid)}&ended_at=is.null&select=id`);
   check(aperti.length === 1 && (await B.page.locator('[data-test="avviso-inviti"]').count()) === 0,
     'doppio tocco su «Accetta»: un match solo e nessun messaggio d\'errore', aperti);
   const riga = (await leggi('online_users', `id=eq.${q(A.sid)}&select=last_seen`))[0];

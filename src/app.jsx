@@ -1749,7 +1749,7 @@
           const [partnerSymbol, setPartnerSymbol] = useState(null);
 
           // Telepatia v2 — nuovi state
-          const [incomingInvite, setIncomingInvite] = useState(null); // { from_id, from_name, invite_id }
+          const [incomingInvite, setIncomingInvite] = useState(null); // { from_id_pubblico, from_name, invite_id } (id pubblico, mai il grezzo)
           const [directInviteTarget, setDirectInviteTarget] = useState(null); // utente a cui abbiamo inviato invito
           // Inviti a un training anche a chi non è collegato (spec 2026-09-25 §4.4). Lo stato vero
           // lo decide il server: qui c'è solo l'ultima risposta delle RPC.
@@ -1897,6 +1897,38 @@
           React.useEffect(() => { expandedRitualIdRef.current = expandedRitualId; }, [expandedRitualId]);
 
           const [sessionId, setSessionId] = useState(() => localStorage.getItem('ga_session_id') || (Date.now() + '-' + Math.random()));
+          // Chiavi nascoste (36a): il sessionId è la credenziale intera di un ospite e viaggia solo
+          // verso il server, come parametro delle RPC. Le persone (io compreso) nelle presenze,
+          // nella coda, nelle partite e nei rituali si riconoscono dall'id pubblico 'pub_…'.
+          // Finché non è arrivato vale null: ogni confronto «sono io?» resta falso, e gioco
+          // casuale e inviti aspettano (bottoni spenti). A ogni cambio di sessione si richiede.
+          const [myPublicId, setMyPublicId] = useState(null);
+          const myPublicIdRef = React.useRef(null);
+          React.useEffect(() => {
+            myPublicIdRef.current = null;
+            setMyPublicId(null);
+            if (!sessionId) return;
+            let fermo = false;
+            let timer = null;
+            // Senza id pubblico Casuale/Invita/Accetta restano spenti: si riprova finché non arriva
+            // (attesa crescente fino a un minuto) e subito quando torna la rete.
+            let tentativo = 0;
+            const chiedi = async () => {
+              if (timer) { clearTimeout(timer); timer = null; }
+              const { data, error } = await supabase.rpc('mio_id_pubblico', { p_session_id: sessionId });
+              if (fermo || myPublicIdRef.current) return;
+              if (!error && typeof data === 'string' && data) { myPublicIdRef.current = data; setMyPublicId(data); return; }
+              timer = setTimeout(chiedi, Math.min(5000 * 2 ** tentativo++, 60000));
+            };
+            const alRitorno = () => { if (!myPublicIdRef.current) chiedi(); };
+            window.addEventListener('online', alRitorno);
+            chiedi();
+            return () => { fermo = true; if (timer) clearTimeout(timer); window.removeEventListener('online', alRitorno); };
+          }, [sessionId]);
+          // «È il mio id?»: mai vero finché il mio non è arrivato (la vista dei rituali può
+          // contenere null, e null === null direbbe «sì»).
+          const eMioId = (id) => !!myPublicId && id === myPublicId;
+          const contieneMioId = (lista) => !!myPublicId && Array.isArray(lista) && lista.includes(myPublicId);
           // Codice ospite leggibile/stabile: generato una volta e persistito in localStorage.
           // È l'identità del percipiente nei telepathy_trials quando si gioca da ospite (al posto
           // del sessionId illeggibile). Per gli iscritti vale l'email; questo resta inutilizzato.
@@ -1906,7 +1938,7 @@
             return c;
           });
           // Cambio-modalità a turni: "primo chooser" = user1 del match; poi alterna a ogni cambio (round 7,14,...).
-          const mySlot = (matchUser1Id != null) ? (sessionId === matchUser1Id ? 'user1' : 'user2') : null;
+          const mySlot = (matchUser1Id != null) ? (eMioId(matchUser1Id) ? 'user1' : 'user2') : null;
           const levelChangeIndex = Math.floor(roundCount / 7); // k: 1 al round 7, 2 al 14, ...
           const amIChooser = (mySlot !== null) && (mySlot === ((levelChangeIndex % 2 === 1) ? 'user1' : 'user2'));
           const [tempPassword, setTempPassword] = useState('');
@@ -2268,7 +2300,7 @@
             const a = r.in_arrivo;
             // I blocchi li filtra già il server; isBlocked copre la lista locale appena cambiata.
             setIncomingInvite(a && !isBlocked(a.nome)
-              ? { from_id: a.from_id, from_name: a.nome, invite_id: a.id, expires_at: a.expires_at } : null);
+              ? { from_id_pubblico: a.from_id_pubblico, from_name: a.nome, invite_id: a.id, expires_at: a.expires_at } : null);
             return r;
           };
           React.useEffect(() => { if (giroInviti) aggiornaInviti(); }, [giroInviti]);
@@ -2320,7 +2352,11 @@
                   fetch(`${SUPABASE_URL}/rest/v1/telepathy_chat?match_id=eq.${mid}`, opts);
                 }
                 if (sid) {
-                  fetch(`${SUPABASE_URL}/rest/v1/telepathy_queue?id=eq.${sid}`, opts);
+                  // La coda non si tocca più a mano (36a/36b): si esce con la RPC, sempre keepalive.
+                  fetch(`${SUPABASE_URL}/rest/v1/rpc/coda_esci`, {
+                    method: 'POST', headers: SB_HEADERS, keepalive: true,
+                    body: JSON.stringify({ p_session_id: sid, p_password_hash: passwordHashRef.current || null })
+                  });
                   // L'invito in uscita NON si cancella: chiudere l'app non lo ritira più (spec §4.4). Si ritira con «Annulla» o uscendo dalla telepatia.
                 }
               } catch(e) {}
@@ -2373,25 +2409,20 @@
 
             const updatePresence = async () => {
               try {
-                const { error: upsertError } = await supabase.from('online_users').upsert({
-                  id: sessionId,
-                  nickname: nickname || 'Anonymous',
-                  lat: myLat,
-                  lng: myLng,
-                  last_seen: new Date().toISOString()
+                // Una sola RPC (36a): scrive la mia presenza (se l'identità regge), pulisce chi non
+                // si vede da 2 minuti (finestra tollerante, regge brevi background mobile) e
+                // restituisce la lista con gli id pubblici e «busy» già calcolato dal server.
+                const { data, error: fetchError } = await supabase.rpc('aggiorna_presenza', {
+                  p_session_id: sessionId,
+                  p_password_hash: passwordHashRef.current || null,
+                  p_nickname: nickname || 'Anonymous',
+                  p_lat: myLat,
+                  p_lng: myLng
                 });
-
-                if (upsertError) console.warn('Presence upsert error:', upsertError);
-
-                // Clean old users (finestra tollerante: 2 min, regge brevi background mobile)
-                await supabase.from('online_users').delete().lt('last_seen', new Date(Date.now() - 120000).toISOString());
-
-                // Fetch current online users
-                const { data, error: fetchError } = await supabase.from('online_users').select('*');
-                if (fetchError) {
-                  console.warn('Fetch online users error:', fetchError);
+                if (fetchError || !Array.isArray(data)) {
+                  console.warn('Presence update error:', fetchError);
                   // Fallback: at least show yourself
-                  setOnlineUsers([{ id: sessionId, nickname, lat: myLat, lng: myLng }]);
+                  setOnlineUsers([{ id: myPublicIdRef.current, nickname, lat: myLat, lng: myLng }]);
                 } else {
                   // Deduplica per nickname: tieni solo il record più recente per persona.
                   // Vale sia per la community (onlineUsers, contatori "starseeds"/"online")
@@ -2406,27 +2437,14 @@
                       uniqueUsers.push(u);
                     }
                   }
-                  setOnlineUsers(uniqueUsers.length > 0 ? uniqueUsers : [{ id: sessionId, nickname, lat: myLat, lng: myLng }]);
+                  setOnlineUsers(uniqueUsers.length > 0 ? uniqueUsers : [{ id: myPublicIdRef.current, nickname, lat: myLat, lng: myLng }]);
 
-                  // Arricchisci utenti con stato 'in sessione' o 'disponibile'.
-                  // Solo i match ANCORA attivi rendono 'busy': un match con ended_at
-                  // valorizzato e' una sessione gia' conclusa (fine deterministica
-                  // condivisa, A1) la cui riga puo' sopravvivere alla chiusura finche'
-                  // non viene cancellata (delete ritardata ~6s / cleanup periodico 5min).
-                  // Senza filtrare ended_at gli utenti restavano "in sessione" per gli
-                  // altri anche dopo aver chiuso, senza poter ricevere nuovi inviti.
-                  const { data: activeMatches } = await supabase.from('telepathy_matches').select('*');
-                  const busyIds = new Set();
-                  if (activeMatches) {
-                    activeMatches.forEach(m => {
-                      if (m.ended_at) return;
-                      busyIds.add(m.user1_id);
-                      busyIds.add(m.user2_id);
-                    });
-                  }
+                  // Stato 'in sessione' o 'disponibile': busy lo calcola il server (36a), solo sui
+                  // match ANCORA attivi (ended_at null): una sessione conclusa la cui riga
+                  // sopravvive qualche secondo non rende nessuno "in sessione".
                   const usersWithStatus = uniqueUsers.map(u => ({
                     ...u,
-                    status: busyIds.has(u.id) ? 'busy' : 'available'
+                    status: u.busy ? 'busy' : 'available'
                   }));
                   setOnlineUsersForTelepathy(usersWithStatus.filter(u => u.nickname !== nickname && !isBlocked(u.nickname)));
 
@@ -2436,7 +2454,7 @@
                 }
               } catch (err) {
                 console.warn('Presence update failed:', err);
-                setOnlineUsers([{ id: sessionId, nickname, lat: myLat, lng: myLng }]);
+                setOnlineUsers([{ id: myPublicIdRef.current, nickname, lat: myLat, lng: myLng }]);
               }
             };
 
@@ -2450,14 +2468,14 @@
             return () => {
               clearInterval(interval);
               document.removeEventListener('visibilitychange', onVisible);
-              supabase.from('online_users').delete().eq('id', sessionId);
+              supabase.rpc('esci_presenza', { p_session_id: sessionId, p_password_hash: passwordHashRef.current || null });
             };
           }, [nickname, sessionId]);
 
           // Load data from Supabase
           useEffect(() => {
             const loadData = async () => {
-              const { data: ritualsData } = await supabase.from('rituali_correnti').select('*').order('created_at', { ascending: false });
+              const { data: ritualsData } = await supabase.from('rituali_pubblici').select('*').order('created_at', { ascending: false });
               if (ritualsData) {
                 const now = new Date();
                 const expired = ritualsData.filter(r => {
@@ -2486,14 +2504,11 @@
             loadData();
             const interval = setInterval(loadData, 10000);
             
-            // Subscribe to real-time updates
-            // Le viste non emettono eventi realtime: si ascolta la tabella, e ogni modifica fa
-            // comunque ricaricare da rituali_correnti (loadData).
-            const ritualsChannel = supabase.channel('rituals-channel').on('postgres_changes', { event: '*', schema: 'public', table: 'rituals' }, () => loadData()).subscribe();
+            // Niente abbonamento realtime alla tabella rituals (chiusa dalla 36b): bastano il giro
+            // dei 10 s e la rilettura dopo ogni azione (rileggiRituale).
 
             return () => {
               clearInterval(interval);
-              ritualsChannel.unsubscribe();
             };
           }, []);
 
@@ -2504,9 +2519,12 @@
           useEffect(() => {
             if (!searchingPartner) return;
 
+            const esciDallaCoda = () => supabase.rpc('coda_esci', { p_session_id: sessionId, p_password_hash: passwordHashRef.current || null });
             const findPartner = async () => {
-              // Clean old entries
-              await supabase.from('telepathy_queue').delete().lt('timestamp', Date.now() - 60000);
+              // Io nelle partite sono il mio id pubblico; senza, non si gioca (i bottoni sono spenti).
+              const me = myPublicIdRef.current;
+              if (!me) return;
+              // Le righe della coda più vecchie di 60 s le toglie il server (coda_entra/coda_leggi).
               // Non più «tutto ciò che è nato da 5 minuti», che cancellava anche i training lunghi
               // (spec §4.4, secondo e terzo giro). Tre delete separati: il client fatto a mano
               // conosce solo .eq/.neq/.lt. Chiusi da più di un minuto (resta il tempo per la
@@ -2526,14 +2544,14 @@
               if (matches) {
                 // Solo match ATTIVI (ended_at null): un match concluso residuo non deve far
                 // "rientrare" in una sessione finita invece di cercare un nuovo partner.
-                const myMatch = matches.find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && vivo(m));
+                const myMatch = matches.find(m => (m.user1_id === me || m.user2_id === me) && vivo(m));
                 if (myMatch) {
-                  const amUser1 = myMatch.user1_id === sessionId;
+                  const amUser1 = myMatch.user1_id === me;
                   // SP1: mai una sessione con chi ho bloccato. Il match si chiude, se no
                   // il polling lo ritroverebbe a ogni tick e non cercherei mai un altro.
                   const altroNick = amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname;
                   if (isBlocked(altroNick)) {
-                    try { await supabase.rpc('end_telepathy_match', { p_match_id: myMatch.id, p_ended_by: sessionId }); }
+                    try { await supabase.rpc('end_telepathy_match', { p_match_id: myMatch.id, p_ended_by: me }); }
                     catch (e) { /* RPC non applicata: il match scade comunque a TTL */ }
                     return;
                   }
@@ -2542,17 +2560,17 @@
                   setMatchId(myMatch.id);
                   setSearchingPartner(false);
                   // Remove from queue
-                  await supabase.from('telepathy_queue').delete().eq('id', sessionId);
+                  await esciDallaCoda();
                   return;
                 }
               }
 
-              // 2. Look for someone in queue
-              const { data: queue } = await supabase.from('telepathy_queue').select('*').neq('id', sessionId).order('timestamp', { ascending: true });
+              // 2. Look for someone in queue (solo gli altri, dal più vecchio, con l'id pubblico)
+              const { data: queue } = await supabase.rpc('coda_leggi', { p_session_id: sessionId });
 
               // SP1: scarta dalla coda chi ho bloccato; se resta solo lui, si attende
               // il tick successivo invece di accoppiarsi.
-              const queueLibera = (queue || []).filter(q => !isBlocked(q.nickname));
+              const queueLibera = (Array.isArray(queue) ? queue : []).filter(q => !isBlocked(q.nickname));
 
               if (queueLibera.length > 0) {
                 const available = queueLibera[0];
@@ -2563,14 +2581,14 @@
                 // per chiudere completamente la race. Questo client-side dedup la mitiga.
                 const { data: precheck } = await supabase.from('telepathy_matches').select('*');
                 // Solo match ATTIVI: un match concluso residuo non conta come "gia' matchato".
-                const existingForMe = (precheck || []).find(m => (m.user1_id === sessionId || m.user2_id === sessionId) && vivo(m));
+                const existingForMe = (precheck || []).find(m => (m.user1_id === me || m.user2_id === me) && vivo(m));
                 if (existingForMe) {
-                  const amUser1 = existingForMe.user1_id === sessionId;
+                  const amUser1 = existingForMe.user1_id === me;
                   setPartner({ id: amUser1 ? existingForMe.user2_id : existingForMe.user1_id, nickname: amUser1 ? existingForMe.user2_nickname : existingForMe.user1_nickname });
                   setRole(amUser1 ? existingForMe.user1_role : existingForMe.user2_role);
                   setMatchId(existingForMe.id);
                   setSearchingPartner(false);
-                  await supabase.from('telepathy_queue').delete().eq('id', sessionId);
+                  await esciDallaCoda();
                   return;
                 }
                 const existingForThem = (precheck || []).find(m => (m.user1_id === available.id || m.user2_id === available.id) && vivo(m));
@@ -2588,7 +2606,7 @@
                   user1_id: available.id,
                   user1_nickname: available.nickname,
                   user1_role: theirRole,
-                  user2_id: sessionId,
+                  user2_id: me,
                   user2_nickname: nickname || 'Anonymous',
                   user2_role: myRole,
                   level: 'lvl3' // ogni sessione parte dal livello più facile (3 card)
@@ -2602,7 +2620,7 @@
                   // aggiungere query nel path felice e non alterare la race del matchmaking random.
                   const { data: staleAll } = await supabase.from('telepathy_matches').select('*');
                   for (const m of (staleAll || [])) {
-                    const isPair = (m.user1_id === sessionId && m.user2_id === available.id) || (m.user1_id === available.id && m.user2_id === sessionId);
+                    const isPair = (m.user1_id === me && m.user2_id === available.id) || (m.user1_id === available.id && m.user2_id === me);
                     if (isPair && m.ended_at) await supabase.from('telepathy_matches').delete().eq('id', m.id);
                   }
                   return;
@@ -2613,8 +2631,8 @@
                 const { data: postcheck } = await supabase.from('telepathy_matches').select('*');
                 const pairMatches = (postcheck || []).filter(m =>
                   !m.ended_at && (
-                    (m.user1_id === sessionId && m.user2_id === available.id) ||
-                    (m.user2_id === sessionId && m.user1_id === available.id)
+                    (m.user1_id === me && m.user2_id === available.id) ||
+                    (m.user2_id === me && m.user1_id === available.id)
                   )
                 );
                 let winner = matchData[0];
@@ -2628,30 +2646,31 @@
                   }
                 }
 
-                const amUser1 = winner.user1_id === sessionId;
+                const amUser1 = winner.user1_id === me;
                 setPartner({ id: amUser1 ? winner.user2_id : winner.user1_id, nickname: amUser1 ? winner.user2_nickname : winner.user1_nickname });
                 setRole(amUser1 ? winner.user1_role : winner.user2_role);
                 setMatchId(winner.id);
 
-                // Remove both from queue
-                await supabase.from('telepathy_queue').delete().eq('id', sessionId);
-                await supabase.from('telepathy_queue').delete().eq('id', available.id);
+                // Esco dalla coda. L'altro non lo tolgo io (la coda non si tocca più a mano): esce
+                // da sé al suo prossimo giro, quando trova la partita (passo 1); comunque dopo 60 s.
+                await esciDallaCoda();
 
                 setSearchingPartner(false);
               } else {
-                // Add self to queue
-                await supabase.from('telepathy_queue').upsert({
-                  id: sessionId,
-                  nickname: nickname || 'Anonymous',
-                  timestamp: Date.now()
+                // Add self to queue (il server rinfresca il mio timestamp: sono l'ultimo arrivato)
+                const { data: entrato, error: errEntra } = await supabase.rpc('coda_entra', {
+                  p_session_id: sessionId,
+                  p_password_hash: passwordHashRef.current || null,
+                  p_nickname: nickname || 'Anonymous'
                 });
+                // Stato locale: coda_leggi dà solo gli altri, se ci sono io lo dice coda_entra.
+                const inCoda = !errEntra && entrato === true;
 
-                // Update queue info
-                const { data: allQueue } = await supabase.from('telepathy_queue').select('*').order('timestamp', { ascending: true });
-                if (allQueue) {
-                  setQueueSize(allQueue.length);
-                  const myPos = allQueue.findIndex(q => q.id === sessionId);
-                  setQueuePosition(myPos >= 0 ? myPos + 1 : 0);
+                // Update queue info: io, se ci sono, sono in fondo (appena rinfrescato).
+                const { data: altri } = await supabase.rpc('coda_leggi', { p_session_id: sessionId });
+                if (Array.isArray(altri)) {
+                  setQueueSize(altri.length + (inCoda ? 1 : 0));
+                  setQueuePosition(inCoda ? altri.length + 1 : 0);
                 }
               }
             };
@@ -2661,7 +2680,7 @@
             return () => {
               clearInterval(interval);
               if (searchingPartner) {
-                supabase.from('telepathy_queue').delete().eq('id', sessionId);
+                esciDallaCoda();
               }
             };
           }, [searchingPartner, nickname]);
@@ -3126,6 +3145,7 @@
           };
 
           const startSearching = () => {
+            if (!myPublicIdRef.current) return;   // senza id pubblico non si gioca (bottone spento)
             setSearchingPartner(true);
             setPartner(null);
             setRole(null);
@@ -3191,7 +3211,7 @@
               // lati chiudono in modo identico e deterministico, invece di dedurlo dalla
               // scomparsa del record (che dipendeva dal timing della delete lato chiudente).
               if (match.ended_at) {
-                if (match.ended_by && match.ended_by !== sessionId) setPartnerDisconnected(true);
+                if (match.ended_by && match.ended_by !== myPublicIdRef.current) setPartnerDisconnected(true);
                 setSessionEnded(true);
                 setShowResult(false);
                 setWaitingForPartner(false);
@@ -3316,7 +3336,7 @@
               }
               const match = data[0];
               if (match.ended_at) {
-                if (match.ended_by && match.ended_by !== sessionId) setPartnerDisconnected(true);
+                if (match.ended_by && match.ended_by !== myPublicIdRef.current) setPartnerDisconnected(true);
                 setSessionEnded(true);
                 setShowResult(false);
                 setWaitingForPartner(false);
@@ -3325,9 +3345,9 @@
               // Controlla last_seen del partner. Non mentre chi ha accettato aspetta chi ha invitato:
               // quello è offline per definizione e l'attesa finirebbe dopo 35 s (spec §4.4).
               if (partner?.id && !attesaInvitanteRef.current) {
-                const { data: pu } = await supabase.from('online_users').select('last_seen').eq('id', partner.id);
-                if (pu && pu.length > 0) {
-                  const stale = Date.now() - new Date(pu[0].last_seen).getTime() > 35000;
+                const { data: visto } = await supabase.rpc('presenza_di', { p_id_pubblico: partner.id });
+                if (visto) {
+                  const stale = Date.now() - new Date(visto).getTime() > 35000;
                   if (stale && matchIdRef.current === matchId) setPartnerDisconnected(true);
                 }
               }
@@ -3366,12 +3386,18 @@
           // di «un match qualunque in cui compaio». Id e nome del partner vengono dal match
           // (user2_*): chi invita non riceve mai il session_id dell'altro dalle RPC.
           const entraNelMatchDaInvito = async (idMatch) => {
+            // Senza il mio id pubblico non saprei quale dei due lati sono: come un errore di rete,
+            // «non so», e il giro successivo riprova.
+            const me = myPublicIdRef.current;
+            if (!me) return null;
             // Il client fatto a mano non solleva: un errore di rete torna in error. Non è «il
             // match non c'è più»: non si tocca niente e il giro fra 2 s riprova.
             const { data, error } = await supabase.from('telepathy_matches').select('*').eq('id', idMatch);
             if (error || !Array.isArray(data)) return null;   // null = non so (rete), false = non c'è
             const m = data[0];
-            if (!m || m.ended_at) {
+            // Una partita in cui non compaio (es. creata da un'app vecchia con l'id grezzo) non è
+            // la mia: meglio «non c'è più» che prendermi per user2 e giocare contro me stessa/o.
+            if (!m || m.ended_at || (m.user1_id !== me && m.user2_id !== me)) {
               setDirectInviteTarget(null);
               setInvitoInUscita(null);
               setAvvisoInviti(testoInviti('non_ce_piu'));
@@ -3379,7 +3405,7 @@
             }
             // L'arrivo è un update del match: per il trigger della 32a vale come attività.
             await supabase.from('telepathy_matches').update({ round_count: m.round_count || 0 }).eq('id', m.id);
-            const amUser1 = m.user1_id === sessionId;
+            const amUser1 = m.user1_id === me;
             setPartner({ id: amUser1 ? m.user2_id : m.user1_id, nickname: amUser1 ? m.user2_nickname : m.user1_nickname });
             setRole(amUser1 ? m.user1_role : m.user2_role);
             setMatchId(m.id);
@@ -3447,7 +3473,8 @@
           // Una volta per identità: dopo un login il session_id cambia e gli inviti sono altri.
           const rientroFattoRef = React.useRef(null);
           useEffect(() => {
-            if (!nickname || !sessionId || partner || rientroFattoRef.current === sessionId) return;
+            // Serve anche il mio id pubblico: dice quale lato del match sono (entraNelMatchDaInvito).
+            if (!nickname || !sessionId || !myPublicId || partner || rientroFattoRef.current === sessionId) return;
             rientroFattoRef.current = sessionId;
             const sid = sessionId;
             // Un errore di rete all'avvio non vuol dire «niente da riprendere»: si riprova ogni 2 s
@@ -3467,7 +3494,7 @@
               }
             };
             prova(5);
-          }, [nickname, sessionId]);
+          }, [nickname, sessionId, myPublicId]);
 
           // Chat in-match telepatia
           useEffect(() => {
@@ -3543,7 +3570,7 @@
               supabase.from('telepathy_chat').delete().eq('match_id', oldMatchId);
             }
             if (sessionId) {
-              supabase.from('telepathy_queue').delete().eq('id', sessionId);
+              supabase.rpc('coda_esci', { p_session_id: sessionId, p_password_hash: passwordHashRef.current || null });
             }
             // Uscire volontariamente dalla telepatia ritira l'invito in uscita; chiudere l'app no.
             const uscita = invitoInUscitaRef.current;
@@ -3596,7 +3623,7 @@
               } catch (e) { /* best-effort: non bloccare l'uscita se il salvataggio fallisce */ }
             }
             if (matchId) {
-              try { await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: sessionId }); }
+              try { await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: myPublicIdRef.current }); }
               catch (e) { /* RPC/colonne non ancora applicate: resetTelepathy cancella comunque il match */ }
             }
             resetTelepathy();
@@ -3624,7 +3651,7 @@
           // confuso «Hai già un invito in corso»): si ignora, come per «Accetta».
           const invioInCorsoRef = React.useRef(false);
           const sendDirectInvite = async (targetUser) => {
-            if (directInviteTarget || invitoInUscitaRef.current || invioInCorsoRef.current) return;
+            if (directInviteTarget || invitoInUscitaRef.current || invioInCorsoRef.current || !myPublicIdRef.current) return;
             invioInCorsoRef.current = true;
             try { await inviaInvito(targetUser); } finally { invioInCorsoRef.current = false; }
           };
@@ -3668,6 +3695,9 @@
             // solo «Rifiuta». Dalla schermata «sessione conclusa» (sessionEnded) o con il partner
             // uscito si può: bug 2, `partner` resta valorizzato anche a sessione finita.
             if ((matchId || partner) && !sessionEnded && !partnerDisconnected) return;
+            // Nella partita sono il mio id pubblico: senza, non si accetta (si riprova fra poco).
+            const me = myPublicIdRef.current;
+            if (!me || !incomingInvite.from_id_pubblico) return;
             // Sessione precedente conclusa/abbandonata: reset completo prima di entrare nella nuova.
             if (matchId || partner) resetTelepathy();
             // Anticipare setSearchingPartner(false) per evitare che findPartner crei un altro match
@@ -3679,7 +3709,7 @@
             // il client fatto a mano conosce solo .eq/.neq/.lt, NON .not.
             const { data: staleAccept } = await supabase.from('telepathy_matches').select('*');
             for (const m of (staleAccept || [])) {
-              const isPair = (m.user1_id === invito.from_id && m.user2_id === sessionId) || (m.user1_id === sessionId && m.user2_id === invito.from_id);
+              const isPair = (m.user1_id === invito.from_id_pubblico && m.user2_id === me) || (m.user1_id === me && m.user2_id === invito.from_id_pubblico);
               if (isPair && m.ended_at) await supabase.from('telepathy_matches').delete().eq('id', m.id);
             }
             const myRole = Math.random() > 0.5 ? 'sender' : 'receiver';
@@ -3687,10 +3717,10 @@
             // Prima il match (come oggi, fuori scope rifarlo), segnato da_invito: così, se l'app si
             // chiude prima della risposta, findPartner riconosce l'orfano e non ci risucchia nessuno.
             const { data: matchData, error: matchError } = await supabase.from('telepathy_matches').insert({
-              user1_id: invito.from_id,
+              user1_id: invito.from_id_pubblico,
               user1_nickname: invito.from_name,
               user1_role: theirRole,
-              user2_id: sessionId,
+              user2_id: me,
               user2_nickname: nickname || 'Anonymous',
               user2_role: myRole,
               level: 'lvl3', // ogni sessione parte dal livello più facile (3 card)
@@ -3735,7 +3765,7 @@
             setInvitoInUscita(null);
             setDirectInviteTarget(null);
             setMatchId(nuovo.id);
-            setPartner({ id: invito.from_id, nickname: invito.from_name });
+            setPartner({ id: invito.from_id_pubblico, nickname: invito.from_name });
             setRole(myRole);
             setIncomingInvite(null);
             // Chi ha invitato può essere offline: si aspetta fino a 3 minuti da responded_at.
@@ -3778,13 +3808,13 @@
               if (inCorso) return;
               inCorso = true;
               try {
-                const { data: pu } = await supabase.from('online_users').select('last_seen').eq('id', partner.id);
+                const { data: ultimaPresenza } = await supabase.rpc('presenza_di', { p_id_pubblico: partner.id });
                 if (fermo) return;
                 // Conta solo una presenza vista DOPO l'accettazione (+5 s di margine): chi posa il
                 // telefono lascia la sua riga fresca per un po' (niente la cancella quando lo schermo
                 // si blocca), e quella riga non vuol dire «è arrivato». last_seen lo scrive l'orologio
                 // di chi ha invitato: nel dubbio si aspetta; l'uscita sicura resta giocato (M2).
-                const visto = pu && pu.length > 0 ? Date.parse(pu[0].last_seen) : NaN;
+                const visto = ultimaPresenza ? Date.parse(ultimaPresenza) : NaN;
                 const risposto = Date.parse(rispostoIlRef.current);
                 if (!isNaN(visto) && !isNaN(risposto) && visto > risposto + 5000
                     && Date.now() - visto < 30000) { setAttesaInvitante(null); return; }
@@ -3797,7 +3827,7 @@
                 if (r && r.ok && r.invito && r.invito.responded_at) rispostoIlRef.current = r.invito.responded_at;
                 if (IH && IH.attesaFinita(rispostoIlRef.current, scarto, Date.now())) {
                   fermo = true;
-                  try { await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: sessionId }); } catch (_) {}
+                  try { await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: myPublicIdRef.current }); } catch (_) {}
                   const nome = attesaInvitante.nome;
                   resetTelepathy();
                   setAvvisoInviti(testoInviti('non_arrivato', { nome }));
@@ -3814,7 +3844,7 @@
           // schermata vuota: anche un browser senza l'identità del destinatario, dopo l'entrata
           // come ospite, legge «Invito non trovato su questo dispositivo».
           useEffect(() => {
-            if (!invitoDaAprire || !nickname || !sessionId || !IH) return;
+            if (!invitoDaAprire || !nickname || !sessionId || !myPublicId || !IH) return;
             const { invito, azione } = invitoDaAprire;
             setInvitoDaAprire(null);
             (async () => {
@@ -3832,7 +3862,7 @@
               if (esito.tipo === 'conferma_blocco') { setConfermaBlocco({ nome: esito.nome, p_invite_id: invito, daNotifica: true }); return; }
               if (esito.tipo === 'rispondi') {
                 // Durante un training il render mostra solo «Rifiuta» (invito-durante-training).
-                setIncomingInvite({ from_id: r.invito.from_id, from_name: r.invito.nome, invite_id: r.invito.id, expires_at: r.invito.expires_at });
+                setIncomingInvite({ from_id_pubblico: r.invito.from_id_pubblico, from_name: r.invito.nome, invite_id: r.invito.id, expires_at: r.invito.expires_at });
                 return;
               }
               if (esito.tipo === 'entra') { await entraNelMatchDaInvito(esito.matchId); return; }
@@ -3843,7 +3873,7 @@
               }
               setAvvisoInviti(testoInviti(esito.motivo, { nome: esito.nome }));
             })();
-          }, [invitoDaAprire, nickname, sessionId]);
+          }, [invitoDaAprire, nickname, sessionId, myPublicId]);
 
           // «Non voglio più inviti da questa persona»: blocco lato server per session_id, nei due
           // sensi, anche per gli ospiti. Il service worker non lo fa mai da sé: passa sempre di qui.
@@ -4010,9 +4040,9 @@
             const savedPartner = partner;
             if (!savedPartner) return;
             // Stessa soglia del server (30 s): non si promette un invito che verrebbe rifiutato.
-            const { data: presence } = await supabase.from('online_users').select('id,last_seen').eq('id', savedPartner.id);
-            const stillOnline = presence && presence.length > 0 &&
-              (Date.now() - new Date(presence[0].last_seen).getTime() < 30000);
+            const { data: presence } = await supabase.rpc('presenza_di', { p_id_pubblico: savedPartner.id });
+            const stillOnline = !!presence &&
+              (Date.now() - new Date(presence).getTime() < 30000);
             if (!stillOnline) {
               alert(t.telepathy.partnerOfflineN(savedPartner.nickname));
               return;
@@ -4021,7 +4051,7 @@
             // resetTelepathy parte senza attesa, e un match giocato da meno di 10 minuti senza
             // ended_at farebbe rispondere al server in_match / non_disponibile.
             if (matchId) {
-              try { await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: sessionId }); } catch (_) {}
+              try { await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: myPublicIdRef.current }); } catch (_) {}
             }
             resetTelepathy();
             await sendDirectInvite({ id: savedPartner.id, nickname: savedPartner.nickname });
@@ -4164,7 +4194,7 @@
                 // in sicurezza sul vecchio comportamento (delete immediata sotto).
                 let flagSet = false;
                 try {
-                  const { error: endErr } = await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: sessionId });
+                  const { error: endErr } = await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: myPublicIdRef.current });
                   flagSet = !endErr;
                 } catch (e) { /* RPC non ancora applicata: si continua col vecchio path (delete) */ }
                 // Cancella subito la chat per non lasciare messaggi orfani in telepathy_chat
@@ -4419,7 +4449,7 @@
 
             const ritualData = {
               creator: nickname || 'Anonymous',
-              creator_id: sessionId,
+              creator_id: myPublicId,   // oggetto locale: io con l'id pubblico (la RPC riceve il sessionId)
               name: newRitual.name,
               description: newRitual.description,
               type: newRitual.type,
@@ -4427,7 +4457,7 @@
               date: dataUtc,
               time: oraUtc,
               duration: newRitual.duration,
-              participants: [sessionId],
+              participants: [myPublicId],
               energy: 0
             };
 
@@ -4435,7 +4465,7 @@
             try {
               const { data, error } = await supabase.rpc('create_ritual', {
                 p_creator: ritualData.creator,
-                p_creator_id: ritualData.creator_id,
+                p_creator_id: sessionId,
                 p_name: ritualData.name,
                 p_description: ritualData.description,
                 p_type: ritualData.type,
@@ -4671,7 +4701,7 @@
           const joiningRef = useRef(new Set());
           const joinRitual = async (ritualId) => {
             const ritual = rituals.find(r => r.id === ritualId);
-            if (!ritual || ritual.participants.includes(sessionId)) return;
+            if (!ritual || contieneMioId(ritual.participants)) return;
             if (joiningRef.current.has(ritualId)) return;
             joiningRef.current.add(ritualId);
             const { error } = await supabase.rpc('join_ritual', { p_ritual_id: ritualId, p_session_id: sessionId });
@@ -4679,8 +4709,13 @@
             if (error) { showErrorToast(); return; }
             // join_ritual non restituisce la riga: senza questo il pulsante cambiava solo al
             // ricaricamento successivo (fino a 10 secondi in cui sembrava non fosse successo niente).
-            setRituals(prev => prev.map(r => r.id === ritualId && !r.participants.includes(sessionId)
-              ? { ...r, participants: [...r.participants, sessionId] } : r));
+            // Nella lista ci sono io con l'id pubblico; se non è ancora arrivato si rilegge la vista.
+            if (myPublicId) {
+              setRituals(prev => prev.map(r => r.id === ritualId && !r.participants.includes(myPublicId)
+                ? { ...r, participants: [...r.participants, myPublicId] } : r));
+            } else {
+              await rileggiRituale(ritualId);
+            }
             // La notifica al creatore la scrive il server (35a): trova lui destinatario e testo e
             // controlla che io sia davvero fra i partecipanti. Un rifiuto o un errore si ignorano.
             if (ritual.creator && ritual.creator !== nickname) {
@@ -4694,7 +4729,7 @@
           // di oggi. Sostituirla a quella della vista riporterebbe il rituale al giorno 1 (stanza
           // chiusa, musica spenta). Si rilegge dalla vista, che è l'unica fonte per l'app.
           const rileggiRituale = async (id) => {
-            const { data, error } = await supabase.from('rituali_correnti').select('*').eq('id', id);
+            const { data, error } = await supabase.from('rituali_pubblici').select('*').eq('id', id);
             // Se la lettura fallisce (rete, timeout) non sappiamo com'è il rituale: toglierlo dalla
             // lista lo farebbe sparire per un errore passeggero. Si rimuove solo quando la lettura
             // è riuscita e non ha restituito nessuna riga (rituale davvero sparito).
@@ -4822,11 +4857,11 @@
           }, [ritualeDaAprire, rituals, showNicknamePrompt]);
 
           // La candela della stanza: accesa da me? e chi l'ha accesa in questo appuntamento.
-          const candelaMiaStanza = !!stanza && (stanza.candles || []).includes(sessionId);
+          const candelaMiaStanza = !!stanza && contieneMioId(stanza.candles || []);
           // Prima che la 30_ sia applicata la vista non ha candles_nomi: niente nomi, niente errore.
           // L'ordine è quello di accensione (l'array candles): un oggetto jsonb non lo conserva.
           const nomiCandeleStanza = stanza
-            ? (stanza.candles || []).map(sid => (stanza.candles_nomi || {})[sid]).filter(n => n && !isBlocked(n))
+            ? (stanza.candles || []).map(idPub => (stanza.candles_nomi || {})[idPub]).filter(n => n && !isBlocked(n))
             : [];
 
           // Nella stanza ci si segna all'ingresso e ogni 30 secondi: il numero conta chi si è fatto
@@ -4896,7 +4931,7 @@
           // Anche la stanza aperta su un rituale in corso fa partire la musica: ci si può entrare
           // dalla notifica senza essere iscritti.
           const ritualeLive = rituals.find(r =>
-            (r.id === stanzaId || (Array.isArray(r.participants) && r.participants.includes(sessionId))) && getRitualStatus(r) === 'live');
+            (r.id === stanzaId || contieneMioId(r.participants)) && getRitualStatus(r) === 'live');
           const inLiveRitual = !!ritualeLive;
           const inTelepathySession = !!partner && !sessionEnded;
           const musicOn = (inLiveRitual || inTelepathySession) && !musicMuted;
@@ -5642,9 +5677,9 @@
                       {rituals.map(ritual => {
                         const status = getRitualStatus(ritual);
                         const isLive = status === 'live';
-                        const isJoined = ritual.participants.includes(sessionId);
+                        const isJoined = contieneMioId(ritual.participants);
                         const candleCount = (ritual.candles || []).length;
-                        const isCandleLit = (ritual.candles || []).includes(sessionId);
+                        const isCandleLit = contieneMioId(ritual.candles || []);
                         
                         const ricorrente = Array.isArray(ritual.ripeti_giorni);
                         // Per un rituale che si ripete il cestino vale solo prima che la serie sia
@@ -5742,7 +5777,7 @@ ${ritual.description || ''}` })}
                               {/* Solo a chi l'ha creato, e solo finche' non e' iniziato: dentro
                                   un rituale in corso c'e' gente che sta meditando, e non deve
                                   vederselo sparire sotto gli occhi. */}
-                              {ritual.creator_id === sessionId && (ricorrente ? serieNonPartita : (status !== 'live' && status !== 'ended')) && (
+                              {eMioId(ritual.creator_id) && (ricorrente ? serieNonPartita : (status !== 'live' && status !== 'ended')) && (
                                 <button
                                   data-test="delete-ritual"
                                   onClick={() => setRitualToDelete(ritual)}
@@ -5758,12 +5793,12 @@ ${ritual.description || ''}` })}
                                   }}
                                 >🗑️</button>
                               )}
-                              {isJoined && ritual.creator_id !== sessionId && (
+                              {isJoined && !eMioId(ritual.creator_id) && (
                                 <button data-test="leave-ritual" className="btn-secondary px-4" onClick={() => leaveRitual(ritual.id)}>
                                   {t.rituals.leave}
                                 </button>
                               )}
-                              {ritual.creator_id === sessionId && serieIniziata && !ritual.fermato_il && (
+                              {eMioId(ritual.creator_id) && serieIniziata && !ritual.fermato_il && (
                                 <button
                                   data-test="stop-ritual"
                                   onClick={() => setRitualToStop(ritual)}
@@ -6048,6 +6083,7 @@ ${ritual.description || ''}` })}
                                   {u.status === 'available' && !invitoInUscita && !directInviteTarget && (
                                     <button
                                       onClick={() => sendDirectInvite(u)}
+                                      disabled={!myPublicId}
                                       className="btn-primary"
                                       style={{fontSize: '0.75rem', padding: '0.3rem 0.75rem'}}
                                     >
@@ -6069,7 +6105,7 @@ ${ritual.description || ''}` })}
                                   <span className="text-white text-sm font-medium" style={{cursor: 'pointer', textDecoration: 'underline dotted'}}
                                     onClick={() => apriScheda({ disponibilita_id: u.id, nickname: u.nickname })}>{u.nickname}</span>
                                   {!invitoInUscita && !directInviteTarget && (
-                                    <button onClick={() => sendDirectInvite({ disponibilita_id: u.id, nickname: u.nickname })} className="btn-primary"
+                                    <button onClick={() => sendDirectInvite({ disponibilita_id: u.id, nickname: u.nickname })} disabled={!myPublicId} className="btn-primary"
                                       style={{fontSize: '0.75rem', padding: '0.3rem 0.75rem'}}>{t.telepathy.propose}</button>
                                   )}
                                 </div>
@@ -6079,7 +6115,7 @@ ${ritual.description || ''}` })}
                         )}
 
                         {/* Abbinamento random */}
-                        <button onClick={startSearching} data-test="btn-casuale" className="btn-primary w-full" style={{fontSize: '1.125rem'}}>
+                        <button onClick={startSearching} disabled={!myPublicId} data-test="btn-casuale" className="btn-primary w-full" style={{fontSize: '1.125rem'}}>
                           {t.telepathy.randomMatch}
                         </button>
 
@@ -7063,7 +7099,7 @@ ${ritual.description || ''}` })}
                     )}
                     <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem'}}>
                       {!invitoInUscita && !directInviteTarget && !schedaInvito.chi.busy && (
-                        <button data-test="btn-invita" className="btn-primary"
+                        <button data-test="btn-invita" className="btn-primary" disabled={!myPublicId}
                           onClick={() => { const chi = schedaInvito.chi; setSchedaInvito(null); sendDirectInvite(chi); }}>{testoInviti('invita')}</button>
                       )}
                       <button data-test="btn-blocca-scheda" className="btn-secondary"
@@ -7133,7 +7169,7 @@ ${ritual.description || ''}` })}
                     </div>
                   </div>
                   <div style={{display: 'flex', gap: '0.5rem'}}>
-                    <button data-test="btn-accetta" onClick={acceptInvite} className="btn-primary" style={{flex: 1, fontSize: '0.85rem', padding: '0.4rem 0.6rem'}}>{t.telepathy.acceptBtn}</button>
+                    <button data-test="btn-accetta" onClick={acceptInvite} disabled={!myPublicId} className="btn-primary" style={{flex: 1, fontSize: '0.85rem', padding: '0.4rem 0.6rem'}}>{t.telepathy.acceptBtn}</button>
                     <button data-test="btn-rifiuta" onClick={declineInvite} className="btn-secondary" style={{flex: 1, fontSize: '0.85rem', padding: '0.4rem 0.6rem'}}>{t.telepathy.declineBtn}</button>
                   </div>
                   <button data-test="btn-blocca-da-invito"

@@ -80,11 +80,12 @@ async function goToTelepathy(page, nick) {
 
 async function cleanup() {
   try {
-    await sbFetch(`online_users?nickname=eq.${encodeURIComponent(NICK_A)}`, { method: 'DELETE' });
-    await sbFetch(`online_users?nickname=eq.${encodeURIComponent(NICK_B)}`, { method: 'DELETE' });
+    // Dalla 36b anche online_users si pulisce solo con la chiave di servizio (qui sotto).
     // Dalla 32b (inviti) e dalla 35b (notifiche) le tabelle non sono più scrivibili con la chiave
     // pubblica: pulizia con la chiave di servizio.
     await purge(SUPABASE_URL, [
+      `online_users?nickname=eq.${encodeURIComponent(NICK_A)}`,
+      `online_users?nickname=eq.${encodeURIComponent(NICK_B)}`,
       `notifications?user_nickname=eq.${encodeURIComponent(NICK_A)}`,
       `notifications?user_nickname=eq.${encodeURIComponent(NICK_B)}`,
       `telepathy_invites?from_name=eq.${encodeURIComponent(NICK_A)}`,
@@ -146,7 +147,8 @@ async function cleanup() {
     } catch {
       const aBody = await pageA.evaluate(() => document.body.innerText.substring(0, 800).replace(/\s+/g, ' '));
       log('DEBUG', `A body (800 char): ${aBody}`);
-      const ouA = await sbFetch(`online_users?nickname=eq.${encodeURIComponent(NICK_B)}&select=id,nickname,last_seen`);
+      // Dalla 36b online_users si legge solo con la chiave di servizio; l'id (session_id) non si stampa.
+      const ouA = await sbFetchServizio(`online_users?nickname=eq.${encodeURIComponent(NICK_B)}&select=nickname,last_seen`);
       log('DEBUG', `B in online_users: ${JSON.stringify(ouA)}`);
       fail(`${NICK_B} NON compare nella lista di ${NICK_A} entro ${POLL_WAIT / 1000}s`);
     }

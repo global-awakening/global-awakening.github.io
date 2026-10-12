@@ -81,11 +81,11 @@ async function crea(tag, extra) {
       check(ok(occ) && JSON.stringify(viste) === JSON.stringify(attese),
         'get_ritual_occurrences: 5 appuntamenti, 07:00 di Roma anche dopo il cambio ora', occ.body);
 
-      // 2. La vista espone le colonne nuove (su un ciclo futuro, date relative a oggi); la tabella
+      // 2. La vista (rituali_pubblici: dalla 36b anon legge solo questa) espone le colonne nuove (su un ciclo futuro, date relative a oggi); la tabella
       //    delle presenze è chiusa alla chiave pubblica.
       const f = await crea('d', { p_date: giorno(30), p_time: '05:00', p_ripeti_giorni: [1, 2, 3, 4, 5, 6, 7],
                                   p_ripeti_fino: giorno(34), p_fuso: 'Europe/Rome' });
-      const v = await anon(`rituali_correnti?id=eq.${f.id}`);
+      const v = await anon(`rituali_pubblici?id=eq.${f.id}`);
       const riga = Array.isArray(v.body) ? v.body[0] : null;
       check(riga && riga.date === giorno(30) && riga.time === '05:00:00' && riga.occorrenza_numero === 1 && riga.occorrenze_totali === 5
             && riga.presenti_ora === 0,
@@ -100,7 +100,7 @@ async function crea(tag, extra) {
       const r = await crea('b', { p_date: giorno(30), p_time: '08:00' });
       check(r.ripeti_giorni === null && r.ripeti_fino === null && r.fuso === null,
         'la chiamata a 10 parametri crea un rituale singolo (nessuna regola)', r);
-      const v = await anon(`rituali_correnti?id=eq.${r.id}`);
+      const v = await anon(`rituali_pubblici?id=eq.${r.id}`);
       const riga = Array.isArray(v.body) ? v.body[0] : null;
       check(riga && riga.date === giorno(30) && riga.time === '08:00:00' && riga.occorrenza_numero === 1
             && riga.occorrenze_totali === 1, 'per il singolo la vista lascia data e ora intatte', v.body);
@@ -121,7 +121,7 @@ async function crea(tag, extra) {
       check(ok(j), 'un ospite si iscrive al ciclo', j.body);
       const s = await rpc('segna_presenza_rituale', { p_ritual_id: c.id, p_session_id: ospite });
       check(ok(s) && s.body === 1, 'segna_presenza_rituale restituisce 1 presente', s.body);
-      const v = await anon(`rituali_correnti?id=eq.${c.id}`);
+      const v = await anon(`rituali_pubblici?id=eq.${c.id}`);
       check(v.body[0] && v.body[0].presenti_ora === 1 && v.body[0].occorrenza_numero === 3,
         'la vista conta 1 presente ora e l\'appuntamento numero 3', v.body);
 

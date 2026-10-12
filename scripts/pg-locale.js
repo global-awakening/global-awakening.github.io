@@ -29,8 +29,9 @@ const SCHEMA = `
   GRANT ALL ON rituals TO ${RUOLO_SERVIZIO};
   CREATE TABLE ritual_comments (id bigserial PRIMARY KEY, ritual_id bigint, author_nickname text,
     content text, created_at timestamptz DEFAULT now());
-  CREATE TABLE private_messages (id bigserial PRIMARY KEY, sender_name text, receiver_name text,
-    content text, created_at timestamptz DEFAULT now());
+  -- Colonne nell'ordine del DB vero (catalogo 09/10): get_my_messages della 36a le elenca così.
+  CREATE TABLE private_messages (id bigserial PRIMARY KEY, sender_id text, sender_name text, receiver_name text,
+    content text, is_read boolean DEFAULT false, created_at timestamptz DEFAULT now());
   CREATE TABLE push_subscriptions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), session_id text);
   CREATE TABLE ritual_notifications_sent (
     ritual_id bigint NOT NULL REFERENCES rituals(id) ON DELETE CASCADE,
@@ -119,6 +120,15 @@ const SCHEMA_TELEPATIA = `
   CREATE POLICY "anon can update telepathy_invites" ON telepathy_invites FOR UPDATE TO anon USING (true) WITH CHECK (true);
   GRANT ALL ON telepathy_invites TO anon, authenticated;
   GRANT ALL ON telepathy_matches, online_users, telepathy_queue TO anon, authenticated;
+  -- Come sul DB vero prima della 36: presenze e coda aperte a tutti (le chiude la 36b).
+  ALTER TABLE online_users ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY "Allow all" ON online_users FOR ALL TO public USING (true) WITH CHECK (true);
+  ALTER TABLE telepathy_queue ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY "Allow all" ON telepathy_queue FOR ALL TO public USING (true) WITH CHECK (true);
+  -- Segreti del server (copiato dalla 26): nessun privilegio all'app.
+  CREATE TABLE IF NOT EXISTS app_secrets (nome text PRIMARY KEY, valore bytea NOT NULL);
+  ALTER TABLE app_secrets ENABLE ROW LEVEL SECURITY;
+  REVOKE ALL ON app_secrets FROM PUBLIC, anon, authenticated;
   CREATE TABLE user_blocks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     blocker_nickname text NOT NULL, blocked_nickname text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (blocker_nickname, blocked_nickname));
@@ -163,6 +173,8 @@ const F32A = 'supabase/sql/32a_inviti_telepatia_offline.sql';
 const F32B = 'supabase/sql/32b_chiudi_inviti_diretti.sql';
 const F35A = 'supabase/sql/35a_notifiche_server.sql';
 const F35B = 'supabase/sql/35b_chiudi_notifiche.sql';
+const F36A = 'supabase/sql/36a_chiavi_server.sql';
+const F36B = 'supabase/sql/36b_chiudi_chiavi.sql';
 const CATALOGO_35 = 'docs/superpowers/plans/catalogo-notifiche-35.txt';
 
 // Le cinque funzioni com'erano sul DB vero prima della 35a (catalogo), nell'ordine del file.
@@ -173,7 +185,7 @@ function funzioniCatalogo35() {
 
 // Per gli inviti telepatia: catena dei rituali fino alla 30_, schema della telepatia, 31_
 // (l'ultima delete_my_account su main), poi le migration nuove se richieste.
-async function creaDbTelepatia({ con32a = true, con32b = false, con35a = false, con35b = false } = {}) {
+async function creaDbTelepatia({ con32a = true, con32b = false, con35a = false, con35b = false, con36a = false, con36b = false } = {}) {
   const db = await creaDbLocale();
   await db.exec(SCHEMA_TELEPATIA);
   await applicaFile(db, F31);
@@ -183,7 +195,9 @@ async function creaDbTelepatia({ con32a = true, con32b = false, con35a = false, 
   await db.exec(funzioniCatalogo35().find((f) => f.includes('FUNCTION public.send_private_message(')) + ';');
   if (con35a) await applicaFile(db, F35A);
   if (con35a && con35b) await applicaFile(db, F35B);
+  if (con36a) await applicaFile(db, F36A);
+  if (con36a && con36b) await applicaFile(db, F36B);
   return db;
 }
 
-module.exports = { creaDbLocale, creaDbTelepatia, applicaFile, RUOLO_SERVIZIO, F31, F32A, F32B, F35A, F35B, funzioniCatalogo35 };
+module.exports = { creaDbLocale, creaDbTelepatia, applicaFile, RUOLO_SERVIZIO, F31, F32A, F32B, F35A, F35B, F36A, F36B, funzioniCatalogo35 };

@@ -8,7 +8,7 @@
  * Esecuzione: NODE_OPTIONS="--require ./scripts/test-silenzioso.js" node test-rituali-candele.js
  * Prerequisito: aver applicato supabase/sql/30_candela_nella_stanza.sql.
  */
-const { purge } = require('./test-helpers');
+const { purge, serviceFetch } = require('./test-helpers');
 
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
@@ -43,6 +43,20 @@ async function rpc(fn, params) {
 const candlesOf = (row) => (row && row[0] && Array.isArray(row[0].candles)) ? row[0].candles : null;
 const nomiOf = (row) => (row && row[0] && row[0].candles_nomi) || null;
 
+// Dalla 36a toggle_ritual_candle restituisce la riga senza session_id (candles, participants,
+// creator_id e candles_nomi svuotati): la risposta dice solo «fatto». Lo stato vero della
+// candela si rilegge dalla tabella con la chiave di servizio; e si controlla che nella
+// risposta non ci sia nessun session_id.
+let fughe = 0;
+async function toggle(params) {
+  const r = await rpc('toggle_ritual_candle', params);
+  if (!Array.isArray(r) || !r[0]) return r;
+  const testo = JSON.stringify(r);
+  if (testo.includes(SID1) || testo.includes(SID2)) fughe++;
+  const { body } = await serviceFetch(`rituals?id=eq.${r[0].id}&select=id,candles,candles_nomi`);
+  return body;
+}
+
 (async () => {
   console.log('— Setup —');
   await rpc('cleanup_expired_rituals', {});
@@ -71,7 +85,7 @@ const nomiOf = (row) => (row && row[0] && row[0].candles_nomi) || null;
     // Dalla 30_ si accende solo da presenti nella stanza (come fa l'app prima di accendere).
     await rpc('segna_presenza_rituale', { p_ritual_id: ritId, p_session_id: SID1 });
     await rpc('segna_presenza_rituale', { p_ritual_id: ritId, p_session_id: SID2 });
-    let r = await rpc('toggle_ritual_candle', { p_ritual_id: ritId, p_session_id: SID1, p_nickname: NOME1 });
+    let r = await toggle({ p_ritual_id: ritId, p_session_id: SID1, p_nickname: NOME1 });
     let c = candlesOf(r);
     if (c && c.includes(SID1) && c.length === 1) pass('accendi -> candela presente, count 1');
     else fail(`accendi fallito: ${JSON.stringify(r)}`);
@@ -79,22 +93,25 @@ const nomiOf = (row) => (row && row[0] && row[0].candles_nomi) || null;
     if (nomi && nomi[SID1] === NOME1) pass('accendi -> il nome di chi accende è salvato');
     else fail(`nome non salvato: ${JSON.stringify(nomi)}`);
 
-    r = await rpc('toggle_ritual_candle', { p_ritual_id: ritId, p_session_id: SID1, p_nickname: NOME1 });
+    r = await toggle({ p_ritual_id: ritId, p_session_id: SID1, p_nickname: NOME1 });
     c = candlesOf(r);
     if (c && !c.includes(SID1) && c.length === 0 && nomiOf(r) && !(SID1 in nomiOf(r))) pass('rispegni -> candela e nome assenti, count 0');
     else fail(`spegni fallito: ${JSON.stringify(r)}`);
 
-    await rpc('toggle_ritual_candle', { p_ritual_id: ritId, p_session_id: SID1, p_nickname: NOME1 });
+    await toggle({ p_ritual_id: ritId, p_session_id: SID1, p_nickname: NOME1 });
     // Senza p_nickname: la chiamata delle app ancora in cache (due parametri) deve funzionare.
-    r = await rpc('toggle_ritual_candle', { p_ritual_id: ritId, p_session_id: SID2 });
+    r = await toggle({ p_ritual_id: ritId, p_session_id: SID2 });
     c = candlesOf(r);
     if (c && c.includes(SID1) && c.includes(SID2) && c.length === 2) pass('due utenti (uno con la chiamata vecchia) -> count 2');
     else fail(`due utenti fallito: ${JSON.stringify(r)}`);
 
-    r = await rpc('toggle_ritual_candle', { p_ritual_id: ritId, p_session_id: SID1, p_nickname: NOME1 });
+    r = await toggle({ p_ritual_id: ritId, p_session_id: SID1, p_nickname: NOME1 });
     c = candlesOf(r);
     if (c && !c.includes(SID1) && c.includes(SID2) && c.length === 1) pass('spegni uno -> resta l\'altro, count 1');
     else fail(`indipendenza fallita: ${JSON.stringify(r)}`);
+
+    if (fughe === 0) pass('le risposte di toggle_ritual_candle non contengono session_id');
+    else fail(`session_id nella risposta di toggle_ritual_candle (${fughe} volte)`);
   } finally {
     console.log('— Teardown —');
     // Pulizia DETERMINISTICA dei rituali di questo run: purge filtra esattamente sul
