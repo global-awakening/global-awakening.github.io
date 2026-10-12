@@ -190,7 +190,7 @@ async function closeEditProfile(page) {
     console.log('\n📋 Verifica richieste di rete raccolte');
     const profilesWrites = restRequests.filter((r) => r.url.includes('/rest/v1/profiles') && (r.method === 'POST' || r.method === 'PATCH'));
     const profilesBadSelect = restRequests.filter((r) => r.url.includes('/rest/v1/profiles')
-      && (r.url.includes('select=*') || /select=[^&]*\b(email|password_hash)\b/.test(r.url)));
+      && (r.url.includes('select=*') || /select=[^&]*\b(email|password_hash|session_id)\b/.test(r.url) || r.url.includes('session_id=eq.')));
     const telepathyScoresReq = restRequests.filter((r) => r.url.includes('/rest/v1/telepathy_scores'));
 
     if (profilesWrites.length === 0) pass('Nessuna scrittura (POST/PATCH) su /rest/v1/profiles');

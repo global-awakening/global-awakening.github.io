@@ -29,7 +29,7 @@ async function deriveStrongHash(password, saltBytes, iterations) {
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
-const PUBLIC_PROFILE_COLUMNS = 'session_id,nickname,bio,starseed_type,avatar,country,interests,experience_level,telepathy_score,telepathy_best,show_telepathy_score';
+const PUBLIC_PROFILE_COLUMNS = 'nickname,bio,starseed_type,avatar,country,interests,experience_level,telepathy_score,telepathy_best,show_telepathy_score';
 const Star = props => React.createElement("svg", _extends({}, props, {
   xmlns: "http://www.w3.org/2000/svg",
   width: "24",
@@ -4475,10 +4475,13 @@ function GlobalAwakeningPlatform() {
     const loadProfile = async () => {
       try {
         const {
-          data
-        } = await supabase.from('profiles').select(PUBLIC_PROFILE_COLUMNS).eq('session_id', sessionId);
-        if (data && data.length > 0) {
-          const p = data[0];
+          data,
+          error
+        } = await supabase.rpc('mio_profilo', {
+          p_session_id: sessionId
+        });
+        if (!error && data && typeof data === 'object') {
+          const p = data;
           const loaded = {
             bio: p.bio || '',
             starseedType: p.starseed_type || '',

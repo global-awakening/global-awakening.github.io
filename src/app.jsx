@@ -36,8 +36,9 @@
         }
 
         // Le colonne pubbliche di profiles. Email e hash non si leggono da qui: arrivano solo
-        // dalle RPC di login, a chi ha la password.
-        const PUBLIC_PROFILE_COLUMNS = 'session_id,nickname,bio,starseed_type,avatar,country,interests,experience_level,telepathy_score,telepathy_best,show_telepathy_score';
+        // dalle RPC di login, a chi ha la password. Nemmeno session_id (dalla 37b): il proprio
+        // profilo si carica con la RPC mio_profilo.
+        const PUBLIC_PROFILE_COLUMNS = 'nickname,bio,starseed_type,avatar,country,interests,experience_level,telepathy_score,telepathy_best,show_telepathy_score';
 
         const Star = (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>;
         const Brain = (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"></path></svg>;
@@ -4061,9 +4062,9 @@
           useEffect(() => {
             const loadProfile = async () => {
               try {
-                const { data } = await supabase.from('profiles').select(PUBLIC_PROFILE_COLUMNS).eq('session_id', sessionId);
-                if (data && data.length > 0) {
-                  const p = data[0];
+                const { data, error } = await supabase.rpc('mio_profilo', { p_session_id: sessionId });
+                if (!error && data && typeof data === 'object') {
+                  const p = data;
                   const loaded = {
                     bio: p.bio || '',
                     starseedType: p.starseed_type || '',
