@@ -17,7 +17,8 @@
  */
 
 const { chromium } = require('playwright');
-const { purge } = require('./test-helpers');
+const { purge, requireServiceKey } = require("./test-helpers");
+requireServiceKey();
 
 const APP_URL      = 'http://localhost:4321/app.html';
 const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
