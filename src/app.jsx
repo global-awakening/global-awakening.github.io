@@ -35,6 +35,23 @@
           return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
         }
 
+        // Il giro di aggiornamento può leggere l'elenco prima che il server abbia salvato un post o un
+        // commento appena scritto: le righe mostrate subito (id 'local-…') restano finché il server non
+        // restituisce una riga con lo stesso autore e testo, invece di sparire per qualche secondo.
+        // Si contano le righe uguali: un «Grazie» già scritto prima non conferma quello nuovo.
+        function conInAttesa(dalServer, prima, inCima = false) {
+          const chiave = (x) => JSON.stringify([x.author_nickname, x.content]);
+          const confermate = {};
+          for (const s of dalServer) confermate[chiave(s)] = (confermate[chiave(s)] || 0) + 1;
+          for (const x of prima || []) if (!String(x.id).startsWith('local-')) confermate[chiave(x)] = (confermate[chiave(x)] || 0) - 1;
+          const locali = (prima || []).filter(x => {
+            if (!String(x.id).startsWith('local-')) return false;
+            if ((confermate[chiave(x)] || 0) > 0) { confermate[chiave(x)]--; return false; }
+            return true;
+          });
+          return inCima ? [...locali, ...dalServer] : [...dalServer, ...locali];
+        }
+
         // Le colonne pubbliche di profiles. Email e hash non si leggono da qui: arrivano solo
         // dalle RPC di login, a chi ha la password. Nemmeno session_id (dalla 37b): il proprio
         // profilo si carica con la RPC mio_profilo.
@@ -2490,11 +2507,15 @@
               }
 
               const { data: postsData } = await supabase.from('consciousness_posts').select('*').order('created_at', { ascending: false }).limit(50);
-              if (postsData) setPosts(postsData.filter(x => !isBlocked(x.author_nickname)));
+              if (postsData) setPosts(prev => conInAttesa(postsData.filter(x => !isBlocked(x.author_nickname)), prev, true));
 
-              if (expandedPostIdRef.current) {
-                const { data: commentsData } = await supabase.from('consciousness_comments').select('*').eq('post_id', expandedPostIdRef.current).order('created_at', { ascending: true });
-                if (commentsData) setCommentsMap(prev => ({ ...prev, [expandedPostIdRef.current]: commentsData.filter(x => !isBlocked(x.author_nickname)) }));
+              const postAperto = expandedPostIdRef.current;
+              if (postAperto && !String(postAperto).startsWith('local-')) {
+                const { data: commentsData } = await supabase.from('consciousness_comments').select('*').eq('post_id', postAperto).order('created_at', { ascending: true });
+                if (commentsData) {
+                  const postId = postAperto;
+                  setCommentsMap(prev => ({ ...prev, [postId]: conInAttesa(commentsData.filter(x => !isBlocked(x.author_nickname)), prev[postId]) }));
+                }
               }
               if (expandedRitualIdRef.current) {
                 const { data: rCommentsData } = await supabase.from('ritual_comments').select('*').eq('ritual_id', expandedRitualIdRef.current).order('created_at', { ascending: true });
@@ -5055,7 +5076,7 @@
             }
             setExpandedPostId(postId);
             const { data } = await supabase.from('consciousness_comments').select('*').eq('post_id', postId).order('created_at', { ascending: true });
-            if (data) setCommentsMap(prev => ({ ...prev, [postId]: data.filter(x => !isBlocked(x.author_nickname)) }));
+            if (data) setCommentsMap(prev => ({ ...prev, [postId]: conInAttesa(data.filter(x => !isBlocked(x.author_nickname)), prev[postId]) }));
           };
 
           const createComment = async (postId) => {
@@ -5918,6 +5939,7 @@ ${ritual.description || ''}` })}
                             <div className="flex gap-2">
                               <button
                                 onClick={() => togglePostComments(post.id)}
+                                disabled={String(post.id).startsWith('local-')}
                                 className="btn-secondary"
                                 style={{fontSize: '0.8rem', padding: '0.45rem 0.85rem', minHeight: '40px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center'}}
                               >
@@ -5926,6 +5948,7 @@ ${ritual.description || ''}` })}
                               </button>
                               <button
                                 onClick={() => togglePostComments(post.id)}
+                                disabled={String(post.id).startsWith('local-')}
                                 className="btn-primary"
                                 style={{fontSize: '0.8rem', padding: '0.45rem 0.85rem', minHeight: '40px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center'}}
                               >

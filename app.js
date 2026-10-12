@@ -29,6 +29,21 @@ async function deriveStrongHash(password, saltBytes, iterations) {
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
+function conInAttesa(dalServer, prima, inCima = false) {
+  const chiave = x => JSON.stringify([x.author_nickname, x.content]);
+  const confermate = {};
+  for (const s of dalServer) confermate[chiave(s)] = (confermate[chiave(s)] || 0) + 1;
+  for (const x of prima || []) if (!String(x.id).startsWith('local-')) confermate[chiave(x)] = (confermate[chiave(x)] || 0) - 1;
+  const locali = (prima || []).filter(x => {
+    if (!String(x.id).startsWith('local-')) return false;
+    if ((confermate[chiave(x)] || 0) > 0) {
+      confermate[chiave(x)]--;
+      return false;
+    }
+    return true;
+  });
+  return inCima ? [...locali, ...dalServer] : [...dalServer, ...locali];
+}
 const PUBLIC_PROFILE_COLUMNS = 'nickname,bio,starseed_type,avatar,country,interests,experience_level,telepathy_score,telepathy_best,show_telepathy_score';
 const Star = props => React.createElement("svg", _extends({}, props, {
   xmlns: "http://www.w3.org/2000/svg",
@@ -2870,17 +2885,21 @@ function GlobalAwakeningPlatform() {
       } = await supabase.from('consciousness_posts').select('*').order('created_at', {
         ascending: false
       }).limit(50);
-      if (postsData) setPosts(postsData.filter(x => !isBlocked(x.author_nickname)));
-      if (expandedPostIdRef.current) {
+      if (postsData) setPosts(prev => conInAttesa(postsData.filter(x => !isBlocked(x.author_nickname)), prev, true));
+      const postAperto = expandedPostIdRef.current;
+      if (postAperto && !String(postAperto).startsWith('local-')) {
         const {
           data: commentsData
-        } = await supabase.from('consciousness_comments').select('*').eq('post_id', expandedPostIdRef.current).order('created_at', {
+        } = await supabase.from('consciousness_comments').select('*').eq('post_id', postAperto).order('created_at', {
           ascending: true
         });
-        if (commentsData) setCommentsMap(prev => ({
-          ...prev,
-          [expandedPostIdRef.current]: commentsData.filter(x => !isBlocked(x.author_nickname))
-        }));
+        if (commentsData) {
+          const postId = postAperto;
+          setCommentsMap(prev => ({
+            ...prev,
+            [postId]: conInAttesa(commentsData.filter(x => !isBlocked(x.author_nickname)), prev[postId])
+          }));
+        }
       }
       if (expandedRitualIdRef.current) {
         const {
@@ -5420,7 +5439,7 @@ function GlobalAwakeningPlatform() {
     });
     if (data) setCommentsMap(prev => ({
       ...prev,
-      [postId]: data.filter(x => !isBlocked(x.author_nickname))
+      [postId]: conInAttesa(data.filter(x => !isBlocked(x.author_nickname)), prev[postId])
     }));
   };
   const createComment = async postId => {
@@ -6652,6 +6671,7 @@ ${ritual.description || ''}`
       className: "flex gap-2"
     }, React.createElement("button", {
       onClick: () => togglePostComments(post.id),
+      disabled: String(post.id).startsWith('local-'),
       className: "btn-secondary",
       style: {
         fontSize: '0.8rem',
@@ -6663,6 +6683,7 @@ ${ritual.description || ''}`
       }
     }, isExpanded ? t.feed.hideComments : t.feed.showComments, postComments.length > 0 ? ` (${postComments.length})` : ''), React.createElement("button", {
       onClick: () => togglePostComments(post.id),
+      disabled: String(post.id).startsWith('local-'),
       className: "btn-primary",
       style: {
         fontSize: '0.8rem',
