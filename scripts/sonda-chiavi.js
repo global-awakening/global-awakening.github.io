@@ -7,14 +7,17 @@
  * Con --dopo-36b controlla anche che online_users, telepathy_queue e rituals siano chiuse
  * ad anon in lettura e scrittura (42501 / 401 / 403).
  *
+ * Con --dopo-37b (implica --dopo-36b) anche profiles.session_id deve essere chiusa.
+ *
  * Esecuzione (da global-awakening/, o da un worktree caricando prima loadTestEnv):
- *   node scripts/sonda-chiavi.js [--dopo-36b]
+ *   node scripts/sonda-chiavi.js [--dopo-36b | --dopo-37b]
  * La pulizia usa la chiave di servizio e gira anche se un controllo fallisce.
  */
 const { serviceFetch, SUPABASE_URL } = require('../test-helpers');
 
 const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
-const DOPO_36B = process.argv.includes('--dopo-36b');
+const DOPO_37B = process.argv.includes('--dopo-37b');
+const DOPO_36B = DOPO_37B || process.argv.includes('--dopo-36b');
 const caso = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const SID1 = `sonda-${caso()}`;
 const SID2 = `sonda-${caso()}`;
@@ -81,13 +84,14 @@ const senzaSid = (r) => !r.testo.includes(SID1) && !r.testo.includes(SID2);
       check(r.status === 200 && senzaSid(r), `${tab}: nessun session_id di prova`, r.status === 200 ? 'session_id trovato' : r.body);
     }
     // profiles: privilegi per colonna (select=* va in 42501 anche se session_id è leggibile).
-    // Falla nota e fuori da questo ramo (session_id degli iscritti, 27_): la si segna senza far
-    // fallire la sonda finché non la chiude la sua migration; poi diventa un controllo vero.
+    // session_id degli iscritti (GRANT di colonna della 27_): lo chiude la 37b. Prima la si segna
+    // senza far fallire la sonda; con --dopo-37b è un controllo vero.
     const prof = await anon('profiles?select=nickname,session_id');
     if (chiusa(prof)) ok('profiles.session_id: non leggibile');
     else if (Array.isArray(prof.body) && prof.body.some((r) => r.session_id)) {
-      aperte++;
-      console.log(`  ⚠️  profiles.session_id leggibile da anon (${prof.body.filter((r) => r.session_id).length} iscritti) — APERTA, prossimo pezzo`);
+      if (DOPO_37B) ko('profiles.session_id leggibile da anon dopo la 37b');
+      else aperte++;
+      console.log(`  ⚠️  profiles.session_id leggibile da anon (${prof.body.filter((r) => r.session_id).length} iscritti) — APERTA, la chiude la 37b`);
     } else ok('profiles.session_id: nessun valore leggibile');
     const presenza = await rpc('aggiorna_presenza', { p_session_id: SID2, p_password_hash: null, p_nickname: NICK2, p_lat: 41.9, p_lng: 12.5 });
     check(presenza.status === 200 && !presenza.testo.includes(SID1), 'aggiorna_presenza del secondo non mostra il session_id del primo', presenza.body);

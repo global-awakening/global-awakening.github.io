@@ -52,7 +52,7 @@ jobs:
             --max-time 30 --retry 3 --retry-delay 10 --retry-all-errors \
             -H "apikey: ${{ steps.cfg.outputs.key }}" \
             -H "Authorization: Bearer ${{ steps.cfg.outputs.key }}" \
-            "${{ steps.cfg.outputs.url }}/rest/v1/profiles?select=session_id&limit=1")
+            "${{ steps.cfg.outputs.url }}/rest/v1/profiles?select=nickname&limit=1")
 
           echo "Risposta HTTP: $CODE"
           if [ "$CODE" != "200" ]; then
