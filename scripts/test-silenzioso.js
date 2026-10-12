@@ -6,6 +6,10 @@
  * `chromium.launch(...)`, questo file si carica prima del test e aggiunge `--mute-audio` a
  * ogni avvio. I test non cambiano: finestre, tempi e comportamento restano quelli di sempre.
  *
+ * Sposta anche la finestra fuori dallo schermo (--window-position=-32000,-32000): il browser
+ * resta «vero» (headless: false), ma non compare in mezzo allo schermo di chi lavora. Per
+ * vederla di nuovo, lanciare con TEST_FINESTRE_VISIBILI=1.
+ *
  * Imposta anche locale en-US su ogni newContext/newPage che non ne chiede un altro (il PC è «it»).
  *
  * Uso:
@@ -20,7 +24,11 @@ const conLocale = (opzioni) => (opzioni && opzioni.locale ? opzioni : { ...(opzi
 
 const avvio = playwright.chromium.launch.bind(playwright.chromium);
 playwright.chromium.launch = async (opzioni = {}) => {
-  const browser = await avvio({ ...opzioni, args: [...(opzioni.args || []), '--mute-audio'] });
+  // Fuori schermo Chrome considera la finestra «coperta» e la mette in secondo piano (pagina
+  // hidden, timer rallentati): le ultime tre opzioni lo impediscono.
+  const nascosta = process.env.TEST_FINESTRE_VISIBILI ? [] : ['--window-position=-32000,-32000',
+    '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling'];
+  const browser = await avvio({ ...opzioni, args: [...(opzioni.args || []), '--mute-audio', ...nascosta] });
   const nuovoContesto = browser.newContext.bind(browser);
   const nuovaPagina = browser.newPage.bind(browser);
   browser.newContext = (o) => nuovoContesto(conLocale(o));

@@ -58,8 +58,15 @@ async function cleanupTelepathy(label) {
     // TestUserA/B perennemente 'busy' (status derivato da telepathy_matches, app.jsx:1058)
     // → la lista lobby non mostra il bottone "Proponi" → Test 3 fallisce in modo
     // DETERMINISTICO cross-run. Va pulito qui (pre+post) come le altre tabelle.
-    paths.push(`telepathy_matches?user1_id=eq.${enc(s)}`);
-    paths.push(`telepathy_matches?user2_id=eq.${enc(s)}`);
+    // Dalla 36a l'app nuova scrive le partite con l'id pubblico del SID: si puliscono
+    // entrambe le forme, altrimenti la partita del giro prima resta e il giro dopo è rosso.
+    const { body: pubblico } = await serviceFetch('rpc/id_pubblico', {
+      method: 'POST', body: JSON.stringify({ p_sid: s }),
+    }).catch(() => ({ body: null }));
+    for (const id of [s, typeof pubblico === 'string' ? pubblico : null].filter(Boolean)) {
+      paths.push(`telepathy_matches?user1_id=eq.${enc(id)}`);
+      paths.push(`telepathy_matches?user2_id=eq.${enc(id)}`);
+    }
   }
   await purge(SUPABASE_URL, paths, { label: `telepathy-${label}` });
 }
