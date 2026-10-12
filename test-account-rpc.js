@@ -420,10 +420,13 @@ async function testDopoChiusura() {
   const keep = await anon('profiles?select=nickname&limit=1');
   check(keep.status === 200, 'la lettura del keepalive funziona', keep.status);
   // Dalla 37b il session_id di un iscritto non si legge né si usa nei filtri con la chiave pubblica.
-  const sidR = await anon(`profiles?nickname=eq.${n}&select=session_id`);
-  check(negato(sidR), 'anon non legge session_id', sidR);
-  const sidF = await anon(`profiles?session_id=eq.${encodeURIComponent(a.session_id)}&select=nickname`);
-  check(sidF.status !== 200, 'anon non filtra su session_id', sidF);
+  // Prima della 37b (o dopo 37b_ritorno) è ancora leggibile: questi due girano con --dopo-37b.
+  if (process.argv.includes('--dopo-37b')) {
+    const sidR = await anon(`profiles?nickname=eq.${n}&select=session_id`);
+    check(negato(sidR), 'anon non legge session_id', sidR);
+    const sidF = await anon(`profiles?session_id=eq.${encodeURIComponent(a.session_id)}&select=nickname`);
+    check(negato(sidF), 'anon non filtra su session_id', sidF);
+  }
   // Il proprio profilo arriva da mio_profilo (37a), senza session_id.
   const mio = await anon('rpc/mio_profilo', { method: 'POST', body: JSON.stringify({ p_session_id: a.session_id }) });
   check(mio.status === 200 && mio.body && mio.body.nickname === a.nickname && !('session_id' in mio.body)

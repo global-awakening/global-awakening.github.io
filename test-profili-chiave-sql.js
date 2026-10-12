@@ -73,7 +73,7 @@ const prova = async (db, sql) => comeAnon(db, async () => { try { return { righe
   check(((await prova(db, `SELECT session_id FROM profiles`)).righe || []).length === 1, '37b_ritorno: anon rilegge session_id come prima');
   await applicaFile(db, F37A_R);
   const via = await prova(db, `SELECT mio_profilo('sid-iscritta-segreto') AS p`);
-  check(!!via.errore, '37a_ritorno: mio_profilo non c\'è più', via);
+  check(via.errore === '42883', '37a_ritorno: mio_profilo non c\'è più', via);
   await applicaFile(db, F37A);
   await applicaFile(db, F37B);
   check((await prova(db, `SELECT session_id FROM profiles`)).errore === '42501', 'riapplicate dopo i ritorni: di nuovo chiusa');

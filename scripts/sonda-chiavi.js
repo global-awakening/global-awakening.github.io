@@ -90,8 +90,10 @@ const senzaSid = (r) => !r.testo.includes(SID1) && !r.testo.includes(SID2);
     if (chiusa(prof)) ok('profiles.session_id: non leggibile');
     else if (Array.isArray(prof.body) && prof.body.some((r) => r.session_id)) {
       if (DOPO_37B) ko('profiles.session_id leggibile da anon dopo la 37b');
-      else aperte++;
-      console.log(`  ⚠️  profiles.session_id leggibile da anon (${prof.body.filter((r) => r.session_id).length} iscritti) — APERTA, la chiude la 37b`);
+      else {
+        aperte++;
+        console.log(`  ⚠️  profiles.session_id leggibile da anon (${prof.body.filter((r) => r.session_id).length} iscritti) — APERTA, la chiude la 37b`);
+      }
     } else ok('profiles.session_id: nessun valore leggibile');
     const presenza = await rpc('aggiorna_presenza', { p_session_id: SID2, p_password_hash: null, p_nickname: NICK2, p_lat: 41.9, p_lng: 12.5 });
     check(presenza.status === 200 && !presenza.testo.includes(SID1), 'aggiorna_presenza del secondo non mostra il session_id del primo', presenza.body);
