@@ -45,7 +45,7 @@ I nomi sono indicativi e li fissa il piano.
 |---|---|---|
 | «Mi hanno abbinato?» | `partita_mia` | Restituisce la mia partita non chiusa (vista filtrata, sotto) oppure `null`. Sostituisce i SELECT di tutta la tabella in `findPartner` |
 | Abbinamento dalla coda | `partita_crea_da_coda(…, p_altro_id_pubblico)` | L'altro deve essere in `telepathy_queue`, fresco (stessa finestra di 60 s di `coda_leggi`). Nessuno dei due deve avere partite vive (`telepatia_in_training`), e fra i due non ci deve essere un blocco. Il server sorteggia ruoli opposti, prende i nickname verificati e inserisce la riga. Più chiamate concorrenti generano **una sola** partita: lock sulla coppia, o `ON CONFLICT` su `telepathy_matches_pair_unique` con restituzione della partita esistente. Prima dell'insert il server toglie le partite chiuse della stessa coppia (oggi lo fa il client) |
-| Invito accettato | `respond_telepathy_invite` con `p_accept=true` e `p_match_id` **null** | Il server crea la partita (user1 = chi invita, user2 = chi accetta, `da_invito=true`, ruoli sorteggiati) e la collega all'invito. Il ramo con `p_match_id` valorizzato resta in 39a per le app vecchie, si toglie in 39b |
+| Invito accettato | `accetta_invito_partita(…, p_invite_id)` | Il server crea la partita (user1 = chi invita, user2 = chi accetta, `da_invito=true`, ruoli sorteggiati, nickname presi dall'invito) e poi chiama la `respond_telepathy_invite` di oggi, **senza modificarla**, passandole l'id della partita. Se la risposta è un rifiuto, cancella la partita appena creata. Restituisce la risposta di `respond_telepathy_invite` più la vista della partita |
 | Entra chi ha invitato | `partita_entra(…, p_match_id)` | Il «tocco» che oggi fa l'update finto di `round_count`: segna `giocato` e restituisce la vista |
 | Stato (polling) | `partita_stato(…, p_match_id)` | Vista filtrata, oppure `null` se la riga non c'è più (l'app oggi tratta la riga sparita come «partita finita»: il comportamento resta) |
 | Simbolo | `partita_simbolo(…, p_match_id, p_simbolo, p_livello)` | Solo chi manda nel round corrente, solo se `sender_symbol` è vuoto e la partita è aperta. Chi manda non può cambiare il simbolo nello stesso round |
@@ -66,7 +66,7 @@ I nomi sono indicativi e li fissa il piano.
 
 - Tutti gli accessi diretti a `telepathy_matches` e `telepathy_chat` in `src/app.jsx` passano alle RPC qui sopra, compresi il DELETE `keepalive` di `beforeunload` (→ `partita_esci`) e le cancellazioni di chat e partita in `endSession`/`resetTelepathy` (→ `partita_esci`; la cancellazione la fa il server). Al rilascio di 39a nel codice non deve restare **nessun** `from('telepathy_matches')` o `from('telepathy_chat')`.
 - `end_telepathy_match` non si chiama più: al suo posto c'è `partita_esci`.
-- In `accettaInvito` l'insert della partita sparisce: si chiama `respond_telepathy_invite` senza `p_match_id` e si usa la partita restituita.
+- In `accettaInvito` l'insert della partita, la pulizia dei residui e la cancellazione in caso di rifiuto spariscono: si chiama `accetta_invito_partita` e si usa la partita restituita.
 - Il balletto anti-doppione di `findPartner` (insert fallito, «vince la più vecchia», delete dei duplicati) sparisce: ci pensa `partita_crea_da_coda`.
 - La logica di gioco e i tempi restano invariati.
 
@@ -75,14 +75,14 @@ I nomi sono indicativi e li fissa il piano.
 - `telepathy_matches`: si tolgono le due policy `Allow all` e si fa REVOKE ALL ad anon e authenticated. RLS resta accesa, senza policy.
 - `telepathy_chat`: si tolgono le tre policy `auth.uid()`, si accende la RLS e si fa REVOKE ALL ad anon e authenticated.
 - `end_telepathy_match`: REVOKE EXECUTE ad anon e authenticated (resta solo per il server).
-- `respond_telepathy_invite`: il ramo con `p_match_id` passato dal client non si accetta più.
+- `respond_telepathy_invite` non si tocca: dopo 39b nessuno può più creare partite a mano, quindi il `p_match_id` che riceve può essere solo una partita creata dal server, e i suoi controlli (partita aperta, coppia giusta) bastano.
 - Effetto accettato: chi ha l'app aperta da prima del rilascio trova la telepatia ferma finché non ricarica (stesso compromesso di 36b/37b).
 
 Ogni migration ha il suo `_ritorno.sql`: 39b_ritorno riapre i privilegi e le policy di oggi, 39a_ritorno toglie le RPC nuove e rimette `match_id` a text senza FK.
 
 ## Verifica (criteri di «fatto»)
 
-1. **PGlite** (`scripts/pg-locale.js`, nuovo `test-motore-telepatia-sql.js`): un estraneo non ottiene niente da nessuna RPC. Turni rispettati. Simbolo nascosto a chi indovina fino alla risposta. Simbolo non modificabile dopo la risposta, né risposta prima del simbolo. `partita_avanza` idempotente. Due `partita_crea_da_coda` concorrenti producono una partita sola. Blocco rispettato. Chat cancellata a cascata. `sender_name` imposto dal server. Pulizie. Invito senza `p_match_id` crea la partita. Dopo 39b: anon riceve 42501 su entrambe le tabelle e su `end_telepathy_match`.
+1. **PGlite** (`scripts/pg-locale.js`, nuovo `test-motore-telepatia-sql.js`): un estraneo non ottiene niente da nessuna RPC. Turni rispettati. Simbolo nascosto a chi indovina fino alla risposta. Simbolo non modificabile dopo la risposta, né risposta prima del simbolo. `partita_avanza` idempotente. Due `partita_crea_da_coda` concorrenti producono una partita sola. Blocco rispettato. Chat cancellata a cascata. `sender_name` imposto dal server. Pulizie. `accetta_invito_partita` crea la partita, la collega all'invito, e la cancella se l'invito è scaduto o annullato. Dopo 39b: anon riceve 42501 su entrambe le tabelle e su `end_telepathy_match`.
 2. **App locale**, Playwright con due Chrome nascosti (`NODE_OPTIONS="--require ./scripts/test-silenzioso.js"`): `test-telepathy.js` (partita completa, chat compresa), `test-telepathy-gating.js`, `test-telepathy-session-end.js` adeguato, `test-inviti-telepatia.js`, `test-inviti-offline-ui.js`, tutti verdi. Le pulizie dei test usano la chiave di servizio.
 3. **Sito vero dopo 39a**: le stesse prove UI contro il sito (preload in scratchpad), e una nuova `scripts/sonda-telepatia.js`. Con la chiave pubblica prova SELECT, INSERT, UPDATE, DELETE e TRUNCATE (via REST) su partite e chat, e `end_telepathy_match` su una partita altrui: prima di 39b le falle escono come ⏳ note.
 4. **Sito vero dopo 39b**: `sonda-telepatia.js --dopo-39b` con zero falle. Prove UI di telepatia, inviti, presenze e rituali verdi. `sonda-chiavi --dopo-37b` e `sonda-community --dopo-38` ancora verdi.
