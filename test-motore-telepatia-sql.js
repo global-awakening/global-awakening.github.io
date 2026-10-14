@@ -183,6 +183,27 @@ sezione('N5. invito non più valido: nessuna partita resta', async (db) => {
   check((await righe(db, `SELECT 1 FROM telepathy_matches WHERE da_invito`)).length === 0, 'nessun orfano d\'invito');
 });
 
+sezione('N6. coda e invito non si sovrappongono', async (db) => {
+  await inCoda(db, 'sidD', 'Dea');
+  const r = await crea(db, 'sidC', 'Cia', 'sidD');
+  check(r.ok === true, 'D–C nasce dalla coda', r);
+  const inv = await invita(db, 'sidA', 'Ada', 'sidC', 'Cia');
+  const a = await comeAnon(db, () => chiama(db, 'accetta_invito_partita', { p_invite_id: inv, ...IO('sidC') }));
+  check(a.ok === false && a.motivo === 'in_match', 'C è già in partita dalla coda: in_match', a);
+  check((await righe(db, `SELECT 1 FROM telepathy_matches`)).length === 1, 'nessuna partita in più');
+  await db.query(`DELETE FROM telepathy_matches`);
+  await db.query(`DELETE FROM telepathy_invites`);
+  const inv2 = await invita(db, 'sidA', 'Ada', 'sidC', 'Cia');
+  const b = await comeAnon(db, () => chiama(db, 'accetta_invito_partita', { p_invite_id: inv2, ...IO('sidC') }));
+  check(b.ok === true, 'A–C da invito accettato (A non è ancora entrato)', b);
+  await inCoda(db, 'sidC', 'Cia');
+  check((await crea(db, 'sidB', 'Bea', 'sidC')).motivo === 'occupato', 'B non si abbina a C: occupato');
+  await inCoda(db, 'sidE', 'Eva');
+  check((await crea(db, 'sidC', 'Cia', 'sidE')).motivo === 'occupato', 'C non si abbina a E: occupato');
+  await inCoda(db, 'sidA', 'Ada');
+  check((await crea(db, 'sidB', 'Bea', 'sidA')).motivo === 'occupato', 'B non si abbina a chi ha invitato: occupato');
+});
+
 // ── esecuzione ──
 (async () => {
   for (const [nome, fn, opzioni] of sezioni) {

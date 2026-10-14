@@ -112,6 +112,16 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.partita_blocca(text, text) FROM PUBLIC, anon, authenticated;
 
+-- Una partita nata da un invito già accettato, ma di cui chi ha invitato non è ancora entrato:
+-- partita_viva_di non la conta (è un orfano d'invito possibile), ma la persona è già impegnata.
+CREATE OR REPLACE FUNCTION public.partita_invito_in_corso(p_io text) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM telepathy_matches m JOIN telepathy_invites i ON i.match_id = m.id AND i.status = 'accepted'
+     WHERE (m.user1_id = p_io OR m.user2_id = p_io) AND m.ended_at IS NULL AND m.da_invito AND NOT m.giocato);
+$$;
+REVOKE ALL ON FUNCTION public.partita_invito_in_corso(text) FROM PUBLIC, anon, authenticated;
+
 CREATE OR REPLACE FUNCTION public.partita_crea_da_coda(p_session_id text, p_password_hash text, p_nickname text, p_altro text)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE v_io text := partita_io(p_session_id, p_password_hash);
@@ -130,7 +140,7 @@ BEGIN
   SELECT * INTO q FROM telepathy_queue
    WHERE chiavi_sid_valido(id) AND id_pubblico(id) = p_altro AND timestamp >= v_ora - 60000;
   IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_in_coda'); END IF;
-  IF (partita_viva_di(p_altro)).id IS NOT NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'occupato'); END IF;
+  IF (partita_viva_di(p_altro)).id IS NOT NULL OR partita_invito_in_corso(p_altro) OR partita_invito_in_corso(v_io) THEN RETURN jsonb_build_object('ok', false, 'motivo', 'occupato'); END IF;
   IF telepatia_bloccati(p_session_id, v_nome, q.id, q.nickname) THEN
     RETURN jsonb_build_object('ok', false, 'motivo', 'bloccato');
   END IF;
@@ -171,6 +181,10 @@ BEGIN
   DELETE FROM telepathy_matches
    WHERE least(user1_id, user2_id) = least(v_io, v_da) AND greatest(user1_id, user2_id) = greatest(v_io, v_da)
      AND ended_at IS NOT NULL;
+  -- Chi è già in una partita (anche appena nata dalla coda) non può accettare un secondo invito.
+  IF (partita_viva_di(v_io)).id IS NOT NULL OR (partita_viva_di(v_da)).id IS NOT NULL THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'in_match');
+  END IF;
   v_ruolo := CASE WHEN random() < 0.5 THEN 'sender' ELSE 'receiver' END;
   BEGIN
     INSERT INTO telepathy_matches (user1_id, user1_nickname, user1_role, user2_id, user2_nickname, user2_role, level, round_count, da_invito)
@@ -178,7 +192,7 @@ BEGIN
             v_io, v.to_name, v_ruolo, 'lvl3', 0, true)
     RETURNING * INTO m;
   EXCEPTION WHEN unique_violation THEN
-    -- Un altro telefono ha appena accettato: respond lo dice col suo motivo.
+    -- Un altro telefono ha appena accettato, o la coppia ha già una partita aperta: respond lo dice col suo motivo.
     RETURN respond_telepathy_invite(p_invite_id, p_session_id, p_password_hash, true, NULL);
   END;
   r := respond_telepathy_invite(p_invite_id, p_session_id, p_password_hash, true, m.id);
