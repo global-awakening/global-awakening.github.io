@@ -265,7 +265,7 @@ sezione('C1. chat', async (db) => {
 sezione('R1. 39a_ritorno', async (db) => {
   const e = await errore(applicaFile(db, 'supabase/sql/39a_ritorno.sql'));
   check(!e, 'il ritorno si applica', e);
-  const f = await righe(db, `SELECT proname FROM pg_proc WHERE proname LIKE 'partita%' OR proname LIKE 'chat\\_%' OR proname = 'accetta_invito_partita'`);
+  const f = await righe(db, `SELECT proname FROM pg_proc WHERE proname LIKE 'partita%' OR proname LIKE 'chat\\_%' OR proname = 'accetta_invito_partita' OR proname = 'partite_pulizia'`);
   check(f.length === 0, 'nessuna funzione nuova rimasta', f);
   const t = await uno(db, `SELECT data_type FROM information_schema.columns WHERE table_name = 'telepathy_chat' AND column_name = 'match_id'`);
   check(t.data_type === 'text', 'match_id torna text', t);
@@ -274,6 +274,42 @@ sezione('R1. 39a_ritorno', async (db) => {
   check(!(await errore(applicaFile(db, 'supabase/sql/39a_ritorno.sql'))), 'il ritorno si riapplica');
   check(!(await errore(applicaFile(db, F39A))), 'dopo il ritorno la 39a si riapplica');
 });
+
+const negato = (e) => /permission denied/.test(e || '');
+sezione('Z1. dopo la 39b: tabelle chiuse, RPC vive', async (db) => {
+  const m = await partita(db, 'sidA', 'sidB');
+  for (const sql of [`SELECT * FROM telepathy_matches`, `SELECT * FROM telepathy_chat`,
+                     `INSERT INTO telepathy_matches (user1_id) VALUES ('x')`, `UPDATE telepathy_matches SET level = 'lvl9'`,
+                     `DELETE FROM telepathy_matches`, `TRUNCATE telepathy_matches`, `TRUNCATE telepathy_chat`,
+                     `INSERT INTO telepathy_chat (match_id, sender_name, content) VALUES ('${m}', 'X', 'y')`]) {
+    check(negato(await comeAnon(db, () => errore(db.query(sql)))), `anon: ${sql.slice(0, 40)} → negato`);
+  }
+  check(negato(await comeAnon(db, () => errore(chiama(db, 'end_telepathy_match', { p_match_id: m, p_ended_by: 'x' })))), 'end_telepathy_match non più chiamabile');
+  check((await mossa(db, 'partita_simbolo', 'sidA', m, { p_simbolo: 'stella', p_livello: 'lvl3' })).ok === true, 'le mosse passano dalle RPC');
+  check((await mossa(db, 'chat_scrivi', 'sidB', m, { p_testo: 'ciao' })).ok === true, 'la chat passa dalle RPC');
+  check((await mossa(db, 'chat_leggi', 'sidA', m)).length === 1, 'e si rilegge');
+  await inCoda(db, 'sidC', 'Cia');
+  check((await crea(db, 'sidD', 'Dea', 'sidC')).ok === true, 'l\'abbinamento funziona');
+  const inv = await invita(db, 'sidE', 'Eva', 'sidF', 'Fra');
+  check((await comeAnon(db, () => chiama(db, 'accetta_invito_partita', { p_invite_id: inv, ...IO('sidF') }))).ok === true, 'l\'invito funziona');
+  const pres = await comeAnon(db, () => chiama(db, 'aggiorna_presenza', { ...IO('sidA'), p_nickname: 'Ada', p_lat: 1, p_lng: 1 }));
+  check(pres.find((u) => u.nickname === 'Ada').busy === true, 'aggiorna_presenza vede ancora le partite (busy)', pres);
+}, { con35a: true, con36a: true, con36b: true, con39a: true, con39b: true });
+
+sezione('Z2. 39b_ritorno', async (db) => {
+  check(!(await errore(applicaFile(db, 'supabase/sql/39b_ritorno.sql'))), 'il ritorno si applica');
+  check(!(await comeAnon(db, () => errore(db.query(`SELECT * FROM telepathy_matches`)))), 'anon rilegge le partite');
+  check(!(await comeAnon(db, () => errore(db.query(`SELECT * FROM telepathy_chat`)))), 'anon rilegge la chat');
+  const rls = await uno(db, `SELECT relrowsecurity AS r FROM pg_class WHERE relname = 'telepathy_chat'`);
+  check(rls.r === false, 'chat: RLS di nuovo spenta, com\'era', rls);
+  const pol = (await righe(db, `SELECT tablename, policyname FROM pg_policies WHERE tablename IN ('telepathy_matches','telepathy_chat') ORDER BY 1, 2`)).map((p) => p.policyname);
+  check(pol.length === 5, 'le cinque policy di prima', pol);
+  check(!(await comeAnon(db, () => errore(chiama(db, 'end_telepathy_match', { p_match_id: '00000000-0000-0000-0000-000000000000', p_ended_by: 'x' })))), 'end_telepathy_match di nuovo chiamabile');
+  check(!(await errore(applicaFile(db, 'supabase/sql/39b_ritorno.sql'))), 'il ritorno si riapplica');
+  check(!(await errore(applicaFile(db, F39B))), 'dopo il ritorno la 39b si riapplica');
+  check(negato(await comeAnon(db, () => errore(db.query(`SELECT * FROM telepathy_matches`)))), 'e richiude');
+  check(!(await errore(applicaFile(db, 'supabase/sql/39b_ritorno.sql'))) && !(await errore(applicaFile(db, 'supabase/sql/39a_ritorno.sql'))), 'catena 39b_ritorno → 39a_ritorno senza errori');
+}, { con35a: true, con36a: true, con36b: true, con39a: true, con39b: true });
 
 // ── esecuzione ──
 (async () => {
