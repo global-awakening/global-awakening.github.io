@@ -115,11 +115,13 @@ const rifiutata = (r) => r.status === 401 || r.status === 403;
     chiusa(rifiutata(gc) || (Array.isArray(gc.corpo) && !gc.corpo.some((c) => c.match_id === mid)),
       'anon non legge la chat', gc.status);
 
-    await rest(ANON, 'telepathy_matches', { method: 'POST', body: JSON.stringify({
-      user1_id: 'pub_sonda_anon1', user1_nickname: NICK_ANON, user1_role: 'sender',
-      user2_id: 'pub_sonda_anon2', user2_nickname: NICK_ANON, user2_role: 'receiver', level: 'lvl3', round_count: 0 }) });
+    const postM = await rest(ANON, 'telepathy_matches', { method: 'POST', body: JSON.stringify({
+      user1_id: `pub_sonda_${TS}_1`, user1_nickname: NICK_ANON, user1_role: 'sender',
+      user2_id: `pub_sonda_${TS}_2`, user2_nickname: NICK_ANON, user2_role: 'receiver', level: 'lvl3', round_count: 0 }) });
     const pm = await rest(SVC, `telepathy_matches?user1_nickname=eq.${e(NICK_ANON)}&select=id`);
-    chiusa(Array.isArray(pm.corpo) && pm.corpo.length === 0, 'anon non crea una partita', pm.corpo);
+    // Chiusa solo con 401/403, o 2xx senza riga creata: 409/400/5xx non provano niente.
+    chiusa(rifiutata(postM) || (postM.status >= 200 && postM.status < 300 && Array.isArray(pm.corpo) && pm.corpo.length === 0),
+      'anon non crea una partita', [postM.status, pm.corpo]);
     await rest(ANON, 'telepathy_chat', { method: 'POST', body: JSON.stringify({ match_id: mid, sender_name: `${PREFISSO}_intruso`, content: 'scritto da anon' }) });
     const pc = await rest(SVC, `telepathy_chat?sender_name=eq.${e(`${PREFISSO}_intruso`)}&select=id`);
     chiusa(Array.isArray(pc.corpo) && pc.corpo.length === 0, 'anon non scrive in chat', pc.corpo);
@@ -146,6 +148,8 @@ const rifiutata = (r) => r.status === 401 || r.status === 403;
     console.log('— Pulizia —');
     const via = [`telepathy_matches?user1_nickname=like.${e(PREFISSO)}*`, `telepathy_matches?user1_nickname=eq.${e(NICK_ANON)}`];
     if (mid) via.push(`telepathy_matches?id=eq.${mid}`);
+    // Chat per prefisso del mittente (prima della 39a non c'e' la cascata sulla FK).
+    via.push(`telepathy_chat?sender_name=like.${e(PREFISSO)}*`);
     for (const p of via) { try { await rest(SVC, p, { method: 'DELETE' }); } catch (_) { /* si verifica sotto */ } }
     const resti = [];
     for (const p of via) {
