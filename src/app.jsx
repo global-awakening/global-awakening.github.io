@@ -3111,11 +3111,13 @@
             const r = await rpcPartita('partita_ipotesi', { p_match_id: matchId, p_ipotesi: guessedSymbol });
             if (mossaRespinta(r, 'gia_risposto')) setWaitingForPartner(false);
           };
-          // Mossa non arrivata al server (errore o ok:false): si smette di aspettare, così si può
-          // riprovare invece di restare fermi fino all'uscita anti-stallo dei 90 s. Con il motivo
-          // «già fatto» la mossa invece è sul server: si continua ad aspettare l'altro.
-          function mossaRespinta({ data, error }, motivoGiaFatto) {
-            if (error) return true;
+          // Mossa rifiutata dal server (ok:false): si smette di aspettare, così si può riprovare
+          // invece di restare fermi fino all'uscita anti-stallo dei 90 s. Con il motivo «già fatto»
+          // la mossa è sul server: si continua ad aspettare l'altro. Con un errore di rete si
+          // aspetta comunque: la scrittura può essere andata a buon fine e persa solo la risposta
+          // (smettere di aspettare fermerebbe pollResult e lascerebbe questo lato al round vecchio);
+          // se davvero non è arrivata, resta l'uscita anti-stallo dei 90 s.
+          function mossaRespinta({ data }, motivoGiaFatto) {
             return !!data && data.ok === false && data.motivo !== motivoGiaFatto;
           }
 

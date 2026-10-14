@@ -3554,10 +3554,8 @@ function GlobalAwakeningPlatform() {
     if (mossaRespinta(r, 'gia_risposto')) setWaitingForPartner(false);
   };
   function mossaRespinta({
-    data,
-    error
+    data
   }, motivoGiaFatto) {
-    if (error) return true;
     return !!data && data.ok === false && data.motivo !== motivoGiaFatto;
   }
   const proposeLevelChange = async choice => {
