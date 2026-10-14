@@ -96,6 +96,10 @@ const SCHEMA_TELEPATIA = `
     level_change_choice_sender text, level_change_choice_receiver text,
     score_sender integer DEFAULT 0, score_receiver integer DEFAULT 0,
     created_at timestamptz DEFAULT now(), ended_at timestamptz, ended_by text);
+  -- Come sul DB vero (catalogo 13/10): RLS SPENTA, tre policy auth.uid() inerti, privilegi pieni.
+  CREATE TABLE telepathy_chat (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), match_id text NOT NULL,
+    sender_name text NOT NULL, content text NOT NULL, created_at timestamptz DEFAULT now());
+  GRANT ALL ON telepathy_chat TO anon, authenticated;
   CREATE UNIQUE INDEX telepathy_matches_pair_unique
     ON telepathy_matches (least(user1_id, user2_id), greatest(user1_id, user2_id));
   CREATE TABLE telepathy_invites (
@@ -107,6 +111,18 @@ const SCHEMA_TELEPATIA = `
   -- creaDbLocale non ha uno schema auth, e le policy qui sotto lo richiedono per esistere.
   CREATE SCHEMA IF NOT EXISTS auth;
   CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS 'SELECT NULL::uuid';
+  CREATE POLICY "Solo i partecipanti possono leggere la chat" ON telepathy_chat FOR SELECT TO public
+    USING (EXISTS (SELECT 1 FROM telepathy_matches WHERE telepathy_matches.id::text = telepathy_chat.match_id
+      AND (telepathy_matches.user1_id = auth.uid()::text OR telepathy_matches.user2_id = auth.uid()::text)));
+  CREATE POLICY "Solo i partecipanti possono inviare messaggi" ON telepathy_chat FOR INSERT TO public
+    WITH CHECK (EXISTS (SELECT 1 FROM telepathy_matches WHERE telepathy_matches.id::text = telepathy_chat.match_id
+      AND (telepathy_matches.user1_id = auth.uid()::text OR telepathy_matches.user2_id = auth.uid()::text)));
+  CREATE POLICY "Solo i partecipanti possono cancellare messaggi" ON telepathy_chat FOR DELETE TO public
+    USING (EXISTS (SELECT 1 FROM telepathy_matches WHERE telepathy_matches.id::text = telepathy_chat.match_id
+      AND (telepathy_matches.user1_id = auth.uid()::text OR telepathy_matches.user2_id = auth.uid()::text)));
+  ALTER TABLE telepathy_matches ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY "Allow all" ON telepathy_matches FOR ALL TO public USING (true) WITH CHECK (true);
+  CREATE POLICY "Allow all for anon" ON telepathy_matches FOR ALL TO public USING (true) WITH CHECK (true);
   -- Le 8 policy di oggi, come nel catalogo (cat8-cat12, pol5-pol7). Le quattro per public con
   -- auth.uid() sono inerti per l'app (auth.uid() è null con la chiave pubblica); le quattro per
   -- anon con true sono quelle che oggi lasciano leggere e scrivere chiunque.
@@ -175,6 +191,9 @@ const F35A = 'supabase/sql/35a_notifiche_server.sql';
 const F35B = 'supabase/sql/35b_chiudi_notifiche.sql';
 const F36A = 'supabase/sql/36a_chiavi_server.sql';
 const F36B = 'supabase/sql/36b_chiudi_chiavi.sql';
+const F14 = 'supabase/sql/14_telepathy_session_end.sql';
+const F39A = 'supabase/sql/39a_motore_telepatia.sql';
+const F39B = 'supabase/sql/39b_chiudi_telepatia.sql';
 const CATALOGO_35 = 'docs/superpowers/plans/catalogo-notifiche-35.txt';
 
 // Le cinque funzioni com'erano sul DB vero prima della 35a (catalogo), nell'ordine del file.
@@ -185,7 +204,7 @@ function funzioniCatalogo35() {
 
 // Per gli inviti telepatia: catena dei rituali fino alla 30_, schema della telepatia, 31_
 // (l'ultima delete_my_account su main), poi le migration nuove se richieste.
-async function creaDbTelepatia({ con32a = true, con32b = false, con35a = false, con35b = false, con36a = false, con36b = false } = {}) {
+async function creaDbTelepatia({ con32a = true, con32b = false, con35a = false, con35b = false, con36a = false, con36b = false, con39a = false, con39b = false } = {}) {
   const db = await creaDbLocale();
   await db.exec(SCHEMA_TELEPATIA);
   await applicaFile(db, F31);
@@ -197,7 +216,10 @@ async function creaDbTelepatia({ con32a = true, con32b = false, con35a = false, 
   if (con35a && con35b) await applicaFile(db, F35B);
   if (con36a) await applicaFile(db, F36A);
   if (con36a && con36b) await applicaFile(db, F36B);
+  // 39a/39b stanno sopra la catena 36a/36b (id pubblici) e usano end_telepathy_match della 14_.
+  if (con39a) { await applicaFile(db, F14); await applicaFile(db, F39A); }
+  if (con39a && con39b) await applicaFile(db, F39B);
   return db;
 }
 
-module.exports = { creaDbLocale, creaDbTelepatia, applicaFile, RUOLO_SERVIZIO, F31, F32A, F32B, F35A, F35B, F36A, F36B, funzioniCatalogo35 };
+module.exports = { creaDbLocale, creaDbTelepatia, applicaFile, RUOLO_SERVIZIO, F31, F32A, F32B, F35A, F35B, F36A, F36B, F14, F39A, F39B, funzioniCatalogo35 };

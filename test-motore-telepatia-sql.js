@@ -1,0 +1,120 @@
+/**
+ * Motore della telepatia chiuso (39a, poi 39b) — lato SQL, su Postgres locale.
+ * NODE_OPTIONS="--require ./scripts/test-silenzioso.js" node test-motore-telepatia-sql.js
+ *
+ * Niente Supabase: PGlite con lo schema del catalogo (scripts/pg-locale.js) e le migration vere.
+ * Ogni sezione gira su un database nuovo.
+ */
+const { creaDbTelepatia, applicaFile, F39A, F39B } = require('./scripts/pg-locale');
+let passed = 0, failed = 0;
+const check = (c, m, x) => { if (c) { console.log(`  ✅ ${m}`); passed++; } else { console.log(`  ❌ ${m}${x !== undefined ? ' — ' + JSON.stringify(x) : ''}`); failed++; process.exitCode = 1; } };
+const errore = async (p) => { try { await p; return null; } catch (e) { return e.message; } };
+const righe = (db, sql, p = []) => db.query(sql, p).then((r) => r.rows);
+const uno = async (db, sql, p = []) => (await righe(db, sql, p))[0];
+// Chiamata per nome dei parametri, come fa PostgREST.
+const chiama = (db, fn, args = {}) => {
+  const k = Object.keys(args);
+  return uno(db, `SELECT ${fn}(${k.map((x, i) => `${x} => $${i + 1}`).join(', ')}) AS r`, k.map((x) => args[x])).then((r) => r.r);
+};
+const comeAnon = async (db, fn) => { await db.query('SET ROLE anon'); try { return await fn(); } finally { await db.query('RESET ROLE'); } };
+const pub = (db, sid) => uno(db, `SELECT id_pubblico($1) AS r`, [sid]).then((r) => r.r);
+
+const sezioni = [];
+const sezione = (nome, fn, opzioni = { con35a: true, con36a: true, con36b: true, con39a: true }) => sezioni.push([nome, fn, opzioni]);
+
+const IO = (sid, pw = null) => ({ p_session_id: sid, p_password_hash: pw });
+// Una partita scritta direttamente (come farebbe un'app vecchia), con gli id pubblici.
+const partita = async (db, sidA, sidB, campi = {}) => {
+  const c = { user1_id: await pub(db, sidA), user1_nickname: 'Ada', user1_role: 'sender',
+              user2_id: await pub(db, sidB), user2_nickname: 'Bea', user2_role: 'receiver', level: 'lvl3', round_count: 0, ...campi };
+  const k = Object.keys(c);
+  return (await uno(db, `INSERT INTO telepathy_matches (${k.join(',')}) VALUES (${k.map((_, i) => '$' + (i + 1)).join(',')}) RETURNING id`, k.map((x) => c[x]))).id;
+};
+
+sezione('F1. chat legata alla partita', async (db) => {
+  await db.query(`INSERT INTO telepathy_chat (match_id, sender_name, content) VALUES ('non-un-uuid', 'X', 'a'), (gen_random_uuid()::text, 'Y', 'b')`);
+  await applicaFile(db, 'supabase/sql/14_telepathy_session_end.sql');
+  await applicaFile(db, F39A);
+  check((await righe(db, `SELECT 1 FROM telepathy_chat`)).length === 0, 'la 39a toglie i messaggi orfani (anche con match_id non uuid)');
+  check(!(await errore(applicaFile(db, F39A))), 'la 39a si riapplica senza errori');
+  const m = await partita(db, 'sidA', 'sidB');
+  await db.query(`INSERT INTO telepathy_chat (match_id, sender_name, content) VALUES ($1, 'Ada', 'ciao')`, [m]);
+  await db.query(`DELETE FROM telepathy_matches WHERE id = $1`, [m]);
+  check((await righe(db, `SELECT 1 FROM telepathy_chat`)).length === 0, 'cancellando la partita sparisce anche la chat');
+  const tipo = await uno(db, `SELECT data_type FROM information_schema.columns WHERE table_name = 'telepathy_chat' AND column_name = 'match_id'`);
+  check(tipo.data_type === 'uuid', 'match_id è uuid', tipo);
+  const e = await comeAnon(db, () => errore(db.query(`INSERT INTO telepathy_chat (match_id, sender_name, content) VALUES (gen_random_uuid(), 'X', 'y')`)));
+  check(e !== null, 'non si scrive chat per una partita inesistente', e);
+}, { con35a: true, con36a: true, con36b: true, con39a: false });
+
+sezione('F2. vista: simbolo nascosto a chi indovina', async (db) => {
+  const m = await partita(db, 'sidA', 'sidB', { sender_symbol: 'stella' });   // round 0: A manda, B indovina
+  const vA = await comeAnon(db, () => chiama(db, 'partita_stato', { ...IO('sidA'), p_match_id: m }));
+  const vB = await comeAnon(db, () => chiama(db, 'partita_stato', { ...IO('sidB'), p_match_id: m }));
+  check(vA.sender_symbol === 'stella', 'chi manda vede il proprio simbolo', vA);
+  check(vB.sender_symbol === null && vB.simbolo_inviato === true, 'chi indovina: simbolo nascosto, ma sa che è stato inviato', vB);
+  await db.query(`UPDATE telepathy_matches SET receiver_guess = 'luna' WHERE id = $1`, [m]);
+  const vB2 = await comeAnon(db, () => chiama(db, 'partita_stato', { ...IO('sidB'), p_match_id: m }));
+  check(vB2.sender_symbol === 'stella' && vB2.receiver_guess === 'luna', 'dopo la risposta il simbolo arriva a entrambi', vB2);
+  // Round 3: i ruoli si scambiano. Ora B manda, A indovina.
+  await db.query(`UPDATE telepathy_matches SET round_count = 3, sender_symbol = 'sole', receiver_guess = NULL WHERE id = $1`, [m]);
+  const vA3 = await comeAnon(db, () => chiama(db, 'partita_stato', { ...IO('sidA'), p_match_id: m }));
+  const vB3 = await comeAnon(db, () => chiama(db, 'partita_stato', { ...IO('sidB'), p_match_id: m }));
+  check(vA3.sender_symbol === null && vB3.sender_symbol === 'sole', 'round 3: ruoli scambiati, nascosto ad A', { vA3, vB3 });
+  // Round 2 (ultimo del primo blocco): ancora A manda.
+  await db.query(`UPDATE telepathy_matches SET round_count = 2 WHERE id = $1`, [m]);
+  const vB2b = await comeAnon(db, () => chiama(db, 'partita_stato', { ...IO('sidB'), p_match_id: m }));
+  check(vB2b.sender_symbol === null, 'round 2: B indovina ancora', vB2b);
+  const chiavi = Object.keys(vA).sort().join(',');
+  check(chiavi === 'created_at,da_invito,ended_at,ended_by,giocato,id,level,level_change_choice_sender,receiver_guess,round_count,sender_symbol,simbolo_inviato,user1_id,user1_nickname,user1_role,user2_id,user2_nickname,user2_role',
+    "la vista ha esattamente le colonne dell'app più simbolo_inviato", chiavi);
+});
+
+sezione('F3. estranei e identità', async (db) => {
+  const m = await partita(db, 'sidA', 'sidB');
+  check(await comeAnon(db, () => chiama(db, 'partita_stato', { ...IO('sidC'), p_match_id: m })) === null, 'un estraneo non vede la partita');
+  check(await comeAnon(db, () => chiama(db, 'partita_stato', { ...IO('sidA'), p_match_id: '00000000-0000-0000-0000-000000000000' })) === null, 'partita inesistente: stessa risposta');
+  const pubA = await pub(db, 'sidA');
+  check(await comeAnon(db, () => chiama(db, 'partita_stato', { ...IO(pubA), p_match_id: m })) === null, 'un id pubblico al posto del session_id non vale');
+  await db.query(`INSERT INTO profiles (session_id, nickname, email, password_hash) VALUES ('sidR', 'Rosa', 'r@test.com', 'h1')`);
+  const mR = await partita(db, 'sidR', 'sidB');
+  check(await comeAnon(db, () => chiama(db, 'partita_stato', { ...IO('sidR', 'sbagliata'), p_match_id: mR })) === null, 'iscritta con password sbagliata: null, nessun errore');
+  check((await comeAnon(db, () => chiama(db, 'partita_stato', { ...IO('sidR', 'h1'), p_match_id: mR }))).id === mR, 'iscritta con password giusta: vede');
+});
+
+sezione('F4. partita_mia e pulizia', async (db) => {
+  check(await comeAnon(db, () => chiama(db, 'partita_mia', IO('sidA'))) === null, 'nessuna partita: null');
+  const m = await partita(db, 'sidA', 'sidB');
+  check((await comeAnon(db, () => chiama(db, 'partita_mia', IO('sidB')))).id === m, 'B trova la partita creata per lui');
+  // Il trigger della 32a rimette giocato = true a ogni update: per simulare l'orfano lo si spegne un attimo.
+  await db.query(`ALTER TABLE telepathy_matches DISABLE TRIGGER telepathy_matches_attivita`);
+  await db.query(`UPDATE telepathy_matches SET da_invito = true, giocato = false WHERE id = $1`, [m]);
+  await db.query(`ALTER TABLE telepathy_matches ENABLE TRIGGER telepathy_matches_attivita`);
+  check(await comeAnon(db, () => chiama(db, 'partita_mia', IO('sidB'))) === null, "un orfano d'invito mai giocato non è «la mia partita»");
+  await db.query(`DELETE FROM telepathy_matches`);
+  const chiusa = await partita(db, 'sidA', 'sidB');
+  await db.query(`UPDATE telepathy_matches SET ended_at = now() - interval '61 seconds' WHERE id = $1`, [chiusa]);
+  const ferma = await partita(db, 'sidC', 'sidD');
+  await db.query(`ALTER TABLE telepathy_matches DISABLE TRIGGER telepathy_matches_attivita`);
+  await db.query(`UPDATE telepathy_matches SET ultima_attivita = now() - interval '11 minutes', giocato = true WHERE id = $1`, [ferma]);
+  const orfana = await partita(db, 'sidE', 'sidF');
+  await db.query(`UPDATE telepathy_matches SET created_at = now() - interval '6 minutes', giocato = false WHERE id = $1`, [orfana]);
+  const lunga = await partita(db, 'sidG', 'sidH');
+  await db.query(`UPDATE telepathy_matches SET created_at = now() - interval '20 minutes', giocato = true WHERE id = $1`, [lunga]);
+  await db.query(`ALTER TABLE telepathy_matches ENABLE TRIGGER telepathy_matches_attivita`);
+  await comeAnon(db, () => chiama(db, 'partita_mia', IO('sidZ')));
+  const resta = (await righe(db, `SELECT id FROM telepathy_matches`)).map((r) => r.id);
+  check(JSON.stringify(resta) === JSON.stringify([lunga]), 'pulizia: via chiuse >60 s, ferme >10 min, orfane >5 min; resta il training lungo ma attivo', resta);
+});
+
+// ── esecuzione ──
+(async () => {
+  for (const [nome, fn, opzioni] of sezioni) {
+    console.log(`\n— ${nome} —`);
+    try {
+      const db = await creaDbTelepatia(opzioni);
+      await fn(db);
+    } catch (e) { check(false, `${nome}: eccezione`, e.message); }
+  }
+  console.log(`\n${passed} passati, ${failed} falliti`);
+})();
