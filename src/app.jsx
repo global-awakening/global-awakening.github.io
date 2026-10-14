@@ -1755,12 +1755,13 @@
           const [resultCountdown, setResultCountdown] = useState(null);
           // Tiene traccia dell'ultimo round_count processato per evitare doppio processing
           const lastProcessedRoundRef = React.useRef(-1);
-          // Task A1: memorizza se le colonne ended_at/ended_by esistono su Supabase (migration
-          // 14_ applicata). Finche' non e' applicata, evita di ritentare la select con quelle
-          // colonne ad ogni poll (ogni 2s per tutta la sessione): raddoppierebbe le richieste
-          // di checkPartnerLeft inutilmente. Ottimistico (true) finche' non si osserva un errore.
           const [isMatch, setIsMatch] = useState(false);
           const [matchId, setMatchId] = useState(null);
+          // Il mio nome nella partita, come l'ha scritto il server (user1/user2_nickname): la chat
+          // firma i messaggi con questo, che può differire da `nickname` (ripulito, accorciato,
+          // «Anonymous»). Si azzera con la partita; finché manca si confronta con `nickname`.
+          const [mioNomePartita, setMioNomePartita] = useState(null);
+          React.useEffect(() => { if (!matchId) setMioNomePartita(null); }, [matchId]);
           const [matchUser1Id, setMatchUser1Id] = useState(null); // user1 del match = primo chooser (cambio-modalità a turni)
           const [leaderboard, setLeaderboard] = useState([]); // top 10 per match telepatici
           const [partnerSymbol, setPartnerSymbol] = useState(null);
@@ -2274,9 +2275,8 @@
             );
           };
 
-          // Pulizia stato remoto alla chiusura del tab.
-          // sendBeacon non supporta DELETE: usiamo fetch con keepalive=true che il browser
-          // garantisce di completare anche dopo unload.
+          // Pulizia stato remoto alla chiusura del tab: partita_esci e coda_esci con fetch
+          // keepalive=true, che il browser completa anche dopo unload.
           const matchIdRef = React.useRef(null);
           const sessionIdRef = React.useRef(null);
           React.useEffect(() => { matchIdRef.current = matchId; }, [matchId]);
@@ -2566,6 +2566,7 @@
                 }
                 setPartner({ id: amUser1 ? myMatch.user2_id : myMatch.user1_id, nickname: altroNick });
                 setRole(amUser1 ? myMatch.user1_role : myMatch.user2_role);
+                setMioNomePartita(amUser1 ? myMatch.user1_nickname : myMatch.user2_nickname);
                 setMatchId(myMatch.id);
                 setSearchingPartner(false);
                 await esciDallaCoda();
@@ -2592,6 +2593,7 @@
                 const amUser1 = winner.user1_id === me;
                 setPartner({ id: amUser1 ? winner.user2_id : winner.user1_id, nickname: amUser1 ? winner.user2_nickname : winner.user1_nickname });
                 setRole(amUser1 ? winner.user1_role : winner.user2_role);
+                setMioNomePartita(amUser1 ? winner.user1_nickname : winner.user2_nickname);
                 setMatchId(winner.id);
                 // Il server ci ha già tolti entrambi dalla coda; l'uscita resta per sicurezza.
                 await esciDallaCoda();
@@ -3099,14 +3101,23 @@
           const sendSymbol = async () => {
             if (!selectedSymbol || !matchId || attesaInvitanteRef.current) return;
             setWaitingForPartner(true);
-            await rpcPartita('partita_simbolo', { p_match_id: matchId, p_simbolo: selectedSymbol, p_livello: currentLevel });
+            const r = await rpcPartita('partita_simbolo', { p_match_id: matchId, p_simbolo: selectedSymbol, p_livello: currentLevel });
+            if (mossaRespinta(r, 'gia_inviato')) setWaitingForPartner(false);
           };
 
           const submitGuess = async () => {
             if (!guessedSymbol || !matchId || attesaInvitanteRef.current) return;
             setWaitingForPartner(true);
-            await rpcPartita('partita_ipotesi', { p_match_id: matchId, p_ipotesi: guessedSymbol });
+            const r = await rpcPartita('partita_ipotesi', { p_match_id: matchId, p_ipotesi: guessedSymbol });
+            if (mossaRespinta(r, 'gia_risposto')) setWaitingForPartner(false);
           };
+          // Mossa non arrivata al server (errore o ok:false): si smette di aspettare, così si può
+          // riprovare invece di restare fermi fino all'uscita anti-stallo dei 90 s. Con il motivo
+          // «già fatto» la mossa invece è sul server: si continua ad aspettare l'altro.
+          function mossaRespinta({ data, error }, motivoGiaFatto) {
+            if (error) return true;
+            return !!data && data.ok === false && data.motivo !== motivoGiaFatto;
+          }
 
           const proposeLevelChange = async (choice) => {
             // Cambio-modalità a turni: solo il chooser scrive; la scelta si applica subito.
@@ -3234,7 +3245,8 @@
           }, [roundCount, partner, sessionEnded, effectiveRole]);
 
           // Rileva se il partner ha abbandonato la sessione:
-          // 1. match eliminato (ha cliccato Termina o chiusura tab con sendBeacon)
+          // 1. partita chiusa (ended_at: ha cliccato Termina o chiuso la scheda, sempre via
+          //    partita_esci) o già cancellata dalla pulizia del server (partita_stato → null)
           // 2. partner non visto da >35s in online_users (tab chiusa senza cleanup)
           useEffect(() => {
             if (!matchId) return;
@@ -3321,6 +3333,7 @@
             const amUser1 = m.user1_id === me;
             setPartner({ id: amUser1 ? m.user2_id : m.user1_id, nickname: amUser1 ? m.user2_nickname : m.user1_nickname });
             setRole(amUser1 ? m.user1_role : m.user2_role);
+            setMioNomePartita(amUser1 ? m.user1_nickname : m.user2_nickname);
             setMatchId(m.id);
             setSessionEnded(false);
             setPartnerDisconnected(false);
@@ -3476,7 +3489,8 @@
 
           const resetTelepathy = () => {
             // Se l'utente abbandona una sessione attiva (non terminata via endSession),
-            // cancella match/queue/inviti per non lasciare il partner appeso
+            // chiude la partita (partita_esci: ended_at; partita e chat le cancella poi il server),
+            // esce dalla coda e ritira l'invito in uscita, per non lasciare il partner appeso
             // e per evitare di tornare in lobby ancora "in match" dal punto di vista DB.
             const oldMatchId = matchId;
             if (oldMatchId) {
@@ -3520,7 +3534,7 @@
           // Diversa da endSession (chiusura graziosa con recap+punteggio): qui si abbandona
           // e si torna in lobby senza recap. Marca il flag ended (best-effort, no PII: session
           // token come in A1) cosi' l'altro lato esce anche lui via polling; resetTelepathy
-          // resta il fallback affidabile (cancella il match -> l'altro rileva partner uscito).
+          // resta il fallback (richiama partita_esci -> l'altro legge ended_at e rileva l'uscita).
           const leaveSession = async () => {
             // I round gia' giocati sono avvenuti davvero: come endSession, persistili nel
             // contatore autoritativo (increment_telepathy_score) prima di uscire, cosi' uscire
@@ -3642,6 +3656,7 @@
             setInvitoInUscita(null);
             setDirectInviteTarget(null);
             setMatchId(nuovo.id);
+            setMioNomePartita(nuovo.user2_nickname);
             setPartner({ id: invito.from_id_pubblico, nickname: invito.from_name });
             setRole(myRole);
             setIncomingInvite(null);
@@ -3924,9 +3939,9 @@
               alert(t.telepathy.partnerOfflineN(savedPartner.nickname));
               return;
             }
-            // Prima si chiude il match appena finito, ASPETTANDO la risposta: la cancellazione di
-            // resetTelepathy parte senza attesa, e un match giocato da meno di 10 minuti senza
-            // ended_at farebbe rispondere al server in_match / non_disponibile.
+            // Prima si chiude il match appena finito, ASPETTANDO la risposta: il partita_esci di
+            // resetTelepathy parte senza attesa, e un match ancora senza ended_at quando arriva
+            // l'invito farebbe rispondere al server in_match / non_disponibile.
             if (matchId) {
               try { await rpcPartita('partita_esci', { p_match_id: matchId }); } catch (_) {}
             }
@@ -6242,8 +6257,8 @@ ${ritual.description || ''}` })}
                                   <p className="text-secondary text-xs text-center" style={{marginTop: '2rem'}}>{t.telepathy.noMessages}</p>
                                 )}
                                 {telepathyChatMessages.map(msg => (
-                                  <div key={msg.id} style={{padding: '0.3rem 0.5rem', borderRadius: '0.5rem', background: msg.sender_name === nickname ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.08)', alignSelf: msg.sender_name === nickname ? 'flex-end' : 'flex-start', maxWidth: '90%'}}>
-                                    {msg.sender_name !== nickname && (
+                                  <div key={msg.id} style={{padding: '0.3rem 0.5rem', borderRadius: '0.5rem', background: msg.sender_name === (mioNomePartita || nickname) ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.08)', alignSelf: msg.sender_name === (mioNomePartita || nickname) ? 'flex-end' : 'flex-start', maxWidth: '90%'}}>
+                                    {msg.sender_name !== (mioNomePartita || nickname) && (
                                       <div className="flex items-center gap-1">
                                         <p className="text-secondary" style={{fontSize: '0.65rem'}}>{msg.sender_name}</p>
                                         {moderationMenu({ author: msg.sender_name, type: 'telepathy_chat', id: msg.id, snapshot: msg.content })}

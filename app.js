@@ -2126,6 +2126,10 @@ function GlobalAwakeningPlatform() {
   const lastProcessedRoundRef = React.useRef(-1);
   const [isMatch, setIsMatch] = useState(false);
   const [matchId, setMatchId] = useState(null);
+  const [mioNomePartita, setMioNomePartita] = useState(null);
+  React.useEffect(() => {
+    if (!matchId) setMioNomePartita(null);
+  }, [matchId]);
   const [matchUser1Id, setMatchUser1Id] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
   const [partnerSymbol, setPartnerSymbol] = useState(null);
@@ -2956,6 +2960,7 @@ function GlobalAwakeningPlatform() {
           nickname: altroNick
         });
         setRole(amUser1 ? myMatch.user1_role : myMatch.user2_role);
+        setMioNomePartita(amUser1 ? myMatch.user1_nickname : myMatch.user2_nickname);
         setMatchId(myMatch.id);
         setSearchingPartner(false);
         await esciDallaCoda();
@@ -2984,6 +2989,7 @@ function GlobalAwakeningPlatform() {
           nickname: amUser1 ? winner.user2_nickname : winner.user1_nickname
         });
         setRole(amUser1 ? winner.user1_role : winner.user2_role);
+        setMioNomePartita(amUser1 ? winner.user1_nickname : winner.user2_nickname);
         setMatchId(winner.id);
         await esciDallaCoda();
         setSearchingPartner(false);
@@ -3531,20 +3537,29 @@ function GlobalAwakeningPlatform() {
   const sendSymbol = async () => {
     if (!selectedSymbol || !matchId || attesaInvitanteRef.current) return;
     setWaitingForPartner(true);
-    await rpcPartita('partita_simbolo', {
+    const r = await rpcPartita('partita_simbolo', {
       p_match_id: matchId,
       p_simbolo: selectedSymbol,
       p_livello: currentLevel
     });
+    if (mossaRespinta(r, 'gia_inviato')) setWaitingForPartner(false);
   };
   const submitGuess = async () => {
     if (!guessedSymbol || !matchId || attesaInvitanteRef.current) return;
     setWaitingForPartner(true);
-    await rpcPartita('partita_ipotesi', {
+    const r = await rpcPartita('partita_ipotesi', {
       p_match_id: matchId,
       p_ipotesi: guessedSymbol
     });
+    if (mossaRespinta(r, 'gia_risposto')) setWaitingForPartner(false);
   };
+  function mossaRespinta({
+    data,
+    error
+  }, motivoGiaFatto) {
+    if (error) return true;
+    return !!data && data.ok === false && data.motivo !== motivoGiaFatto;
+  }
   const proposeLevelChange = async choice => {
     const bannerRound = Math.floor(roundCount / 7) * 7;
     const newLevel = choice === 'keep' ? currentLevel : choice;
@@ -3723,6 +3738,7 @@ function GlobalAwakeningPlatform() {
       nickname: amUser1 ? m.user2_nickname : m.user1_nickname
     });
     setRole(amUser1 ? m.user1_role : m.user2_role);
+    setMioNomePartita(amUser1 ? m.user1_nickname : m.user2_nickname);
     setMatchId(m.id);
     setSessionEnded(false);
     setPartnerDisconnected(false);
@@ -4034,6 +4050,7 @@ function GlobalAwakeningPlatform() {
     setInvitoInUscita(null);
     setDirectInviteTarget(null);
     setMatchId(nuovo.id);
+    setMioNomePartita(nuovo.user2_nickname);
     setPartner({
       id: invito.from_id_pubblico,
       nickname: invito.from_name
@@ -7462,11 +7479,11 @@ ${ritual.description || ''}`
     style: {
       padding: '0.3rem 0.5rem',
       borderRadius: '0.5rem',
-      background: msg.sender_name === nickname ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.08)',
-      alignSelf: msg.sender_name === nickname ? 'flex-end' : 'flex-start',
+      background: msg.sender_name === (mioNomePartita || nickname) ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.08)',
+      alignSelf: msg.sender_name === (mioNomePartita || nickname) ? 'flex-end' : 'flex-start',
       maxWidth: '90%'
     }
-  }, msg.sender_name !== nickname && React.createElement("div", {
+  }, msg.sender_name !== (mioNomePartita || nickname) && React.createElement("div", {
     className: "flex items-center gap-1"
   }, React.createElement("p", {
     className: "text-secondary",
