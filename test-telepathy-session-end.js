@@ -1,29 +1,29 @@
 /**
- * Test flag "ended" condiviso su DB — Global Awakening (Task A1)
+ * Test fine sessione condivisa su DB — Global Awakening (Task A1, riscritto per le RPC della 39a)
  *
- * Copre SOLO la parte flag (l'accept da schermata "sessione conclusa" è A5):
- *   1. Crea un match telepathy_matches tra due sessioni simulate (A, B).
- *   2. Chiama la RPC end_telepathy_match(matchId, 'A').
- *   3. Verifica che una SELECT successiva veda ended_at valorizzato e
- *      ended_by === 'A', letta sia "dal lato A" che "dal lato B" (stessa
- *      tabella trustful, nessuna RLS per-utente: la lettura è identica per
- *      entrambi i lati, come nel polling reale pollResult/checkPartnerLeft).
+ * Dopo la 39b le tabelle della telepatia non sono più accessibili con la chiave pubblica: tutto
+ * passa dalle RPC. Scenario:
+ *   1. La chiave di servizio crea una partita fra due ospiti di prova (A manda, B indovina).
+ *   2. A esce con rpc/partita_esci.
+ *   3. B legge ended_at / ended_by con rpc/partita_stato: ended_by deve essere l'id pubblico di A.
+ *   4. La seconda uscita (di B) non riscrive ended_by (coalesce).
+ *   5. Un estraneo che chiama partita_esci su un'altra partita aperta non la chiude.
+ * Pulizia con la chiave di servizio, anche se un controllo fallisce.
  *
- * Gate DB: la migration 14_telepathy_session_end.sql potrebbe NON essere
- * ancora applicata su Supabase (colonne/RPC assenti). In quel caso il test
- * rileva l'errore "function/column does not exist" e stampa SKIP, uscendo
- * con successo (exit 0) — non è un fallimento del codice, è uno stato atteso
- * finché l'utente non da' l'ok per applicare la migration in Studio.
+ * Gate DB: se la 39a non è ancora applicata (RPC assenti) il test stampa SKIP ed esce con 0.
  *
- * Esecuzione: node test-telepathy-session-end.js
+ * Esecuzione: node test-telepathy-session-end.js   (serve SUPABASE_SERVICE_KEY, env o .env.test)
  */
+const { SUPABASE_URL, requireServiceKey, getServiceKey } = require('./test-helpers');
 
-const SUPABASE_URL = 'https://vxzxdkcluyrcftsnxxza.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4enhka2NsdXlyY2Z0c254eHphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzMzcyMTcsImV4cCI6MjA4NjkxMzIxN30.m_mzWHH1-ajVqeSFvuJAm8t5Kz7I7umcEKBrRPr5JXM';
 
 const TS = Date.now();
 const SID_A = `TestEndA_${TS}`;
 const SID_B = `TestEndB_${TS}`;
+const SID_X = `TestEndX_${TS}`;
+const NICK_A = `TestEndA_${TS}`;
+const NICK_B = `TestEndB_${TS}`;
 
 let passed = 0;
 let failed = 0;
@@ -31,43 +31,31 @@ let failed = 0;
 function pass(msg) { console.log(`  ✅ ${msg}`); passed++; }
 function fail(msg) { console.log(`  ❌ ${msg}`); failed++; process.exitCode = 1; }
 
-async function sbFetch(path, opts = {}) {
+async function rest(chiave, path, opts = {}) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    headers: {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json',
-      Prefer: opts.prefer || 'return=representation',
-      ...opts.headers,
-    },
     ...opts,
+    headers: {
+      apikey: chiave, Authorization: `Bearer ${chiave}`, 'Content-Type': 'application/json',
+      Prefer: 'return=representation', ...opts.headers,
+    },
   });
-  let body = null;
-  try { body = await res.json(); } catch { /* 204 o vuoto */ }
+  const testo = await res.text();
+  let body = testo; try { body = JSON.parse(testo); } catch { /* testo o vuoto */ }
   return { ok: res.ok, status: res.status, body };
 }
+const rpc = (chiave, fn, params) => rest(chiave, `rpc/${fn}`, { method: 'POST', body: JSON.stringify(params) });
 
-/** true se l'errore PostgREST indica funzione/colonna assente (migration non applicata). */
+/** true se l'errore PostgREST indica funzione assente (migration non applicata). */
 function isMissingSchemaError(body) {
   if (!body) return false;
   const text = JSON.stringify(body).toLowerCase();
-  return (
-    text.includes('does not exist') ||
-    text.includes('pgrst202') || // function not found nello schema cache
-    text.includes('42883') ||    // undefined_function
-    text.includes('42703')       // undefined_column
-  );
-}
-
-async function cleanupMatch(matchId) {
-  if (!matchId) return;
-  await sbFetch(`telepathy_matches?id=eq.${matchId}`, { method: 'DELETE', prefer: 'return=minimal' });
+  return text.includes('does not exist') || text.includes('pgrst202') || text.includes('42883');
 }
 
 (async () => {
   console.log('\n══════════════════════════════════════════════════');
-  console.log('  TEST FLAG ENDED — telepathy_matches (Task A1)');
-  console.log(`  Sessioni simulate: ${SID_A} ↔ ${SID_B}`);
+  console.log('  TEST FINE SESSIONE — RPC partita_esci / partita_stato');
+  console.log(`  Sessioni simulate: ${SID_A} ↔ ${SID_B} (estraneo ${SID_X})`);
   console.log('══════════════════════════════════════════════════\n');
 
   // ══════════════════════════════════════════════════════════════════════
@@ -113,24 +101,27 @@ async function cleanupMatch(matchId) {
 
   console.log('');
 
+  requireServiceKey();
+  const SVC = getServiceKey();
+  const e = encodeURIComponent;
   let matchId = null;
+  let matchX = null;
 
   try {
-    // ── Setup: crea un match tra le due sessioni simulate ─────────────────
-    const insertRes = await sbFetch('telepathy_matches', {
+    // ── Setup: id pubblici e partita di prova (chiave di servizio) ────────
+    const ia = await rpc(SVC, 'id_pubblico', { p_sid: SID_A });
+    const ib = await rpc(SVC, 'id_pubblico', { p_sid: SID_B });
+    const PUB_A = ia.body, PUB_B = ib.body;
+    if (!ia.ok || !ib.ok || typeof PUB_A !== 'string' || typeof PUB_B !== 'string') {
+      fail(`id_pubblico non disponibile: HTTP ${ia.status}/${ib.status}`);
+      throw new Error('setup fallito');
+    }
+    const crea = (u1, n1, u2, n2) => rest(SVC, 'telepathy_matches', {
       method: 'POST',
-      body: JSON.stringify({
-        user1_id: SID_A,
-        user1_nickname: 'TestA',
-        user1_role: 'sender',
-        user2_id: SID_B,
-        user2_nickname: 'TestB',
-        user2_role: 'receiver',
-        level: 'lvl3',
-        round_count: 0,
-      }),
+      body: JSON.stringify({ user1_id: u1, user1_nickname: n1, user1_role: 'sender',
+        user2_id: u2, user2_nickname: n2, user2_role: 'receiver', level: 'lvl3', round_count: 0 }),
     });
-
+    const insertRes = await crea(PUB_A, NICK_A, PUB_B, NICK_B);
     if (!insertRes.ok || !Array.isArray(insertRes.body) || insertRes.body.length === 0) {
       fail(`Impossibile creare il match di test: HTTP ${insertRes.status} — ${JSON.stringify(insertRes.body)}`);
       throw new Error('setup fallito');
@@ -138,71 +129,65 @@ async function cleanupMatch(matchId) {
     matchId = insertRes.body[0].id;
     console.log(`  Match creato: ${matchId}`);
 
-    // ── Step: chiama la RPC end_telepathy_match ────────────────────────────
-    const rpcRes = await sbFetch('rpc/end_telepathy_match', {
-      method: 'POST',
-      body: JSON.stringify({ p_match_id: matchId, p_ended_by: 'A' }),
-    });
-
-    if (!rpcRes.ok) {
-      if (isMissingSchemaError(rpcRes.body)) {
-        console.log('  ⏭️  SKIP: migration 14_ non applicata (RPC end_telepathy_match assente su Supabase).');
-        console.log('     Applicare supabase/sql/14_telepathy_session_end.sql in Studio per eseguire questo test.');
-        await cleanupMatch(matchId);
+    // ── Step: A esce con partita_esci ─────────────────────────────────────
+    const esciA = await rpc(SUPABASE_KEY, 'partita_esci', { p_session_id: SID_A, p_password_hash: null, p_match_id: matchId });
+    if (!esciA.ok) {
+      if (isMissingSchemaError(esciA.body)) {
+        console.log('  ⏭️  SKIP: migration 39a non applicata (RPC partita_esci assente su Supabase).');
         process.exitCode = 0;
         return;
       }
-      fail(`RPC end_telepathy_match fallita: HTTP ${rpcRes.status} — ${JSON.stringify(rpcRes.body)}`);
+      fail(`RPC partita_esci fallita: HTTP ${esciA.status} — ${JSON.stringify(esciA.body)}`);
       throw new Error('rpc fallita');
     }
-    console.log('  RPC end_telepathy_match eseguita con successo');
+    console.log('  A è uscito con partita_esci');
 
-    // ── Verifica: lettura "dal lato A" ──────────────────────────────────────
-    const selA = await sbFetch(`telepathy_matches?id=eq.${matchId}&select=id,ended_at,ended_by`, { method: 'GET' });
-    if (selA.ok && Array.isArray(selA.body) && selA.body.length === 1 && selA.body[0].ended_at) {
-      pass('Lato A: ended_at valorizzato dopo la RPC');
-    } else {
-      fail(`Lato A: ended_at NON valorizzato — ${JSON.stringify(selA.body)}`);
-    }
-    if (selA.ok && selA.body[0] && selA.body[0].ended_by === 'A') {
-      pass('Lato A: ended_by === "A"');
-    } else {
-      fail(`Lato A: ended_by inatteso — ${JSON.stringify(selA.body)}`);
-    }
+    // ── Verifica: B legge lo stato con partita_stato ──────────────────────
+    const statoB = await rpc(SUPABASE_KEY, 'partita_stato', { p_session_id: SID_B, p_password_hash: null, p_match_id: matchId });
+    const vb = statoB.body;
+    if (statoB.ok && vb && vb.ended_at) pass('Lato B: ended_at valorizzato dopo l\'uscita di A');
+    else fail(`Lato B: ended_at NON valorizzato — ${JSON.stringify(statoB.body)}`);
+    if (vb && vb.ended_by === PUB_A) pass('Lato B: ended_by è l\'id pubblico di A (sa chi ha chiuso, per "il partner ha chiuso")');
+    else fail(`Lato B: ended_by inatteso — ${JSON.stringify(vb && vb.ended_by)} (atteso ${PUB_A})`);
 
-    // ── Verifica: lettura "dal lato B" (stessa tabella trustful, stesso dato) ─
-    const selB = await sbFetch(`telepathy_matches?id=eq.${matchId}&select=id,ended_at,ended_by`, { method: 'GET' });
-    if (selB.ok && Array.isArray(selB.body) && selB.body.length === 1 && selB.body[0].ended_at) {
-      pass('Lato B: ended_at valorizzato dopo la RPC (visibile anche dall\'altra prospettiva)');
-    } else {
-      fail(`Lato B: ended_at NON valorizzato — ${JSON.stringify(selB.body)}`);
-    }
-    if (selB.ok && selB.body[0] && selB.body[0].ended_by === 'A') {
-      pass('Lato B: ended_by === "A" (sa chi ha chiuso, per il messaggio "il partner ha chiuso")');
-    } else {
-      fail(`Lato B: ended_by inatteso — ${JSON.stringify(selB.body)}`);
-    }
+    // ── Verifica lato A (stessa vista, altra prospettiva) ─────────────────
+    const statoA = await rpc(SUPABASE_KEY, 'partita_stato', { p_session_id: SID_A, p_password_hash: null, p_match_id: matchId });
+    if (statoA.ok && statoA.body && statoA.body.ended_at && statoA.body.ended_by === PUB_A)
+      pass('Lato A: vede la stessa chiusura (ended_at, ended_by = A)');
+    else fail(`Lato A: chiusura non visibile — ${JSON.stringify(statoA.body)}`);
 
-    // ── Verifica idempotenza: coalesce non sovrascrive una seconda chiamata ─
-    const rpcRes2 = await sbFetch('rpc/end_telepathy_match', {
-      method: 'POST',
-      body: JSON.stringify({ p_match_id: matchId, p_ended_by: 'B' }),
-    });
-    if (rpcRes2.ok) {
-      const selAfter2 = await sbFetch(`telepathy_matches?id=eq.${matchId}&select=ended_by`, { method: 'GET' });
-      if (selAfter2.ok && selAfter2.body[0] && selAfter2.body[0].ended_by === 'A') {
-        pass('Idempotenza: seconda chiamata (ended_by=B) non sovrascrive il primo chiudente (coalesce)');
-      } else {
-        fail(`Idempotenza: ended_by e' stato sovrascritto — ${JSON.stringify(selAfter2.body)}`);
-      }
+    // ── Idempotenza: la seconda uscita (B) non riscrive ended_by ──────────
+    const esciB = await rpc(SUPABASE_KEY, 'partita_esci', { p_session_id: SID_B, p_password_hash: null, p_match_id: matchId });
+    if (esciB.ok) {
+      const dopo = await rpc(SUPABASE_KEY, 'partita_stato', { p_session_id: SID_B, p_password_hash: null, p_match_id: matchId });
+      if (dopo.body && dopo.body.ended_by === PUB_A)
+        pass('Idempotenza: la seconda uscita (B) non sovrascrive il primo chiudente (coalesce)');
+      else fail(`Idempotenza: ended_by è stato sovrascritto — ${JSON.stringify(dopo.body && dopo.body.ended_by)}`);
     } else {
-      fail(`Seconda chiamata RPC (idempotenza) fallita inaspettatamente: HTTP ${rpcRes2.status}`);
+      fail(`Seconda chiamata partita_esci fallita inaspettatamente: HTTP ${esciB.status}`);
     }
 
+    // ── Un estraneo non chiude una partita aperta ─────────────────────────
+    const idB = PUB_B;
+    const apertaRes = await crea(`${idB.slice(0, 8)}x_${TS}`, `${NICK_A}_x1`, `${idB.slice(0, 8)}y_${TS}`, `${NICK_B}_x2`);
+    matchX = Array.isArray(apertaRes.body) && apertaRes.body[0] && apertaRes.body[0].id;
+    if (!matchX) {
+      fail(`Impossibile creare la partita aperta per il test dell'estraneo: HTTP ${apertaRes.status}`);
+    } else {
+      await rpc(SUPABASE_KEY, 'partita_esci', { p_session_id: SID_X, p_password_hash: null, p_match_id: matchX });
+      const vera = await rest(SVC, `telepathy_matches?id=eq.${matchX}&select=ended_at,ended_by`);
+      if (vera.body && vera.body[0] && vera.body[0].ended_at === null && vera.body[0].ended_by === null)
+        pass('Un estraneo non chiude la partita (partita_esci non fa nulla)');
+      else fail(`L'estraneo ha chiuso la partita — ${JSON.stringify(vera.body)}`);
+    }
   } catch (err) {
     if (failed === 0) fail(`Errore imprevisto: ${err.message}`);
   } finally {
-    await cleanupMatch(matchId);
+    // Pulizia con la chiave di servizio (la chat, se c'è, va via in cascata).
+    for (const id of [matchId, matchX]) {
+      if (id) await rest(SVC, `telepathy_matches?id=eq.${id}`, { method: 'DELETE' }).catch(() => {});
+    }
+    await rest(SVC, `telepathy_matches?user1_nickname=like.${e(`TestEnd`)}*_${TS}*`, { method: 'DELETE' }).catch(() => {});
 
     console.log('\n══════════════════════════════════════════════════');
     const totale = passed + failed;
