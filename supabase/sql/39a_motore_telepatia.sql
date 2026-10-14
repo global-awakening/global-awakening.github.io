@@ -219,3 +219,127 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.partita_entra(text, text, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.partita_entra(text, text, uuid) TO anon, authenticated;
+
+-- ════ E. Mosse ════════════════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION public.partita_livello_valido(p text) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  SELECT p IN ('lvl3', 'lvl5', 'lvl7', 'lvl9', 'numbers', 'words');
+$$;
+REVOKE ALL ON FUNCTION public.partita_livello_valido(text) FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.partita_simbolo(p_session_id text, p_password_hash text, p_match_id uuid, p_simbolo text, p_livello text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_io text := partita_io(p_session_id, p_password_hash); m telepathy_matches;
+BEGIN
+  SELECT * INTO m FROM telepathy_matches WHERE id = p_match_id AND v_io IS NOT NULL AND (user1_id = v_io OR user2_id = v_io) FOR UPDATE;
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovata'); END IF;
+  IF m.ended_at IS NOT NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'chiusa'); END IF;
+  IF partita_ruolo(m, v_io) IS DISTINCT FROM 'sender' THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_tocca_a_te'); END IF;
+  IF m.sender_symbol IS NOT NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'gia_inviato'); END IF;
+  IF p_simbolo IS NULL OR length(p_simbolo) NOT BETWEEN 1 AND 64
+     OR (p_livello IS NOT NULL AND NOT partita_livello_valido(p_livello)) THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'dati_non_validi');
+  END IF;
+  UPDATE telepathy_matches SET sender_symbol = p_simbolo, level = coalesce(p_livello, level)
+   WHERE id = m.id RETURNING * INTO m;
+  RETURN jsonb_build_object('ok', true, 'partita', partita_vista(m, v_io));
+END $$;
+REVOKE ALL ON FUNCTION public.partita_simbolo(text, text, uuid, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.partita_simbolo(text, text, uuid, text, text) TO anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.partita_ipotesi(p_session_id text, p_password_hash text, p_match_id uuid, p_ipotesi text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_io text := partita_io(p_session_id, p_password_hash); m telepathy_matches;
+BEGIN
+  SELECT * INTO m FROM telepathy_matches WHERE id = p_match_id AND v_io IS NOT NULL AND (user1_id = v_io OR user2_id = v_io) FOR UPDATE;
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovata'); END IF;
+  IF m.ended_at IS NOT NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'chiusa'); END IF;
+  IF partita_ruolo(m, v_io) IS DISTINCT FROM 'receiver' THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_tocca_a_te'); END IF;
+  IF m.sender_symbol IS NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'simbolo_mancante'); END IF;
+  IF m.receiver_guess IS NOT NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'gia_risposto'); END IF;
+  IF p_ipotesi IS NULL OR length(p_ipotesi) NOT BETWEEN 1 AND 64 THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'dati_non_validi');
+  END IF;
+  UPDATE telepathy_matches SET receiver_guess = p_ipotesi WHERE id = m.id RETURNING * INTO m;
+  RETURN jsonb_build_object('ok', true, 'partita', partita_vista(m, v_io));
+END $$;
+REVOKE ALL ON FUNCTION public.partita_ipotesi(text, text, uuid, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.partita_ipotesi(text, text, uuid, text) TO anon, authenticated;
+
+-- Solo chi manda, solo a round completo, solo se il round è ancora quello atteso (idempotente).
+CREATE OR REPLACE FUNCTION public.partita_avanza(p_session_id text, p_password_hash text, p_match_id uuid, p_round_atteso integer)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_io text := partita_io(p_session_id, p_password_hash); m telepathy_matches;
+BEGIN
+  SELECT * INTO m FROM telepathy_matches WHERE id = p_match_id AND v_io IS NOT NULL AND (user1_id = v_io OR user2_id = v_io) FOR UPDATE;
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovata'); END IF;
+  IF m.ended_at IS NOT NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'chiusa'); END IF;
+  IF coalesce(m.round_count, 0) IS DISTINCT FROM p_round_atteso THEN
+    RETURN jsonb_build_object('ok', true, 'gia_avanzato', true, 'partita', partita_vista(m, v_io));
+  END IF;
+  IF partita_ruolo(m, v_io) IS DISTINCT FROM 'sender' THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_tocca_a_te'); END IF;
+  IF m.sender_symbol IS NULL OR m.receiver_guess IS NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'round_incompleto'); END IF;
+  UPDATE telepathy_matches SET round_count = coalesce(round_count, 0) + 1, sender_symbol = NULL, receiver_guess = NULL
+   WHERE id = m.id RETURNING * INTO m;
+  RETURN jsonb_build_object('ok', true, 'partita', partita_vista(m, v_io));
+END $$;
+REVOKE ALL ON FUNCTION public.partita_avanza(text, text, uuid, integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.partita_avanza(text, text, uuid, integer) TO anon, authenticated;
+
+-- Chi sceglie lo decide il client (a turni): il server verifica partecipazione e formato.
+CREATE OR REPLACE FUNCTION public.partita_livello(p_session_id text, p_password_hash text, p_match_id uuid, p_livello text, p_scelta text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_io text := partita_io(p_session_id, p_password_hash); m telepathy_matches;
+BEGIN
+  SELECT * INTO m FROM telepathy_matches WHERE id = p_match_id AND v_io IS NOT NULL AND (user1_id = v_io OR user2_id = v_io) FOR UPDATE;
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_trovata'); END IF;
+  IF m.ended_at IS NOT NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'chiusa'); END IF;
+  IF NOT coalesce(partita_livello_valido(p_livello), false) OR p_scelta IS NULL OR p_scelta !~ '^r[0-9]{1,5}$' THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'dati_non_validi');
+  END IF;
+  UPDATE telepathy_matches SET level = p_livello, level_change_choice_sender = p_scelta WHERE id = m.id RETURNING * INTO m;
+  RETURN jsonb_build_object('ok', true, 'partita', partita_vista(m, v_io));
+END $$;
+REVOKE ALL ON FUNCTION public.partita_livello(text, text, uuid, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.partita_livello(text, text, uuid, text, text) TO anon, authenticated;
+
+-- Chiude la partita (non la cancella: l'altro deve leggere ended_at; la cancella la pulizia).
+CREATE OR REPLACE FUNCTION public.partita_esci(p_session_id text, p_password_hash text, p_match_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_io text := partita_io(p_session_id, p_password_hash);
+BEGIN
+  IF v_io IS NULL OR p_match_id IS NULL THEN RETURN; END IF;
+  UPDATE telepathy_matches SET ended_at = coalesce(ended_at, now()), ended_by = coalesce(ended_by, v_io)
+   WHERE id = p_match_id AND (user1_id = v_io OR user2_id = v_io);
+END $$;
+REVOKE ALL ON FUNCTION public.partita_esci(text, text, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.partita_esci(text, text, uuid) TO anon, authenticated;
+
+-- ════ F. Chat ═════════════════════════════════════════════════════════════════
+-- Il nome del mittente lo mette il server (quello della partita): nessuno si firma per un altro.
+CREATE OR REPLACE FUNCTION public.chat_scrivi(p_session_id text, p_password_hash text, p_match_id uuid, p_testo text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_io text := partita_io(p_session_id, p_password_hash); m telepathy_matches; v_testo text := btrim(p_testo);
+BEGIN
+  SELECT * INTO m FROM telepathy_matches WHERE id = p_match_id AND v_io IS NOT NULL AND (user1_id = v_io OR user2_id = v_io) AND ended_at IS NULL;
+  IF NOT FOUND OR v_testo IS NULL OR length(v_testo) NOT BETWEEN 1 AND 500 THEN RETURN jsonb_build_object('ok', false); END IF;
+  INSERT INTO telepathy_chat (match_id, sender_name, content)
+  VALUES (m.id, CASE WHEN m.user1_id = v_io THEN m.user1_nickname ELSE m.user2_nickname END, v_testo);
+  RETURN jsonb_build_object('ok', true);
+END $$;
+REVOKE ALL ON FUNCTION public.chat_scrivi(text, text, uuid, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.chat_scrivi(text, text, uuid, text) TO anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.chat_leggi(p_session_id text, p_password_hash text, p_match_id uuid)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_io text := partita_io(p_session_id, p_password_hash);
+BEGIN
+  IF v_io IS NULL OR NOT EXISTS (SELECT 1 FROM telepathy_matches WHERE id = p_match_id AND (user1_id = v_io OR user2_id = v_io)) THEN
+    RETURN NULL;
+  END IF;
+  RETURN coalesce((SELECT jsonb_agg(jsonb_build_object('id', c.id, 'sender_name', c.sender_name, 'content', c.content, 'created_at', c.created_at)
+                                    ORDER BY c.created_at, c.id)
+                     FROM telepathy_chat c WHERE c.match_id = p_match_id), '[]'::jsonb);
+END $$;
+REVOKE ALL ON FUNCTION public.chat_leggi(text, text, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.chat_leggi(text, text, uuid) TO anon, authenticated;

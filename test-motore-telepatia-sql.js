@@ -204,6 +204,77 @@ sezione('N6. coda e invito non si sovrappongono', async (db) => {
   check((await crea(db, 'sidB', 'Bea', 'sidA')).motivo === 'occupato', 'B non si abbina a chi ha invitato: occupato');
 });
 
+const mossa = (db, fn, sid, m, extra = {}) => comeAnon(db, () => chiama(db, fn, { ...IO(sid), p_match_id: m, ...extra }));
+
+sezione('M1. turni del round', async (db) => {
+  const m = await partita(db, 'sidA', 'sidB');   // round 0: A manda, B indovina
+  check((await mossa(db, 'partita_simbolo', 'sidB', m, { p_simbolo: 'x', p_livello: 'lvl3' })).motivo === 'non_tocca_a_te', 'chi indovina non manda il simbolo');
+  check((await mossa(db, 'partita_ipotesi', 'sidB', m, { p_ipotesi: 'x' })).motivo === 'simbolo_mancante', 'niente risposta prima del simbolo');
+  check((await mossa(db, 'partita_simbolo', 'sidC', m, { p_simbolo: 'x', p_livello: 'lvl3' })).motivo === 'non_trovata', 'un estraneo: non_trovata');
+  check((await mossa(db, 'partita_simbolo', 'sidA', m, { p_simbolo: 'x', p_livello: 'boh' })).motivo === 'dati_non_validi', 'livello sconosciuto: rifiutato');
+  check((await mossa(db, 'partita_simbolo', 'sidA', m, { p_simbolo: 'y'.repeat(65), p_livello: 'lvl3' })).motivo === 'dati_non_validi', 'simbolo oltre 64 caratteri: rifiutato');
+  const s = await mossa(db, 'partita_simbolo', 'sidA', m, { p_simbolo: 'stella', p_livello: 'lvl5' });
+  check(s.ok === true && s.partita.sender_symbol === 'stella' && s.partita.level === 'lvl5', 'A manda il simbolo (e il livello)', s);
+  check((await mossa(db, 'partita_simbolo', 'sidA', m, { p_simbolo: 'luna', p_livello: 'lvl5' })).motivo === 'gia_inviato', 'il simbolo non si cambia');
+  check((await mossa(db, 'partita_avanza', 'sidA', m, { p_round_atteso: 0 })).motivo === 'round_incompleto', 'non si avanza senza risposta');
+  const g = await mossa(db, 'partita_ipotesi', 'sidB', m, { p_ipotesi: 'luna' });
+  check(g.ok === true && g.partita.sender_symbol === 'stella' && g.partita.receiver_guess === 'luna', 'B risponde e vede il simbolo', g);
+  check((await mossa(db, 'partita_ipotesi', 'sidB', m, { p_ipotesi: 'sole' })).motivo === 'gia_risposto', 'una sola risposta per round');
+  check((await mossa(db, 'partita_simbolo', 'sidA', m, { p_simbolo: 'sole', p_livello: 'lvl5' })).motivo === 'gia_inviato', 'dopo la risposta il simbolo resta quello');
+  check((await mossa(db, 'partita_avanza', 'sidB', m, { p_round_atteso: 0 })).motivo === 'non_tocca_a_te', 'avanza solo chi manda');
+  const a = await mossa(db, 'partita_avanza', 'sidA', m, { p_round_atteso: 0 });
+  check(a.ok === true && a.partita.round_count === 1 && a.partita.sender_symbol === null && a.partita.receiver_guess === null, 'round 1, simboli azzerati', a);
+  const a2 = await mossa(db, 'partita_avanza', 'sidA', m, { p_round_atteso: 0 });
+  check(a2.ok === true && a2.gia_avanzato === true, 'un doppio invio non salta un round', a2);
+  check((await uno(db, `SELECT round_count FROM telepathy_matches WHERE id = $1`, [m])).round_count === 1, 'sul DB resta round 1');
+  await db.query(`UPDATE telepathy_matches SET round_count = 3 WHERE id = $1`, [m]);
+  check((await mossa(db, 'partita_simbolo', 'sidB', m, { p_simbolo: 'x', p_livello: 'lvl5' })).ok === true, 'round 3: ora manda B');
+});
+
+sezione('M2. livello e uscita', async (db) => {
+  const m = await partita(db, 'sidA', 'sidB');
+  check((await mossa(db, 'partita_livello', 'sidB', m, { p_livello: 'words', p_scelta: 'r7' })).ok === true, 'un giocatore cambia livello');
+  check((await uno(db, `SELECT level, level_change_choice_sender AS c FROM telepathy_matches WHERE id = $1`, [m])).c === 'r7', 'marcatore scritto');
+  check((await mossa(db, 'partita_livello', 'sidB', m, { p_livello: 'words', p_scelta: 'x7' })).motivo === 'dati_non_validi', 'marcatore malformato: rifiutato');
+  check((await mossa(db, 'partita_livello', 'sidC', m, { p_livello: 'words', p_scelta: 'r7' })).motivo === 'non_trovata', 'un estraneo no');
+  await mossa(db, 'partita_esci', 'sidC', m);
+  check((await uno(db, `SELECT ended_at FROM telepathy_matches WHERE id = $1`, [m])).ended_at === null, 'un estraneo non chiude la partita');
+  await mossa(db, 'partita_esci', 'sidA', m);
+  await mossa(db, 'partita_esci', 'sidB', m);
+  const e = await uno(db, `SELECT ended_at, ended_by FROM telepathy_matches WHERE id = $1`, [m]);
+  check(e.ended_at !== null && e.ended_by === await pub(db, 'sidA'), 'chiude chi esce per primo; il secondo non riscrive ended_by', e);
+  check((await mossa(db, 'partita_simbolo', 'sidA', m, { p_simbolo: 'x', p_livello: 'lvl3' })).motivo === 'chiusa', 'partita chiusa: niente mosse');
+});
+
+sezione('C1. chat', async (db) => {
+  const m = await partita(db, 'sidA', 'sidB');
+  check((await mossa(db, 'chat_scrivi', 'sidA', m, { p_testo: '  ciao  ' })).ok === true, 'A scrive');
+  check((await mossa(db, 'chat_scrivi', 'sidC', m, { p_testo: 'intruso' })).ok === false, 'un estraneo non scrive');
+  check((await mossa(db, 'chat_scrivi', 'sidA', m, { p_testo: 'z'.repeat(501) })).ok === false, 'oltre 500 caratteri: rifiutato');
+  check((await mossa(db, 'chat_scrivi', 'sidA', m, { p_testo: '   ' })).ok === false, 'testo vuoto: rifiutato');
+  await mossa(db, 'chat_scrivi', 'sidB', m, { p_testo: 'eccomi' });
+  const l = await mossa(db, 'chat_leggi', 'sidB', m);
+  check(Array.isArray(l) && l.length === 2 && l[0].content === 'ciao' && l[0].sender_name === 'Ada' && l[1].sender_name === 'Bea', 'B legge in ordine, testo ripulito, nomi messi dal server', l);
+  check(JSON.stringify(Object.keys(l[0]).sort()) === JSON.stringify(['content', 'created_at', 'id', 'sender_name']), 'solo le colonne che servono', Object.keys(l[0]));
+  check(await mossa(db, 'chat_leggi', 'sidC', m) === null, 'un estraneo non legge');
+  await mossa(db, 'partita_esci', 'sidA', m);
+  check((await mossa(db, 'chat_scrivi', 'sidB', m, { p_testo: 'dopo' })).ok === false, 'a partita chiusa non si scrive');
+  check((await mossa(db, 'chat_leggi', 'sidB', m)).length === 2, 'ma si rilegge');
+});
+
+sezione('R1. 39a_ritorno', async (db) => {
+  const e = await errore(applicaFile(db, 'supabase/sql/39a_ritorno.sql'));
+  check(!e, 'il ritorno si applica', e);
+  const f = await righe(db, `SELECT proname FROM pg_proc WHERE proname LIKE 'partita%' OR proname LIKE 'chat\\_%' OR proname = 'accetta_invito_partita'`);
+  check(f.length === 0, 'nessuna funzione nuova rimasta', f);
+  const t = await uno(db, `SELECT data_type FROM information_schema.columns WHERE table_name = 'telepathy_chat' AND column_name = 'match_id'`);
+  check(t.data_type === 'text', 'match_id torna text', t);
+  const p = await righe(db, `SELECT policyname FROM pg_policies WHERE tablename = 'telepathy_chat' AND policyname LIKE 'Solo i partecipanti%'`);
+  check(p.length === 3, 'le tre policy della chat sono tornate', p);
+  check(!(await errore(applicaFile(db, 'supabase/sql/39a_ritorno.sql'))), 'il ritorno si riapplica');
+  check(!(await errore(applicaFile(db, F39A))), 'dopo il ritorno la 39a si riapplica');
+});
+
 // ── esecuzione ──
 (async () => {
   for (const [nome, fn, opzioni] of sezioni) {
