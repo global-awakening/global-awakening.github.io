@@ -136,7 +136,7 @@ sezione('N2. abbinamento rifiutato', async (db) => {
   check((await crea(db, 'sidB', 'Bea', 'sidA')).motivo === 'occupato', 'A è già in partita con C: occupato');
   await db.query(`DELETE FROM telepathy_matches`);
   await db.query(`INSERT INTO user_blocks (blocker_nickname, blocked_nickname) VALUES ('Ada', 'Bea')`);
-  check((await crea(db, 'sidB', 'Bea', 'sidA')).motivo === 'bloccato', 'blocco fra i due: niente partita');
+  check((await crea(db, 'sidB', 'Bea', 'sidA')).motivo === 'non_in_coda', 'blocco fra i due: niente partita, e il motivo non rivela il blocco');
   await db.query(`DELETE FROM user_blocks`);
   check((await crea(db, 'sidA', 'Ada', 'sidA')).motivo === 'dati_non_validi', 'non ci si abbina con sé stessi');
   check((await comeAnon(db, () => chiama(db, 'partita_crea_da_coda', { ...IO('sidB'), p_nickname: 'Bea', p_altro: null }))).motivo === 'dati_non_validi', 'altro mancante');
@@ -276,6 +276,17 @@ sezione('R1. 39a_ritorno', async (db) => {
 });
 
 const negato = (e) => /permission denied/.test(e || '');
+// Gli aiutanti interni girano coi diritti del proprietario e non verificano chi chiama: anon non li esegue.
+sezione('F5. aiutanti interni non eseguibili da anon', async (db) => {
+  const pubA = await pub(db, 'sidA'), pubB = await pub(db, 'sidB');
+  for (const [fn, args] of [['partita_viva_di', { p_io: pubA }], ['partite_pulizia', {}], ['partita_io', IO('sidA')],
+                            ['partita_invito_in_corso', { p_io: pubA }], ['partita_blocca', { a: pubA, b: pubB }],
+                            ['partita_livello_valido', { p: 'lvl3' }]]) {
+    const e = await comeAnon(db, () => errore(chiama(db, fn, args)));
+    check(negato(e), `anon: ${fn} → negato`, e);
+  }
+});
+
 sezione('Z1. dopo la 39b: tabelle chiuse, RPC vive', async (db) => {
   const m = await partita(db, 'sidA', 'sidB');
   for (const sql of [`SELECT * FROM telepathy_matches`, `SELECT * FROM telepathy_chat`,

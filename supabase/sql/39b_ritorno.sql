@@ -1,4 +1,5 @@
 -- Ritorno della 39b: partite e chat di nuovo aperte com'erano il 13/10 (catalogo).
+BEGIN;
 GRANT ALL ON telepathy_matches TO anon, authenticated;
 DROP POLICY IF EXISTS "Allow all" ON telepathy_matches;
 DROP POLICY IF EXISTS "Allow all for anon" ON telepathy_matches;
@@ -22,3 +23,6 @@ CREATE POLICY "Solo i partecipanti possono cancellare messaggi" ON telepathy_cha
 
 GRANT EXECUTE ON FUNCTION public.end_telepathy_match(uuid, text) TO PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.apply_level_change_if_both_agree(uuid, text, text) TO PUBLIC, anon, authenticated;
+
+NOTIFY pgrst, 'reload schema';
+COMMIT;

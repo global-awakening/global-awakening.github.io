@@ -89,6 +89,22 @@ const rifiutata = (r) => r.status === 401 || r.status === 403;
       'partita_esci di un estraneo: la partita resta aperta', aperta.corpo);
     const chatX = await rest(SVC, `telepathy_chat?match_id=eq.${mid}&select=content`);
     check(Array.isArray(chatX.corpo) && chatX.corpo.length === 1, 'nessun messaggio dell\'estraneo in chat', chatX.corpo);
+    // Gli aiutanti interni girano coi diritti del proprietario e non verificano chi chiama:
+    // anon non deve poterli eseguire. 401/403 = permesso negato, 404 = PostgREST non li espone.
+    // partita_blocca riceve id finti: se mai passasse, non bloccherebbe nessuno di vero.
+    const interni = [
+      ['partita_viva_di', { p_io: PUB_A }],
+      ['partite_pulizia', {}],
+      ['partita_io', { p_session_id: SID_X, p_password_hash: null }],
+      ['partita_invito_in_corso', { p_io: PUB_A }],
+      ['partita_vista', { m: null, p_io: PUB_A }],
+      ['partita_blocca', { a: `${PREFISSO}_finto1`, b: `${PREFISSO}_finto2` }],
+      ['partita_livello_valido', { p: 'lvl3' }],
+    ];
+    for (const [fn, par] of interni) {
+      const r = await rpc(ANON, fn, par);
+      check([401, 403, 404].includes(r.status), `anon non esegue l'aiutante interno ${fn} (${r.status})`, r);
+    }
 
     console.log('— RPC con i giocatori: il simbolo resta nascosto a chi indovina —');
     const guess0 = await rpc(ANON, 'partita_simbolo', { p_session_id: SID_B, p_password_hash: null, p_match_id: mid, p_simbolo: 'star', p_livello: null });

@@ -2,6 +2,11 @@
 -- Spec: docs/superpowers/specs/2026-10-13-motore-telepatia-chiuso-design.md
 -- Ogni funzione verifica chi chiama: solo i due giocatori di una partita la vedono o la toccano.
 -- Ritorno: 39a_ritorno.sql.
+BEGIN;
+-- Durante la 39a l'app vecchia è ancora in giro e scrive in partite e chat: il blocco tiene ferme
+-- le righe finché la transazione non chiude, così cancellazione degli orfani, cambio di tipo e FK
+-- vedono le stesse righe (un messaggio arrivato a metà farebbe fallire la FK).
+LOCK TABLE telepathy_matches, telepathy_chat IN SHARE ROW EXCLUSIVE MODE;
 
 -- ════ A. Chat legata alla partita ═════════════════════════════════════════════
 -- Messaggi orfani (partita già cancellata, o match_id che non è nemmeno un uuid): via, poi FK in cascata.
@@ -141,8 +146,9 @@ BEGIN
    WHERE chiavi_sid_valido(id) AND id_pubblico(id) = p_altro AND timestamp >= v_ora - 60000;
   IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_in_coda'); END IF;
   IF (partita_viva_di(p_altro)).id IS NOT NULL OR partita_invito_in_corso(p_altro) OR partita_invito_in_corso(v_io) THEN RETURN jsonb_build_object('ok', false, 'motivo', 'occupato'); END IF;
+  -- Un blocco risponde come una coda vuota: «bloccato» direbbe a chi è stato bloccato che lo è.
   IF telepatia_bloccati(p_session_id, v_nome, q.id, q.nickname) THEN
-    RETURN jsonb_build_object('ok', false, 'motivo', 'bloccato');
+    RETURN jsonb_build_object('ok', false, 'motivo', 'non_in_coda');
   END IF;
   -- Una partita chiusa della stessa coppia farebbe scattare telepathy_matches_pair_unique.
   DELETE FROM telepathy_matches
@@ -343,3 +349,6 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.chat_leggi(text, text, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.chat_leggi(text, text, uuid) TO anon, authenticated;
+
+NOTIFY pgrst, 'reload schema';
+COMMIT;

@@ -2,6 +2,7 @@
 -- Da applicare almeno 10 minuti DOPO il rilascio dell'app che usa le RPC (cache della PWA).
 -- Un'app aperta da prima si ferma sulla telepatia finché non si ricarica (come per 36b/37b).
 -- Ritorno: 39b_ritorno.sql.
+BEGIN;
 DROP POLICY IF EXISTS "Allow all" ON telepathy_matches;
 DROP POLICY IF EXISTS "Allow all for anon" ON telepathy_matches;
 ALTER TABLE telepathy_matches ENABLE ROW LEVEL SECURITY;
@@ -18,3 +19,6 @@ REVOKE ALL ON FUNCTION public.end_telepathy_match(uuid, text) FROM PUBLIC, anon,
 
 -- Non più usata dall'app dopo la scala 05: modificava qualunque partita senza guardare chi chiama.
 REVOKE ALL ON FUNCTION public.apply_level_change_if_both_agree(uuid, text, text) FROM PUBLIC, anon, authenticated;
+
+NOTIFY pgrst, 'reload schema';
+COMMIT;

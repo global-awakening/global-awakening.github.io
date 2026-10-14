@@ -1,5 +1,6 @@
 -- Ritorno della 39a: toglie le funzioni del motore e riporta la chat com'era (match_id text, senza FK).
 -- Va applicato DOPO 39b_ritorno se la 39b è stata applicata. I messaggi orfani cancellati non tornano.
+BEGIN;
 DROP FUNCTION IF EXISTS public.chat_leggi(text, text, uuid);
 DROP FUNCTION IF EXISTS public.chat_scrivi(text, text, uuid, text);
 DROP FUNCTION IF EXISTS public.partita_esci(text, text, uuid);
@@ -36,3 +37,6 @@ CREATE POLICY "Solo i partecipanti possono inviare messaggi" ON telepathy_chat F
 CREATE POLICY "Solo i partecipanti possono cancellare messaggi" ON telepathy_chat FOR DELETE TO public
   USING (EXISTS (SELECT 1 FROM telepathy_matches WHERE telepathy_matches.id::text = telepathy_chat.match_id::text
     AND (telepathy_matches.user1_id = auth.uid()::text OR telepathy_matches.user2_id = auth.uid()::text)));
+
+NOTIFY pgrst, 'reload schema';
+COMMIT;
