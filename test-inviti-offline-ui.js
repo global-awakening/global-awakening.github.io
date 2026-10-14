@@ -199,21 +199,28 @@ scenario('attesa_di_chi_accetta', async (browser) => {
   // runBeforeUnload (ruling m1): la chiusura vera, con beforeunload, come sul telefono.
   await A.page.close({ runBeforeUnload: true });
   await servizio(`online_users?id=eq.${q(A.sid)}`, { method: 'DELETE' });
-  // I1: B è sender (il ruolo lo sceglie Math.random al momento dell'accettazione), così si prova
-  // che durante l'attesa non può mandare un simbolo: il suo update accenderebbe giocato e
-  // chiuderebbe l'attesa in anticipo.
-  await B.page.evaluate(() => { window.__randomVero = Math.random; Math.random = () => 0.9; });
+  // I1: il ruolo lo sceglie il server (random() in accetta_invito_partita), quindi B è sender o
+  // receiver a caso: si legge dal DB e si prova il ramo che capita. Se è sender, durante l'attesa
+  // non può mandare un simbolo (il suo update accenderebbe giocato e chiuderebbe l'attesa in
+  // anticipo); se è receiver, i simboli sono disattivati perché il sender non ha inviato nulla.
   await B.page.locator('.invite-toast [data-test="btn-accetta"]').click({ timeout: 15000 });
   await B.page.locator('[data-test="attesa-invitante"]').waitFor({ timeout: 10000 });
-  await B.page.evaluate(() => { Math.random = window.__randomVero; });
   ok('chi accetta vede «In attesa che … entri»');
-  await B.page.locator('.symbol-btn').first().click({ timeout: 10000 });
-  const invia = B.page.locator('button').filter({ hasText: /Invia Telepaticamente|Send Telepathically/ });
-  check(await invia.isDisabled(), "durante l'attesa chi accetta (sender) non può mandare il simbolo: pulsante disattivato");
+  const ruoloB = (await leggi('telepathy_matches', `user2_id=in.${await dueForme(B.sid)}&select=user2_role`))[0]?.user2_role;
+  if (ruoloB === 'sender') {
+    await B.page.locator('.symbol-btn').first().click({ timeout: 10000 });
+    const invia = B.page.locator('button').filter({ hasText: /Invia Telepaticamente|Send Telepathically/ });
+    check(await invia.isDisabled(), "durante l'attesa chi accetta (sender) non può mandare il simbolo: pulsante disattivato");
+    ok('ramo provato: B è sender');
+  } else {
+    check(ruoloB === 'receiver', 'ruolo di B letto dal DB: sender o receiver', ruoloB);
+    check(await B.page.locator('.symbol-btn').first().isDisabled(), "durante l'attesa chi accetta (receiver) ha i simboli disattivati: il sender non ha inviato nulla");
+    ok('ramo provato: B è receiver');
+  }
   await pausa(95000);   // oltre i 35 s di checkPartnerLeft e i 90 s del timeout A3
   check(await B.page.locator('[data-test="attesa-invitante"]').isVisible(), 'dopo 95 s è ancora in attesa (spenti i controlli dei 35 s e dei 90 s)');
   const mAttesa = (await leggi('telepathy_matches', `user2_id=in.${await dueForme(B.sid)}&select=sender_symbol,giocato,user2_role`))[0];
-  check(!!mAttesa && mAttesa.user2_role === 'sender' && mAttesa.sender_symbol == null && mAttesa.giocato !== true,
+  check(!!mAttesa && mAttesa.sender_symbol == null && mAttesa.giocato !== true,
     "nessun simbolo scritto durante l'attesa: giocato resta spento", mAttesa);
   await sposta('telepathy_invites', `id=eq.${inv.id}`, { responded_at: faSecondi(181) });
   await B.page.locator('[data-test="avviso-inviti"]').filter({ hasText: A.nick }).waitFor({ timeout: 10000 });
