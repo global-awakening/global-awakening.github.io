@@ -101,3 +101,107 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.partita_stato(text, text, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.partita_stato(text, text, uuid) TO anon, authenticated;
+
+-- ════ D. Nascita della partita ═════════════════════════════════════════════════
+-- Un lock per persona, in ordine fisso: due abbinamenti simultanei sulla stessa persona si mettono in fila.
+CREATE OR REPLACE FUNCTION public.partita_blocca(a text, b text) RETURNS void
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('telepatia:' || least(a, b)));
+  PERFORM pg_advisory_xact_lock(hashtext('telepatia:' || greatest(a, b)));
+END $$;
+REVOKE ALL ON FUNCTION public.partita_blocca(text, text) FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.partita_crea_da_coda(p_session_id text, p_password_hash text, p_nickname text, p_altro text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_io text := partita_io(p_session_id, p_password_hash);
+        v_nome text := chiavi_chi_sono(p_session_id, p_password_hash, p_nickname);
+        v_ora bigint := (extract(epoch FROM clock_timestamp()) * 1000)::bigint;
+        q telepathy_queue; m telepathy_matches; v_ruolo text;
+BEGIN
+  IF v_io IS NULL OR v_nome IS NULL OR p_altro IS NULL OR p_altro = v_io THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'dati_non_validi');
+  END IF;
+  PERFORM partita_blocca(v_io, p_altro);
+  PERFORM partite_pulizia();
+  -- L'altro mi ha abbinato un istante prima: è quella la mia partita.
+  m := partita_viva_di(v_io);
+  IF m.id IS NOT NULL THEN RETURN jsonb_build_object('ok', true, 'partita', partita_vista(m, v_io)); END IF;
+  SELECT * INTO q FROM telepathy_queue
+   WHERE chiavi_sid_valido(id) AND id_pubblico(id) = p_altro AND timestamp >= v_ora - 60000;
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false, 'motivo', 'non_in_coda'); END IF;
+  IF (partita_viva_di(p_altro)).id IS NOT NULL THEN RETURN jsonb_build_object('ok', false, 'motivo', 'occupato'); END IF;
+  IF telepatia_bloccati(p_session_id, v_nome, q.id, q.nickname) THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'bloccato');
+  END IF;
+  -- Una partita chiusa della stessa coppia farebbe scattare telepathy_matches_pair_unique.
+  DELETE FROM telepathy_matches
+   WHERE least(user1_id, user2_id) = least(v_io, p_altro) AND greatest(user1_id, user2_id) = greatest(v_io, p_altro)
+     AND ended_at IS NOT NULL;
+  v_ruolo := CASE WHEN random() < 0.5 THEN 'sender' ELSE 'receiver' END;
+  BEGIN
+    INSERT INTO telepathy_matches (user1_id, user1_nickname, user1_role, user2_id, user2_nickname, user2_role, level, round_count)
+    VALUES (p_altro, q.nickname, CASE v_ruolo WHEN 'sender' THEN 'receiver' ELSE 'sender' END,
+            v_io, v_nome, v_ruolo, 'lvl3', 0)
+    RETURNING * INTO m;
+  EXCEPTION WHEN unique_violation THEN
+    -- La coppia ha già una partita aperta (es. un orfano d'invito): non si gioca su quella.
+    RETURN jsonb_build_object('ok', false, 'motivo', 'occupato');
+  END;
+  DELETE FROM telepathy_queue WHERE id IN (p_session_id, q.id);
+  RETURN jsonb_build_object('ok', true, 'partita', partita_vista(m, v_io));
+END $$;
+REVOKE ALL ON FUNCTION public.partita_crea_da_coda(text, text, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.partita_crea_da_coda(text, text, text, text) TO anon, authenticated;
+
+-- La partita dell'invito la crea il server; poi decide la respond_telepathy_invite di sempre.
+CREATE OR REPLACE FUNCTION public.accetta_invito_partita(p_invite_id uuid, p_session_id text, p_password_hash text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v telepathy_invites; m telepathy_matches; r jsonb; v_ruolo text; v_io text; v_da text;
+BEGIN
+  -- Come respond_telepathy_invite: una credenziale vecchia è un errore «Auth failed» (l'app lo riconosce).
+  PERFORM telepatia_verifica_identita(p_session_id, p_password_hash);
+  SELECT * INTO v FROM telepathy_invites WHERE id = p_invite_id AND to_id = p_session_id;
+  IF NOT FOUND OR v.status <> 'pending' OR v.expires_at <= now() THEN
+    -- Il motivo giusto (non_trovato, scaduto, annullato…) lo sa già respond_telepathy_invite.
+    RETURN respond_telepathy_invite(p_invite_id, p_session_id, p_password_hash, true, NULL);
+  END IF;
+  v_io := id_pubblico(p_session_id); v_da := id_pubblico(v.from_id);
+  PERFORM partita_blocca(v_io, v_da);
+  DELETE FROM telepathy_matches
+   WHERE least(user1_id, user2_id) = least(v_io, v_da) AND greatest(user1_id, user2_id) = greatest(v_io, v_da)
+     AND ended_at IS NOT NULL;
+  v_ruolo := CASE WHEN random() < 0.5 THEN 'sender' ELSE 'receiver' END;
+  BEGIN
+    INSERT INTO telepathy_matches (user1_id, user1_nickname, user1_role, user2_id, user2_nickname, user2_role, level, round_count, da_invito)
+    VALUES (v_da, v.from_name, CASE v_ruolo WHEN 'sender' THEN 'receiver' ELSE 'sender' END,
+            v_io, v.to_name, v_ruolo, 'lvl3', 0, true)
+    RETURNING * INTO m;
+  EXCEPTION WHEN unique_violation THEN
+    -- Un altro telefono ha appena accettato: respond lo dice col suo motivo.
+    RETURN respond_telepathy_invite(p_invite_id, p_session_id, p_password_hash, true, NULL);
+  END;
+  r := respond_telepathy_invite(p_invite_id, p_session_id, p_password_hash, true, m.id);
+  IF NOT coalesce((r->>'ok')::boolean, false) THEN
+    DELETE FROM telepathy_matches WHERE id = m.id;
+    RETURN r;
+  END IF;
+  RETURN r || jsonb_build_object('partita', partita_vista(m, v_io));
+END $$;
+REVOKE ALL ON FUNCTION public.accetta_invito_partita(uuid, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.accetta_invito_partita(uuid, text, text) TO anon, authenticated;
+
+-- Chi ha invitato arriva: il «tocco» che segna la partita come giocata (trigger della 32a).
+CREATE OR REPLACE FUNCTION public.partita_entra(p_session_id text, p_password_hash text, p_match_id uuid)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_io text := partita_io(p_session_id, p_password_hash); m telepathy_matches;
+BEGIN
+  IF v_io IS NULL OR p_match_id IS NULL THEN RETURN jsonb_build_object('ok', false); END IF;
+  UPDATE telepathy_matches SET round_count = round_count
+   WHERE id = p_match_id AND (user1_id = v_io OR user2_id = v_io) AND ended_at IS NULL
+  RETURNING * INTO m;
+  IF NOT FOUND THEN RETURN jsonb_build_object('ok', false); END IF;
+  RETURN jsonb_build_object('ok', true, 'partita', partita_vista(m, v_io));
+END $$;
+REVOKE ALL ON FUNCTION public.partita_entra(text, text, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.partita_entra(text, text, uuid) TO anon, authenticated;

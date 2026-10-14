@@ -107,6 +107,82 @@ sezione('F4. partita_mia e pulizia', async (db) => {
   check(JSON.stringify(resta) === JSON.stringify([lunga]), 'pulizia: via chiuse >60 s, ferme >10 min, orfane >5 min; resta il training lungo ma attivo', resta);
 });
 
+const inCoda = (db, sid, nick, secondiFa = 0) => db.query(
+  `INSERT INTO telepathy_queue (id, nickname, timestamp) VALUES ($1, $2, (extract(epoch FROM clock_timestamp()) * 1000)::bigint - $3)`,
+  [sid, nick, secondiFa * 1000]);
+const crea = (db, sid, nick, altroSid) => pub(db, altroSid).then((altro) =>
+  comeAnon(db, () => chiama(db, 'partita_crea_da_coda', { ...IO(sid), p_nickname: nick, p_altro: altro })));
+
+sezione('N1. abbinamento dalla coda', async (db) => {
+  await inCoda(db, 'sidA', 'Ada');
+  const r = await crea(db, 'sidB', 'Bea', 'sidA');
+  check(r.ok === true && r.partita.user1_id === await pub(db, 'sidA') && r.partita.user2_id === await pub(db, 'sidB'), 'B abbina A: user1 = chi era in coda', r);
+  check(r.partita.user1_nickname === 'Ada' && r.partita.user2_nickname === 'Bea', 'nickname verificati', r.partita);
+  check(new Set([r.partita.user1_role, r.partita.user2_role]).size === 2 && ['sender', 'receiver'].includes(r.partita.user1_role), 'ruoli opposti', r.partita);
+  check(r.partita.level === 'lvl3' && r.partita.round_count === 0 && r.partita.giocato === false, 'parte da lvl3, round 0, non giocata', r.partita);
+  check((await righe(db, `SELECT 1 FROM telepathy_queue`)).length === 0, 'tutti e due escono dalla coda');
+  const r2 = await crea(db, 'sidB', 'Bea', 'sidA');
+  check(r2.ok === true && r2.partita.id === r.partita.id, 'un secondo giro restituisce la stessa partita (niente doppioni)', r2);
+  check((await comeAnon(db, () => chiama(db, 'partita_mia', IO('sidA')))).id === r.partita.id, 'A la trova con partita_mia');
+});
+
+sezione('N2. abbinamento rifiutato', async (db) => {
+  check((await crea(db, 'sidB', 'Bea', 'sidA')).motivo === 'non_in_coda', 'chi non è in coda non si abbina');
+  await inCoda(db, 'sidA', 'Ada', 61);
+  check((await crea(db, 'sidB', 'Bea', 'sidA')).motivo === 'non_in_coda', 'riga di coda vecchia di 61 s: non vale');
+  await db.query(`DELETE FROM telepathy_queue`);
+  await inCoda(db, 'sidA', 'Ada');
+  await partita(db, 'sidA', 'sidC');
+  check((await crea(db, 'sidB', 'Bea', 'sidA')).motivo === 'occupato', 'A è già in partita con C: occupato');
+  await db.query(`DELETE FROM telepathy_matches`);
+  await db.query(`INSERT INTO user_blocks (blocker_nickname, blocked_nickname) VALUES ('Ada', 'Bea')`);
+  check((await crea(db, 'sidB', 'Bea', 'sidA')).motivo === 'bloccato', 'blocco fra i due: niente partita');
+  await db.query(`DELETE FROM user_blocks`);
+  check((await crea(db, 'sidA', 'Ada', 'sidA')).motivo === 'dati_non_validi', 'non ci si abbina con sé stessi');
+  check((await comeAnon(db, () => chiama(db, 'partita_crea_da_coda', { ...IO('sidB'), p_nickname: 'Bea', p_altro: null }))).motivo === 'dati_non_validi', 'altro mancante');
+});
+
+sezione('N3. stessa coppia subito dopo una partita chiusa', async (db) => {
+  const vecchia = await partita(db, 'sidA', 'sidB');
+  await db.query(`UPDATE telepathy_matches SET ended_at = now() WHERE id = $1`, [vecchia]);
+  await inCoda(db, 'sidA', 'Ada');
+  const r = await crea(db, 'sidB', 'Bea', 'sidA');
+  check(r.ok === true && r.partita.id !== vecchia, 'la partita chiusa da pochi secondi non blocca la nuova', r);
+});
+
+const invita = async (db, daSid, daNome, aSid, aNome) => (await uno(db,
+  `INSERT INTO telepathy_invites (from_id, from_name, to_id, to_name, status, expires_at) VALUES ($1, $2, $3, $4, 'pending', now() + interval '45 seconds') RETURNING id`,
+  [daSid, daNome, aSid, aNome])).id;
+
+sezione('N4. invito accettato: la partita la crea il server', async (db) => {
+  const inv = await invita(db, 'sidA', 'Ada', 'sidB', 'Bea');
+  const r = await comeAnon(db, () => chiama(db, 'accetta_invito_partita', { p_invite_id: inv, ...IO('sidB') }));
+  check(r.ok === true && r.status === 'accepted' && r.partita && r.partita.da_invito === true, 'accettato, partita da invito', r);
+  check(r.partita.user1_id === await pub(db, 'sidA') && r.partita.user2_nickname === 'Bea', 'user1 = chi invita, user2 = chi accetta', r.partita);
+  const i = await uno(db, `SELECT status, match_id FROM telepathy_invites WHERE id = $1`, [inv]);
+  check(i.status === 'accepted' && i.match_id === r.partita.id, 'l\'invito punta alla partita', i);
+  const e = await comeAnon(db, () => chiama(db, 'partita_entra', { ...IO('sidA'), p_match_id: r.partita.id }));
+  check(e.ok === true && e.partita.giocato === true, 'chi ha invitato entra: la partita risulta giocata', e);
+  check((await comeAnon(db, () => chiama(db, 'partita_entra', { ...IO('sidC'), p_match_id: r.partita.id }))).ok === false, 'un estraneo non entra');
+});
+
+sezione('N5. invito non più valido: nessuna partita resta', async (db) => {
+  const inv = await invita(db, 'sidA', 'Ada', 'sidB', 'Bea');
+  await db.query(`UPDATE telepathy_invites SET status = 'cancelled' WHERE id = $1`, [inv]);
+  const r = await comeAnon(db, () => chiama(db, 'accetta_invito_partita', { p_invite_id: inv, ...IO('sidB') }));
+  check(r.ok === false && r.motivo === 'annullato', 'invito annullato: il motivo lo dice respond_telepathy_invite', r);
+  check((await righe(db, `SELECT 1 FROM telepathy_matches`)).length === 0, 'nessuna partita rimasta');
+  const inv2 = await invita(db, 'sidA', 'Ada', 'sidB', 'Bea');
+  const r2 = await comeAnon(db, () => chiama(db, 'accetta_invito_partita', { p_invite_id: inv2, ...IO('sidC') }));
+  check(r2.ok === false && r2.motivo === 'non_trovato', 'un invito non mio: non_trovato', r2);
+  // Il trigger della 32a mette giocato = false a ogni INSERT: si segna giocata con un UPDATE.
+  const mD = await partita(db, 'sidA', 'sidD');
+  await db.query(`UPDATE telepathy_matches SET giocato = true WHERE id = $1`, [mD]);
+  const r3 = await comeAnon(db, () => chiama(db, 'accetta_invito_partita', { p_invite_id: inv2, ...IO('sidB') }));
+  check(r3.ok === false && r3.motivo === 'in_match', 'chi ha invitato è in training: in_match, e la partita appena creata sparisce', r3);
+  check((await righe(db, `SELECT 1 FROM telepathy_matches WHERE da_invito`)).length === 0, 'nessun orfano d\'invito');
+});
+
 // ── esecuzione ──
 (async () => {
   for (const [nome, fn, opzioni] of sezioni) {
