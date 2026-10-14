@@ -21,3 +21,4 @@ CREATE POLICY "Solo i partecipanti possono cancellare messaggi" ON telepathy_cha
     AND (telepathy_matches.user1_id = auth.uid()::text OR telepathy_matches.user2_id = auth.uid()::text)));
 
 GRANT EXECUTE ON FUNCTION public.end_telepathy_match(uuid, text) TO PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.apply_level_change_if_both_agree(uuid, text, text) TO PUBLIC, anon, authenticated;

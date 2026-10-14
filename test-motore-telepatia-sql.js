@@ -285,6 +285,7 @@ sezione('Z1. dopo la 39b: tabelle chiuse, RPC vive', async (db) => {
     check(negato(await comeAnon(db, () => errore(db.query(sql)))), `anon: ${sql.slice(0, 40)} → negato`);
   }
   check(negato(await comeAnon(db, () => errore(chiama(db, 'end_telepathy_match', { p_match_id: m, p_ended_by: 'x' })))), 'end_telepathy_match non più chiamabile');
+  check(negato(await comeAnon(db, () => errore(db.query(`SELECT * FROM apply_level_change_if_both_agree('${m}', 'continue', 'sender')`)))), 'apply_level_change_if_both_agree non più chiamabile');
   check((await mossa(db, 'partita_simbolo', 'sidA', m, { p_simbolo: 'stella', p_livello: 'lvl3' })).ok === true, 'le mosse passano dalle RPC');
   check((await mossa(db, 'chat_scrivi', 'sidB', m, { p_testo: 'ciao' })).ok === true, 'la chat passa dalle RPC');
   check((await mossa(db, 'chat_leggi', 'sidA', m)).length === 1, 'e si rilegge');
@@ -305,6 +306,8 @@ sezione('Z2. 39b_ritorno', async (db) => {
   const pol = (await righe(db, `SELECT tablename, policyname FROM pg_policies WHERE tablename IN ('telepathy_matches','telepathy_chat') ORDER BY 1, 2`)).map((p) => p.policyname);
   check(pol.length === 5, 'le cinque policy di prima', pol);
   check(!(await comeAnon(db, () => errore(chiama(db, 'end_telepathy_match', { p_match_id: '00000000-0000-0000-0000-000000000000', p_ended_by: 'x' })))), 'end_telepathy_match di nuovo chiamabile');
+  const ap = await comeAnon(db, () => errore(db.query(`SELECT * FROM apply_level_change_if_both_agree('00000000-0000-0000-0000-000000000000', 'continue', 'sender')`)));
+  check(!negato(ap), 'apply_level_change_if_both_agree di nuovo chiamabile', ap);
   check(!(await errore(applicaFile(db, 'supabase/sql/39b_ritorno.sql'))), 'il ritorno si riapplica');
   check(!(await errore(applicaFile(db, F39B))), 'dopo il ritorno la 39b si riapplica');
   check(negato(await comeAnon(db, () => errore(db.query(`SELECT * FROM telepathy_matches`)))), 'e richiude');

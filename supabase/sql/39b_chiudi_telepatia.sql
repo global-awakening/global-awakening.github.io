@@ -15,3 +15,6 @@ REVOKE ALL ON telepathy_chat FROM PUBLIC, anon, authenticated;
 
 -- Chiudeva qualunque partita a nome di chiunque: la sostituisce partita_esci.
 REVOKE ALL ON FUNCTION public.end_telepathy_match(uuid, text) FROM PUBLIC, anon, authenticated;
+
+-- Non più usata dall'app dopo la scala 05: modificava qualunque partita senza guardare chi chiama.
+REVOKE ALL ON FUNCTION public.apply_level_change_if_both_agree(uuid, text, text) FROM PUBLIC, anon, authenticated;

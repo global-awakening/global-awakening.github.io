@@ -217,7 +217,7 @@ async function creaDbTelepatia({ con32a = true, con32b = false, con35a = false, 
   if (con36a) await applicaFile(db, F36A);
   if (con36a && con36b) await applicaFile(db, F36B);
   // 39a/39b stanno sopra la catena 36a/36b (id pubblici) e usano end_telepathy_match della 14_.
-  if (con39a) { await applicaFile(db, F14); await applicaFile(db, F39A); }
+  if (con39a) { await applicaFile(db, F14); await applicaFile(db, 'supabase/sql/03_apply_level_change.sql'); await applicaFile(db, F39A); }
   if (con39a && con39b) await applicaFile(db, F39B);
   return db;
 }
