@@ -101,8 +101,11 @@ const abbona = (p) => rpc('register_push_subscription', { p_session_id: p.sid,
     r = await rpc('send_telepathy_invite', { ...tu(A), p_nickname: A.nick, p_disponibilita_id: riga.id, p_session_online: null });
     check(r.j && r.j.ok === false && r.j.motivo === 'invito_in_corso', 'un secondo invito di A: invito_in_corso', r.j);
 
+    // Dalla 36b from_id è l'id pubblico di A (pub_…), non il suo session_id.
+    const pubA = (await serviceFetch('rpc/id_pubblico', { method: 'POST', body: JSON.stringify({ p_sid: A.sid }) })).body;
     r = await rpc('get_my_telepathy_invites', tu(B));
-    check(r.j && r.j.in_arrivo && r.j.in_arrivo.id === invito && r.j.in_arrivo.from_id === A.sid, 'B vede l\'invito, con from_id', r.j);
+    check(r.j && r.j.in_arrivo && r.j.in_arrivo.id === invito && r.j.in_arrivo.from_id === pubA && !JSON.stringify(r.j).includes(A.sid),
+      'B vede l\'invito, con from_id = id pubblico di A (mai il suo session_id)', r.j);
     r = await rpc('get_my_telepathy_invites', tu(A));
     check(r.j && r.j.in_uscita && r.j.in_uscita.id === invito && !JSON.stringify(r.j).includes(B.sid),
       'A vede il suo invito, senza il session_id di B', r.j);
