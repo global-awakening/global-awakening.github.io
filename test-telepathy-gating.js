@@ -41,7 +41,7 @@ const block = (startMarker, endMarker) => {
 console.log('— Gating di render (già presente) —');
 ok(/disabled=\{!senderHasSent\}/.test(src),
   'griglia receiver: i bottoni simbolo sono disabled quando !senderHasSent');
-ok(/disabled=\{!guessedSymbol \|\| !senderHasSent\}/.test(src),
+ok(/disabled=\{!guessedSymbol \|\| !senderHasSent(?: \|\| [^}]+)?\}/.test(src),
   'bottone Conferma: disabled finché non c\'è guess E il sender non ha inviato');
 ok(/\$\{!senderHasSent \? 'symbols-locked' : ''\}/.test(src),
   'griglia receiver: classe symbols-locked quando !senderHasSent (feedback visivo)');
@@ -49,10 +49,10 @@ ok(/\$\{!senderHasSent \? 'symbols-locked' : ''\}/.test(src),
 console.log('\n— Fix robusto: checkSenderSent è round-aware (indipendente dal timing) —');
 const check = block('const checkSenderSent = async', 'const interval = setInterval(checkSenderSent');
 ok(check !== null, 'trovato il blocco checkSenderSent');
-ok(check !== null && /select\('sender_symbol, round_count'\)/.test(check),
-  'checkSenderSent legge anche round_count dal DB');
-ok(check !== null && /dbRound === roundCount/.test(check),
-  'checkSenderSent sblocca solo se il round del DB combacia col round locale (no simbolo del round precedente)');
+ok(check !== null && /rpcPartita\('partita_stato'/.test(check),
+  'checkSenderSent legge lo stato dal server (partita_stato)');
+ok(check !== null && /simbolo_inviato/.test(check) && /dbRound === roundCount/.test(check),
+  'checkSenderSent usa simbolo_inviato (il simbolo è nascosto) e confronta il round');
 // La dep roundCount deve essere nell\'array dell\'effetto, altrimenti la closure userebbe un round stantio.
 ok(/waitingForPartner, showResult, roundCount\]/.test(src),
   'l\'effetto checkSenderSent ha roundCount tra le dipendenze (closure fresca)');
@@ -66,5 +66,13 @@ const acceptInvite = block('const acceptInvite = async', 'const declineInvite');
 ok(acceptInvite !== null, 'trovato il blocco acceptInvite');
 ok(acceptInvite !== null && acceptInvite.includes('setSenderHasSent(false)'),
   'acceptInvite resetta senderHasSent=false all\'avvio di una nuova sessione');
+
+console.log('\n— Motore chiuso (39a): niente accessi diretti a partite e chat —');
+ok(!/from\('telepathy_matches'\)/.test(src), 'nessun from(\'telepathy_matches\') in app.jsx');
+ok(!/from\('telepathy_chat'\)/.test(src), 'nessun from(\'telepathy_chat\') in app.jsx');
+ok(!/rest\/v1\/telepathy_(matches|chat)/.test(src), 'nessuna fetch REST diretta alle due tabelle');
+ok(!/end_telepathy_match/.test(src), 'end_telepathy_match non si chiama più (c\'è partita_esci)');
+const poll = block('const pollResult = async', 'pollResult();');
+ok(poll !== null && /if \(error\) return;/.test(poll), 'pollResult: un errore di rete non chiude la partita');
 
 console.log(`\nRisultato: ${passed} passati, ${failed} falliti`);

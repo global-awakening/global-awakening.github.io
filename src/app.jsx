@@ -1755,13 +1755,13 @@
           const [resultCountdown, setResultCountdown] = useState(null);
           // Tiene traccia dell'ultimo round_count processato per evitare doppio processing
           const lastProcessedRoundRef = React.useRef(-1);
-          // Task A1: memorizza se le colonne ended_at/ended_by esistono su Supabase (migration
-          // 14_ applicata). Finche' non e' applicata, evita di ritentare la select con quelle
-          // colonne ad ogni poll (ogni 2s per tutta la sessione): raddoppierebbe le richieste
-          // di checkPartnerLeft inutilmente. Ottimistico (true) finche' non si osserva un errore.
-          const endedColumnsSupportedRef = React.useRef(true);
           const [isMatch, setIsMatch] = useState(false);
           const [matchId, setMatchId] = useState(null);
+          // Il mio nome nella partita, come l'ha scritto il server (user1/user2_nickname): la chat
+          // firma i messaggi con questo, che può differire da `nickname` (ripulito, accorciato,
+          // «Anonymous»). Si azzera con la partita; finché manca si confronta con `nickname`.
+          const [mioNomePartita, setMioNomePartita] = useState(null);
+          React.useEffect(() => { if (!matchId) setMioNomePartita(null); }, [matchId]);
           const [matchUser1Id, setMatchUser1Id] = useState(null); // user1 del match = primo chooser (cambio-modalità a turni)
           const [leaderboard, setLeaderboard] = useState([]); // top 10 per match telepatici
           const [partnerSymbol, setPartnerSymbol] = useState(null);
@@ -2275,9 +2275,8 @@
             );
           };
 
-          // Pulizia stato remoto alla chiusura del tab.
-          // sendBeacon non supporta DELETE: usiamo fetch con keepalive=true che il browser
-          // garantisce di completare anche dopo unload.
+          // Pulizia stato remoto alla chiusura del tab: partita_esci e coda_esci con fetch
+          // keepalive=true, che il browser completa anche dopo unload.
           const matchIdRef = React.useRef(null);
           const sessionIdRef = React.useRef(null);
           React.useEffect(() => { matchIdRef.current = matchId; }, [matchId]);
@@ -2308,6 +2307,13 @@
             }
             return data;
           };
+          // Motore della telepatia (39a): ogni lettura e scrittura di partite e chat passa dal server,
+          // che riconosce chi chiama dalla stessa coppia session_id + password degli inviti.
+          const rpcPartita = (fn, extra) => supabase.rpc(fn, {
+            p_session_id: sessionIdRef.current || sessionId,
+            p_password_hash: passwordHashRef.current || null,
+            ...(extra || {})
+          });
           // L'invito in arrivo lo dice solo il server (ce n'è al massimo uno): loop delle presenze,
           // campanella e push arrivate in primo piano passano tutti da qui. Con un errore (rete,
           // Auth failed) il banner resta com'è: un errore non vale «l'invito non c'è più».
@@ -2361,13 +2367,15 @@
           }, [avvisoInviti]);
           React.useEffect(() => {
             const handleUnload = () => {
-              const opts = { method: 'DELETE', headers: SB_HEADERS, keepalive: true };
               const mid = matchIdRef.current;
               const sid = sessionIdRef.current;
               try {
                 if (mid) {
-                  fetch(`${SUPABASE_URL}/rest/v1/telepathy_matches?id=eq.${mid}`, opts);
-                  fetch(`${SUPABASE_URL}/rest/v1/telepathy_chat?match_id=eq.${mid}`, opts);
+                  // Chiudere la scheda chiude la partita (la cancella poi il server, chat compresa).
+                  fetch(`${SUPABASE_URL}/rest/v1/rpc/partita_esci`, {
+                    method: 'POST', headers: SB_HEADERS, keepalive: true,
+                    body: JSON.stringify({ p_session_id: sid, p_password_hash: passwordHashRef.current || null, p_match_id: mid })
+                  });
                 }
                 if (sid) {
                   // La coda non si tocca più a mano (36a/36b): si esce con la RPC, sempre keepalive.
@@ -2546,45 +2554,23 @@
               // Io nelle partite sono il mio id pubblico; senza, non si gioca (i bottoni sono spenti).
               const me = myPublicIdRef.current;
               if (!me) return;
-              // Le righe della coda più vecchie di 60 s le toglie il server (coda_entra/coda_leggi).
-              // Non più «tutto ciò che è nato da 5 minuti», che cancellava anche i training lunghi
-              // (spec §4.4, secondo e terzo giro). Tre delete separati: il client fatto a mano
-              // conosce solo .eq/.neq/.lt. Chiusi da più di un minuto (resta il tempo per la
-              // schermata finale), fermi da 10, orfani mai giocati nati da più di 5 (chi accetta
-              // aspetta al massimo 3).
-              const adesso = Date.now();
-              await supabase.from('telepathy_matches').delete().lt('ended_at', new Date(adesso - 60000).toISOString());
-              await supabase.from('telepathy_matches').delete().lt('ultima_attivita', new Date(adesso - 600000).toISOString());
-              await supabase.from('telepathy_matches').delete().eq('giocato', false).lt('created_at', new Date(adesso - 300000).toISOString());
-              // «Vivo» per l'abbinamento: non chiuso e non un orfano d'invito mai giocato. I match
-              // casuali appena nati restano vivi: è così che chi è in coda scopre il match creato
-              // dall'altro, prima che nessuno abbia giocato.
-              const vivo = (m) => !m.ended_at && !(m.da_invito && !m.giocato);
-
-              // 1. Check if someone already matched with me
-              const { data: matches } = await supabase.from('telepathy_matches').select('*');
-              if (matches) {
-                // Solo match ATTIVI (ended_at null): un match concluso residuo non deve far
-                // "rientrare" in una sessione finita invece di cercare un nuovo partner.
-                const myMatch = matches.find(m => (m.user1_id === me || m.user2_id === me) && vivo(m));
-                if (myMatch) {
-                  const amUser1 = myMatch.user1_id === me;
-                  // SP1: mai una sessione con chi ho bloccato. Il match si chiude, se no
-                  // il polling lo ritroverebbe a ogni tick e non cercherei mai un altro.
-                  const altroNick = amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname;
-                  if (isBlocked(altroNick)) {
-                    try { await supabase.rpc('end_telepathy_match', { p_match_id: myMatch.id, p_ended_by: me }); }
-                    catch (e) { /* RPC non applicata: il match scade comunque a TTL */ }
-                    return;
-                  }
-                  setPartner({ id: amUser1 ? myMatch.user2_id : myMatch.user1_id, nickname: altroNick });
-                  setRole(amUser1 ? myMatch.user1_role : myMatch.user2_role);
-                  setMatchId(myMatch.id);
-                  setSearchingPartner(false);
-                  // Remove from queue
-                  await esciDallaCoda();
+              // 1. Qualcuno mi ha già abbinato? (il server fa anche la pulizia delle partite vecchie)
+              const { data: myMatch, error: errMia } = await rpcPartita('partita_mia');
+              if (errMia) return;   // rete: si riprova al giro dopo
+              if (myMatch) {
+                const amUser1 = myMatch.user1_id === me;
+                const altroNick = amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname;
+                if (isBlocked(altroNick)) {
+                  await rpcPartita('partita_esci', { p_match_id: myMatch.id });
                   return;
                 }
+                setPartner({ id: amUser1 ? myMatch.user2_id : myMatch.user1_id, nickname: altroNick });
+                setRole(amUser1 ? myMatch.user1_role : myMatch.user2_role);
+                setMioNomePartita(amUser1 ? myMatch.user1_nickname : myMatch.user2_nickname);
+                setMatchId(myMatch.id);
+                setSearchingPartner(false);
+                await esciDallaCoda();
+                return;
               }
 
               // 2. Look for someone in queue (solo gli altri, dal più vecchio, con l'id pubblico)
@@ -2597,86 +2583,20 @@
               if (queueLibera.length > 0) {
                 const available = queueLibera[0];
 
-                // Re-check pre-insert: tra il primo SELECT (riga sopra) e l'INSERT, un altro
-                // client puo' avermi appena matchato o aver matchato 'available' con un terzo.
-                // NB: lato DB serve anche un UNIQUE constraint su (LEAST(u1,u2),GREATEST(u1,u2))
-                // per chiudere completamente la race. Questo client-side dedup la mitiga.
-                const { data: precheck } = await supabase.from('telepathy_matches').select('*');
-                // Solo match ATTIVI: un match concluso residuo non conta come "gia' matchato".
-                const existingForMe = (precheck || []).find(m => (m.user1_id === me || m.user2_id === me) && vivo(m));
-                if (existingForMe) {
-                  const amUser1 = existingForMe.user1_id === me;
-                  setPartner({ id: amUser1 ? existingForMe.user2_id : existingForMe.user1_id, nickname: amUser1 ? existingForMe.user2_nickname : existingForMe.user1_nickname });
-                  setRole(amUser1 ? existingForMe.user1_role : existingForMe.user2_role);
-                  setMatchId(existingForMe.id);
-                  setSearchingPartner(false);
-                  await esciDallaCoda();
-                  return;
-                }
-                const existingForThem = (precheck || []).find(m => (m.user1_id === available.id || m.user2_id === available.id) && vivo(m));
-                if (existingForThem) {
-                  // available e' in un match ATTIVO con qualcun altro: prossimo tick rifara' lookup
-                  // (un match concluso residuo di 'available' non deve escluderlo dal matchmaking)
-                  return;
-                }
-
-                const myRole = Math.random() > 0.5 ? 'sender' : 'receiver';
-                const theirRole = myRole === 'sender' ? 'receiver' : 'sender';
-
-                // Create match record so both users can see it
-                const { data: matchData } = await supabase.from('telepathy_matches').insert({
-                  user1_id: available.id,
-                  user1_nickname: available.nickname,
-                  user1_role: theirRole,
-                  user2_id: me,
-                  user2_nickname: nickname || 'Anonymous',
-                  user2_role: myRole,
-                  level: 'lvl3' // ogni sessione parte dal livello più facile (3 card)
+                // La partita la crea il server: controlla che l'altro sia in coda e libero, sorteggia
+                // i ruoli e non fa doppioni se ci abbiniamo a vicenda nello stesso istante.
+                const { data: r, error: errCrea } = await rpcPartita('partita_crea_da_coda', {
+                  p_nickname: nickname || 'Anonymous', p_altro: available.id
                 });
-
-                if (!matchData || matchData.length === 0) {
-                  // INSERT fallita. Causa tipica: vincolo pair_unique in conflitto con un match GIA'
-                  // CONCLUSO residuo della coppia (un match ended sopravvive ~6s per la fine
-                  // condivisa A1). Lo rimuovo — per id e SOLO se ended, quindi mai una sessione
-                  // attiva — e ritento al tick successivo. Reattivo (non preventivo) per non
-                  // aggiungere query nel path felice e non alterare la race del matchmaking random.
-                  const { data: staleAll } = await supabase.from('telepathy_matches').select('*');
-                  for (const m of (staleAll || [])) {
-                    const isPair = (m.user1_id === me && m.user2_id === available.id) || (m.user1_id === available.id && m.user2_id === me);
-                    if (isPair && m.ended_at) await supabase.from('telepathy_matches').delete().eq('id', m.id);
-                  }
-                  return;
-                }
-
-                // Post-insert dedup: se entrambi i client hanno fatto INSERT in parallelo, il match
-                // piu' vecchio (per created_at) vince. Cancello eventuali duplicati per la stessa coppia.
-                const { data: postcheck } = await supabase.from('telepathy_matches').select('*');
-                const pairMatches = (postcheck || []).filter(m =>
-                  !m.ended_at && (
-                    (m.user1_id === me && m.user2_id === available.id) ||
-                    (m.user2_id === me && m.user1_id === available.id)
-                  )
-                );
-                let winner = matchData[0];
-                if (pairMatches.length > 1) {
-                  pairMatches.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-                  winner = pairMatches[0];
-                  for (const m of pairMatches) {
-                    if (m.id !== winner.id) {
-                      await supabase.from('telepathy_matches').delete().eq('id', m.id);
-                    }
-                  }
-                }
-
+                if (errCrea || !r || !r.ok) return;   // occupato, uscito dalla coda, rete: giro dopo
+                const winner = r.partita;
                 const amUser1 = winner.user1_id === me;
                 setPartner({ id: amUser1 ? winner.user2_id : winner.user1_id, nickname: amUser1 ? winner.user2_nickname : winner.user1_nickname });
                 setRole(amUser1 ? winner.user1_role : winner.user2_role);
+                setMioNomePartita(amUser1 ? winner.user1_nickname : winner.user2_nickname);
                 setMatchId(winner.id);
-
-                // Esco dalla coda. L'altro non lo tolgo io (la coda non si tocca più a mano): esce
-                // da sé al suo prossimo giro, quando trova la partita (passo 1); comunque dopo 60 s.
+                // Il server ci ha già tolti entrambi dalla coda; l'uscita resta per sicurezza.
                 await esciDallaCoda();
-
                 setSearchingPartner(false);
               } else {
                 // Add self to queue (il server rinfresca il mio timestamp: sono l'ultimo arrivato)
@@ -3181,20 +3101,25 @@
           const sendSymbol = async () => {
             if (!selectedSymbol || !matchId || attesaInvitanteRef.current) return;
             setWaitingForPartner(true);
-            await supabase.from('telepathy_matches').update({
-              sender_symbol: selectedSymbol,
-              level: currentLevel
-            }).eq('id', matchId);
+            const r = await rpcPartita('partita_simbolo', { p_match_id: matchId, p_simbolo: selectedSymbol, p_livello: currentLevel });
+            if (mossaRespinta(r, 'gia_inviato')) setWaitingForPartner(false);
           };
 
           const submitGuess = async () => {
             if (!guessedSymbol || !matchId || attesaInvitanteRef.current) return;
             setWaitingForPartner(true);
-
-            await supabase.from('telepathy_matches').update({
-              receiver_guess: guessedSymbol
-            }).eq('id', matchId);
+            const r = await rpcPartita('partita_ipotesi', { p_match_id: matchId, p_ipotesi: guessedSymbol });
+            if (mossaRespinta(r, 'gia_risposto')) setWaitingForPartner(false);
           };
+          // Mossa rifiutata dal server (ok:false): si smette di aspettare, così si può riprovare
+          // invece di restare fermi fino all'uscita anti-stallo dei 90 s. Con il motivo «già fatto»
+          // la mossa è sul server: si continua ad aspettare l'altro. Con un errore di rete si
+          // aspetta comunque: la scrittura può essere andata a buon fine e persa solo la risposta
+          // (smettere di aspettare fermerebbe pollResult e lascerebbe questo lato al round vecchio);
+          // se davvero non è arrivata, resta l'uscita anti-stallo dei 90 s.
+          function mossaRespinta({ data }, motivoGiaFatto) {
+            return !!data && data.ok === false && data.motivo !== motivoGiaFatto;
+          }
 
           const proposeLevelChange = async (choice) => {
             // Cambio-modalità a turni: solo il chooser scrive; la scelta si applica subito.
@@ -3204,10 +3129,8 @@
             setCurrentLevel(newLevel);
             setShowLevelBanner(false);
             lastProcessedRoundRef.current = -1;
-            await supabase.from('telepathy_matches').update({
-              level: newLevel,
-              level_change_choice_sender: 'r' + bannerRound, // marcatore "scelta fatta" (vale anche per 'keep')
-            }).eq('id', matchId);
+            // p_scelta = marcatore "scelta fatta" (vale anche per 'keep')
+            await rpcPartita('partita_livello', { p_match_id: matchId, p_livello: newLevel, p_scelta: 'r' + bannerRound });
           };
 
           // Poll for telepathy result when waiting
@@ -3215,11 +3138,12 @@
             if (!matchId || !waitingForPartner) return;
 
             const pollResult = async () => {
-              const { data } = await supabase.from('telepathy_matches').select('*').eq('id', matchId);
-              // Match cambiato mentre la select era in volo (Accept post-sessione crea un match
+              const { data: match, error } = await rpcPartita('partita_stato', { p_match_id: matchId });
+              // Match cambiato mentre la lettura era in volo (Accept post-sessione crea un match
               // nuovo): non applicare esiti/flag del match vecchio sulla sessione nuova.
               if (matchIdRef.current !== matchId) return;
-              if (!data || data.length === 0) {
+              if (error) return;   // rete: si riprova fra 2 s, la partita non è finita
+              if (!match) {
                 // Il partner ha abbandonato la sessione — forza fine sessione su questo lato
                 setPartnerDisconnected(true);
                 setSessionEnded(true);
@@ -3227,7 +3151,6 @@
                 setWaitingForPartner(false);
                 return;
               }
-              const match = data[0];
 
               // Fine sessione come stato condiviso su DB (flag ended_at/ended_by): entrambi i
               // lati chiudono in modo identico e deterministico, invece di dedurlo dalla
@@ -3293,11 +3216,7 @@
                 // di pollare e vedere il risultato (e il guard round_count funziona).
                 if (effectiveRole === 'sender') {
                   setTimeout(async () => {
-                    await supabase.from('telepathy_matches').update({
-                      round_count: newRound,
-                      sender_symbol: null,
-                      receiver_guess: null,
-                    }).eq('id', matchId);
+                    await rpcPartita('partita_avanza', { p_match_id: matchId, p_round_atteso: dbRound });
                   }, 4000);
                 }
 
@@ -3328,35 +3247,26 @@
           }, [roundCount, partner, sessionEnded, effectiveRole]);
 
           // Rileva se il partner ha abbandonato la sessione:
-          // 1. match eliminato (ha cliccato Termina o chiusura tab con sendBeacon)
+          // 1. partita chiusa (ended_at: ha cliccato Termina o chiuso la scheda, sempre via
+          //    partita_esci) o già cancellata dalla pulizia del server (partita_stato → null)
           // 2. partner non visto da >35s in online_users (tab chiusa senza cleanup)
           useEffect(() => {
             if (!matchId) return;
             const checkPartnerLeft = async () => {
-              // Evita di riprovare la select con ended_at/ended_by ad ogni tick (ogni 2s per
-              // tutta la sessione) una volta appurato che le colonne non esistono ancora
-              // (migration 14_ non applicata): raddoppierebbe inutilmente le richieste.
-              let data, error;
-              if (endedColumnsSupportedRef.current) {
-                ({ data, error } = await supabase.from('telepathy_matches').select('id, ended_at, ended_by').eq('id', matchId));
-                if (error) endedColumnsSupportedRef.current = false;
-              }
-              if (!endedColumnsSupportedRef.current) {
-                ({ data } = await supabase.from('telepathy_matches').select('id').eq('id', matchId));
-              }
-              // Se il match e' cambiato mentre la select era in volo (es. Accept di un nuovo
+              const { data: match, error } = await rpcPartita('partita_stato', { p_match_id: matchId });
+              // Se il match e' cambiato mentre la lettura era in volo (es. Accept di un nuovo
               // invito da schermata "sessione conclusa": resetTelepathy azzera il match OLD e se
               // ne crea uno NUOVO), NON scrivere flag di fine sessione: apparterrebbero al match
               // vecchio ma colpirebbero la sessione nuova (race stale-write esposta da A5).
               if (matchIdRef.current !== matchId) return;
-              if (!data || data.length === 0) {
+              if (error) return;
+              if (!match) {
                 setPartnerDisconnected(true);
                 setSessionEnded(true);
                 setShowResult(false);
                 setWaitingForPartner(false);
                 return;
               }
-              const match = data[0];
               if (match.ended_at) {
                 if (match.ended_by && match.ended_by !== myPublicIdRef.current) setPartnerDisconnected(true);
                 setSessionEnded(true);
@@ -3384,9 +3294,8 @@
 
             const pollLevelChange = async () => {
               // Read-only lato passivo: solo il chooser scrive (proposeLevelChange).
-              const { data } = await supabase.from('telepathy_matches').select('*').eq('id', matchId);
-              if (!data || data.length === 0) return;
-              const match = data[0];
+              const { data: match } = await rpcPartita('partita_stato', { p_match_id: matchId });
+              if (!match) return;
               if (match.user1_id) setMatchUser1Id(match.user1_id);
 
               // Il chooser ha scritto level + marcatore 'r'+bannerRound → applica e dismetti
@@ -3414,22 +3323,19 @@
             if (!me) return null;
             // Il client fatto a mano non solleva: un errore di rete torna in error. Non è «il
             // match non c'è più»: non si tocca niente e il giro fra 2 s riprova.
-            const { data, error } = await supabase.from('telepathy_matches').select('*').eq('id', idMatch);
-            if (error || !Array.isArray(data)) return null;   // null = non so (rete), false = non c'è
-            const m = data[0];
-            // Una partita in cui non compaio (es. creata da un'app vecchia con l'id grezzo) non è
-            // la mia: meglio «non c'è più» che prendermi per user2 e giocare contro me stessa/o.
-            if (!m || m.ended_at || (m.user1_id !== me && m.user2_id !== me)) {
+            const { data: e, error } = await rpcPartita('partita_entra', { p_match_id: idMatch });
+            if (error || !e) return null;   // null = non so (rete), false = non c'è
+            const m = e.ok ? e.partita : null;
+            if (!m || (m.user1_id !== me && m.user2_id !== me)) {
               setDirectInviteTarget(null);
               setInvitoInUscita(null);
               setAvvisoInviti(testoInviti('non_ce_piu'));
               return false;
             }
-            // L'arrivo è un update del match: per il trigger della 32a vale come attività.
-            await supabase.from('telepathy_matches').update({ round_count: m.round_count || 0 }).eq('id', m.id);
             const amUser1 = m.user1_id === me;
             setPartner({ id: amUser1 ? m.user2_id : m.user1_id, nickname: amUser1 ? m.user2_nickname : m.user1_nickname });
             setRole(amUser1 ? m.user1_role : m.user2_role);
+            setMioNomePartita(amUser1 ? m.user1_nickname : m.user2_nickname);
             setMatchId(m.id);
             setSessionEnded(false);
             setPartnerDisconnected(false);
@@ -3522,8 +3428,8 @@
           useEffect(() => {
             if (!matchId) return;
             const loadChat = async () => {
-              const { data } = await supabase.from('telepathy_chat').select('*').eq('match_id', matchId).order('created_at', { ascending: true });
-              if (data) setTelepathyChatMessages(data.filter(x => !isBlocked(x.sender_name)));
+              const { data } = await rpcPartita('chat_leggi', { p_match_id: matchId });
+              if (Array.isArray(data)) setTelepathyChatMessages(data.filter(x => !isBlocked(x.sender_name)));
             };
             loadChat();
             const interval = setInterval(loadChat, 3000);
@@ -3535,8 +3441,8 @@
             if (!matchId || effectiveRole !== 'receiver' || waitingForPartner || showResult) return;
 
             const checkSenderSent = async () => {
-              const { data } = await supabase.from('telepathy_matches').select('sender_symbol, round_count').eq('id', matchId);
-              if (data && data.length > 0) {
+              const { data: p } = await rpcPartita('partita_stato', { p_match_id: matchId });
+              if (p) {
                 // A4/bug 4: un sender_symbol non-null vale come "inviato" SOLO se il round sul DB
                 // combacia con il round locale. Dopo un risultato il receiver avanza subito a
                 // round N+1, ma il vecchio simbolo (round N) resta sul DB finché il sender non
@@ -3545,8 +3451,9 @@
                 // simbolo vecchio coesiste sempre con round_count indietro: confrontare i round
                 // evita di sbloccare la griglia leggendo il simbolo del round precedente
                 // (race cross-client), senza dipendere da margini di timing.
-                const dbRound = data[0].round_count || 0;
-                setSenderHasSent(!!data[0].sender_symbol && dbRound === roundCount);
+                // Il simbolo a chi indovina non arriva più (39a): basta sapere che è stato inviato.
+                const dbRound = p.round_count || 0;
+                setSenderHasSent(!!p.simbolo_inviato && dbRound === roundCount);
               }
             };
 
@@ -3584,12 +3491,12 @@
 
           const resetTelepathy = () => {
             // Se l'utente abbandona una sessione attiva (non terminata via endSession),
-            // cancella match/queue/inviti per non lasciare il partner appeso
+            // chiude la partita (partita_esci: ended_at; partita e chat le cancella poi il server),
+            // esce dalla coda e ritira l'invito in uscita, per non lasciare il partner appeso
             // e per evitare di tornare in lobby ancora "in match" dal punto di vista DB.
             const oldMatchId = matchId;
             if (oldMatchId) {
-              supabase.from('telepathy_matches').delete().eq('id', oldMatchId);
-              supabase.from('telepathy_chat').delete().eq('match_id', oldMatchId);
+              rpcPartita('partita_esci', { p_match_id: oldMatchId });
             }
             if (sessionId) {
               supabase.rpc('coda_esci', { p_session_id: sessionId, p_password_hash: passwordHashRef.current || null });
@@ -3629,7 +3536,7 @@
           // Diversa da endSession (chiusura graziosa con recap+punteggio): qui si abbandona
           // e si torna in lobby senza recap. Marca il flag ended (best-effort, no PII: session
           // token come in A1) cosi' l'altro lato esce anche lui via polling; resetTelepathy
-          // resta il fallback affidabile (cancella il match -> l'altro rileva partner uscito).
+          // resta il fallback (richiama partita_esci -> l'altro legge ended_at e rileva l'uscita).
           const leaveSession = async () => {
             // I round gia' giocati sono avvenuti davvero: come endSession, persistili nel
             // contatore autoritativo (increment_telepathy_score) prima di uscire, cosi' uscire
@@ -3645,8 +3552,8 @@
               } catch (e) { /* best-effort: non bloccare l'uscita se il salvataggio fallisce */ }
             }
             if (matchId) {
-              try { await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: myPublicIdRef.current }); }
-              catch (e) { /* RPC/colonne non ancora applicate: resetTelepathy cancella comunque il match */ }
+              try { await rpcPartita('partita_esci', { p_match_id: matchId }); }
+              catch (e) { /* rete: resetTelepathy ci riprova comunque */ }
             }
             resetTelepathy();
           };
@@ -3723,63 +3630,27 @@
             // Sessione precedente conclusa/abbandonata: reset completo prima di entrare nella nuova.
             if (matchId || partner) resetTelepathy();
             // Anticipare setSearchingPartner(false) per evitare che findPartner crei un altro match
-            // in parallelo durante l'await dell'INSERT (race con random matching).
+            // in parallelo durante l'attesa di accetta_invito_partita (race con random matching).
             setSearchingPartner(false);
             const invito = incomingInvite;
-            // Residui conclusi della stessa coppia: farebbero fallire l'insert sul vincolo
-            // telepathy_matches_pair_unique (409). Filtro lato client (select + delete per id):
-            // il client fatto a mano conosce solo .eq/.neq/.lt, NON .not.
-            const { data: staleAccept } = await supabase.from('telepathy_matches').select('*');
-            for (const m of (staleAccept || [])) {
-              const isPair = (m.user1_id === invito.from_id_pubblico && m.user2_id === me) || (m.user1_id === me && m.user2_id === invito.from_id_pubblico);
-              if (isPair && m.ended_at) await supabase.from('telepathy_matches').delete().eq('id', m.id);
-            }
-            const myRole = Math.random() > 0.5 ? 'sender' : 'receiver';
-            const theirRole = myRole === 'sender' ? 'receiver' : 'sender';
-            // Prima il match (come oggi, fuori scope rifarlo), segnato da_invito: così, se l'app si
-            // chiude prima della risposta, findPartner riconosce l'orfano e non ci risucchia nessuno.
-            const { data: matchData, error: matchError } = await supabase.from('telepathy_matches').insert({
-              user1_id: invito.from_id_pubblico,
-              user1_nickname: invito.from_name,
-              user1_role: theirRole,
-              user2_id: me,
-              user2_nickname: nickname || 'Anonymous',
-              user2_role: myRole,
-              level: 'lvl3', // ogni sessione parte dal livello più facile (3 card)
-              round_count: 0,
-              da_invito: true
-            });
-            if (matchError || !matchData || matchData.length === 0) {
-              // Di solito: la stessa persona ha appena accettato da un altro telefono o un'altra
-              // scheda, e il match della coppia esiste già (vincolo pair_unique). Si chiede al
-              // server com'è l'invito, per dire il motivo vero («già accettato»).
-              const stato = await rpcInviti('get_telepathy_invite', { p_invite_id: invito.invite_id });
-              let motivo = 'match_non_valido';
-              if (stato && stato.ok && stato.invito && stato.invito.status !== 'pending' && IH) motivo = IH.motivoDaStato(stato.invito.status);
-              else if (stato && stato.ok === false && (stato.motivo === 'errore' || stato.motivo === 'auth_fallita')) motivo = stato.motivo;
-              setIncomingInvite(null);
-              setAvvisoInviti(testoInviti(motivo, { nome: invito.from_name }));
-              return;
-            }
-            const nuovo = matchData[0];
-            // Poi la risposta: controlla scadenza, coppia, training in corso, e chi ha già risposto.
-            let r = await rpcInviti('respond_telepathy_invite', { p_invite_id: invito.invite_id, p_accept: true, p_match_id: nuovo.id });
+            // La partita la crea il server insieme alla risposta (39a): se l'invito non vale più,
+            // non resta nessuna partita a metà.
+            let r = await rpcInviti('accetta_invito_partita', { p_invite_id: invito.invite_id });
             if (r && r.ok === false && r.motivo === 'errore') {
               // Errore di rete: la risposta può essere arrivata al server anche se non a noi.
-              // Prima di cancellare il match si chiede com'è andata (un errore non vale «rifiutato»).
               const stato = await rpcInviti('get_telepathy_invite', { p_invite_id: invito.invite_id });
-              if (stato && stato.ok && stato.invito && stato.invito.status === 'accepted' && stato.invito.match_id === nuovo.id) {
-                r = { ok: true, status: 'accepted', responded_at: stato.invito.responded_at, adesso: stato.adesso };
+              if (stato && stato.ok && stato.invito && stato.invito.status === 'accepted' && stato.invito.match_id) {
+                const { data: p } = await rpcPartita('partita_stato', { p_match_id: stato.invito.match_id });
+                if (p) r = { ok: true, status: 'accepted', responded_at: stato.invito.responded_at, adesso: stato.adesso, partita: p };
               }
             }
-            if (!r || !r.ok) {
-              // Rifiutato dal server (scaduto, annullato, già accettato da un altro telefono,
-              // in_match): il match appena creato non deve restare a nessuno.
-              await supabase.from('telepathy_matches').delete().eq('id', nuovo.id);
+            if (!r || !r.ok || !r.partita) {
               setIncomingInvite(null);
               setAvvisoInviti(testoInviti((r && r.motivo) || 'errore', { nome: invito.from_name }));
               return;
             }
+            const nuovo = r.partita;
+            const myRole = nuovo.user2_role;   // chi accetta è sempre user2
             if (IH && r.adesso) setScartoOrologio(IH.scarto(r.adesso, Date.now()));
             // Il mio invito in uscita, se c'era, l'ha annullato il server accettando (ruling m4):
             // lo si toglie anche qui, senza annullarlo di nuovo (il ref subito, come in resetTelepathy).
@@ -3787,6 +3658,7 @@
             setInvitoInUscita(null);
             setDirectInviteTarget(null);
             setMatchId(nuovo.id);
+            setMioNomePartita(nuovo.user2_nickname);
             setPartner({ id: invito.from_id_pubblico, nickname: invito.from_name });
             setRole(myRole);
             setIncomingInvite(null);
@@ -3840,16 +3712,16 @@
                 const risposto = Date.parse(rispostoIlRef.current);
                 if (!isNaN(visto) && !isNaN(risposto) && visto > risposto + 5000
                     && Date.now() - visto < 30000) { setAttesaInvitante(null); return; }
-                const { data: mm, error: errM } = await supabase.from('telepathy_matches').select('giocato').eq('id', matchId);
+                const { data: mm, error: errM } = await rpcPartita('partita_stato', { p_match_id: matchId });
                 if (fermo) return;
-                if (!errM && Array.isArray(mm) && mm.length > 0 && mm[0].giocato === true) { setAttesaInvitante(null); return; }
+                if (!errM && mm && mm.giocato === true) { setAttesaInvitante(null); return; }
                 const r = await rpcInviti('get_telepathy_invite', { p_invite_id: attesaInvitante.invitoId });
                 if (fermo) return;
                 const scarto = r && r.adesso && IH ? IH.scarto(r.adesso, Date.now()) : scartoOrologio;
                 if (r && r.ok && r.invito && r.invito.responded_at) rispostoIlRef.current = r.invito.responded_at;
                 if (IH && IH.attesaFinita(rispostoIlRef.current, scarto, Date.now())) {
                   fermo = true;
-                  try { await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: myPublicIdRef.current }); } catch (_) {}
+                  await rpcPartita('partita_esci', { p_match_id: matchId });
                   const nome = attesaInvitante.nome;
                   resetTelepathy();
                   setAvvisoInviti(testoInviti('non_arrivato', { nome }));
@@ -4069,11 +3941,11 @@
               alert(t.telepathy.partnerOfflineN(savedPartner.nickname));
               return;
             }
-            // Prima si chiude il match appena finito, ASPETTANDO la risposta: la cancellazione di
-            // resetTelepathy parte senza attesa, e un match giocato da meno di 10 minuti senza
-            // ended_at farebbe rispondere al server in_match / non_disponibile.
+            // Prima si chiude il match appena finito, ASPETTANDO la risposta: il partita_esci di
+            // resetTelepathy parte senza attesa, e un match ancora senza ended_at quando arriva
+            // l'invito farebbe rispondere al server in_match / non_disponibile.
             if (matchId) {
-              try { await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: myPublicIdRef.current }); } catch (_) {}
+              try { await rpcPartita('partita_esci', { p_match_id: matchId }); } catch (_) {}
             }
             resetTelepathy();
             await sendDirectInvite({ id: savedPartner.id, nickname: savedPartner.nickname });
@@ -4145,11 +4017,8 @@
             if (!newTelepathyMessage.trim() || !matchId) return;
             const msg = newTelepathyMessage.trim();
             setNewTelepathyMessage('');
-            await supabase.from('telepathy_chat').insert({
-              match_id: matchId,
-              sender_name: nickname || 'Anonymous',
-              content: msg
-            });
+            // Il nome del mittente lo mette il server (quello della partita).
+            await rpcPartita('chat_scrivi', { p_match_id: matchId, p_testo: msg });
           };
 
           const getPartnerStatus = () => {
@@ -4210,29 +4079,9 @@
                 });
               }
               if (matchId) {
-                // Marca il flag di fine sessione PRIMA di cancellare, cosi' l'altro lato
-                // lo rileva via polling in modo deterministico (vedi pollResult/checkPartnerLeft).
-                // Best-effort: se la RPC/colonne non sono ancora applicate su Supabase, degrada
-                // in sicurezza sul vecchio comportamento (delete immediata sotto).
-                let flagSet = false;
-                try {
-                  const { error: endErr } = await supabase.rpc('end_telepathy_match', { p_match_id: matchId, p_ended_by: myPublicIdRef.current });
-                  flagSet = !endErr;
-                } catch (e) { /* RPC non ancora applicata: si continua col vecchio path (delete) */ }
-                // Cancella subito la chat per non lasciare messaggi orfani in telepathy_chat
-                // (la tabella non ha ON DELETE CASCADE).
-                await supabase.from('telepathy_chat').delete().eq('match_id', matchId);
-                if (flagSet) {
-                  // Il flag e' stato scritto con successo: ritarda la delete del match cosi'
-                  // l'altro lato fa in tempo a leggere ended_at nel polling (2s) prima del cleanup.
-                  setTimeout(() => { supabase.from('telepathy_matches').delete().eq('id', matchId); }, 6000);
-                } else {
-                  // Migration non applicata: nessuno potra' mai leggere il flag, quindi ritardare
-                  // la delete non avrebbe alcun beneficio e introdurrebbe solo il rischio che il
-                  // timer non arrivi mai a compimento (es. tab in background/throttled dal
-                  // browser) lasciando il record orfano. Si mantiene il comportamento pre-A1.
-                  await supabase.from('telepathy_matches').delete().eq('id', matchId);
-                }
+                // Chiude la partita sul server: l'altro lato legge ended_at; partita e chat le
+                // cancella poi la pulizia del server (la chat va via in cascata).
+                await rpcPartita('partita_esci', { p_match_id: matchId });
               }
             } catch (err) {
               console.warn('endSession error:', err);
@@ -6410,8 +6259,8 @@ ${ritual.description || ''}` })}
                                   <p className="text-secondary text-xs text-center" style={{marginTop: '2rem'}}>{t.telepathy.noMessages}</p>
                                 )}
                                 {telepathyChatMessages.map(msg => (
-                                  <div key={msg.id} style={{padding: '0.3rem 0.5rem', borderRadius: '0.5rem', background: msg.sender_name === nickname ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.08)', alignSelf: msg.sender_name === nickname ? 'flex-end' : 'flex-start', maxWidth: '90%'}}>
-                                    {msg.sender_name !== nickname && (
+                                  <div key={msg.id} style={{padding: '0.3rem 0.5rem', borderRadius: '0.5rem', background: msg.sender_name === (mioNomePartita || nickname) ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.08)', alignSelf: msg.sender_name === (mioNomePartita || nickname) ? 'flex-end' : 'flex-start', maxWidth: '90%'}}>
+                                    {msg.sender_name !== (mioNomePartita || nickname) && (
                                       <div className="flex items-center gap-1">
                                         <p className="text-secondary" style={{fontSize: '0.65rem'}}>{msg.sender_name}</p>
                                         {moderationMenu({ author: msg.sender_name, type: 'telepathy_chat', id: msg.id, snapshot: msg.content })}
@@ -6425,6 +6274,7 @@ ${ritual.description || ''}` })}
                                 <input
                                   type="text"
                                   value={newTelepathyMessage}
+                                  maxLength={500}
                                   onChange={e => setNewTelepathyMessage(e.target.value)}
                                   onKeyDown={e => e.key === 'Enter' && sendTelepathyMessage()}
                                   placeholder={t.telepathy.chatPlaceholder}

@@ -2124,9 +2124,12 @@ function GlobalAwakeningPlatform() {
   const [showResult, setShowResult] = useState(false);
   const [resultCountdown, setResultCountdown] = useState(null);
   const lastProcessedRoundRef = React.useRef(-1);
-  const endedColumnsSupportedRef = React.useRef(true);
   const [isMatch, setIsMatch] = useState(false);
   const [matchId, setMatchId] = useState(null);
+  const [mioNomePartita, setMioNomePartita] = useState(null);
+  React.useEffect(() => {
+    if (!matchId) setMioNomePartita(null);
+  }, [matchId]);
   const [matchUser1Id, setMatchUser1Id] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
   const [partnerSymbol, setPartnerSymbol] = useState(null);
@@ -2681,6 +2684,11 @@ function GlobalAwakeningPlatform() {
     }
     return data;
   };
+  const rpcPartita = (fn, extra) => supabase.rpc(fn, {
+    p_session_id: sessionIdRef.current || sessionId,
+    p_password_hash: passwordHashRef.current || null,
+    ...(extra || {})
+  });
   const aggiornaInviti = async () => {
     const r = await rpcInviti('get_my_telepathy_invites', {});
     if (!r || !r.ok) return null;
@@ -2731,17 +2739,20 @@ function GlobalAwakeningPlatform() {
   }, [avvisoInviti]);
   React.useEffect(() => {
     const handleUnload = () => {
-      const opts = {
-        method: 'DELETE',
-        headers: SB_HEADERS,
-        keepalive: true
-      };
       const mid = matchIdRef.current;
       const sid = sessionIdRef.current;
       try {
         if (mid) {
-          fetch(`${SUPABASE_URL}/rest/v1/telepathy_matches?id=eq.${mid}`, opts);
-          fetch(`${SUPABASE_URL}/rest/v1/telepathy_chat?match_id=eq.${mid}`, opts);
+          fetch(`${SUPABASE_URL}/rest/v1/rpc/partita_esci`, {
+            method: 'POST',
+            headers: SB_HEADERS,
+            keepalive: true,
+            body: JSON.stringify({
+              p_session_id: sid,
+              p_password_hash: passwordHashRef.current || null,
+              p_match_id: mid
+            })
+          });
         }
         if (sid) {
           fetch(`${SUPABASE_URL}/rest/v1/rpc/coda_esci`, {
@@ -2930,38 +2941,30 @@ function GlobalAwakeningPlatform() {
     const findPartner = async () => {
       const me = myPublicIdRef.current;
       if (!me) return;
-      const adesso = Date.now();
-      await supabase.from('telepathy_matches').delete().lt('ended_at', new Date(adesso - 60000).toISOString());
-      await supabase.from('telepathy_matches').delete().lt('ultima_attivita', new Date(adesso - 600000).toISOString());
-      await supabase.from('telepathy_matches').delete().eq('giocato', false).lt('created_at', new Date(adesso - 300000).toISOString());
-      const vivo = m => !m.ended_at && !(m.da_invito && !m.giocato);
       const {
-        data: matches
-      } = await supabase.from('telepathy_matches').select('*');
-      if (matches) {
-        const myMatch = matches.find(m => (m.user1_id === me || m.user2_id === me) && vivo(m));
-        if (myMatch) {
-          const amUser1 = myMatch.user1_id === me;
-          const altroNick = amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname;
-          if (isBlocked(altroNick)) {
-            try {
-              await supabase.rpc('end_telepathy_match', {
-                p_match_id: myMatch.id,
-                p_ended_by: me
-              });
-            } catch (e) {}
-            return;
-          }
-          setPartner({
-            id: amUser1 ? myMatch.user2_id : myMatch.user1_id,
-            nickname: altroNick
+        data: myMatch,
+        error: errMia
+      } = await rpcPartita('partita_mia');
+      if (errMia) return;
+      if (myMatch) {
+        const amUser1 = myMatch.user1_id === me;
+        const altroNick = amUser1 ? myMatch.user2_nickname : myMatch.user1_nickname;
+        if (isBlocked(altroNick)) {
+          await rpcPartita('partita_esci', {
+            p_match_id: myMatch.id
           });
-          setRole(amUser1 ? myMatch.user1_role : myMatch.user2_role);
-          setMatchId(myMatch.id);
-          setSearchingPartner(false);
-          await esciDallaCoda();
           return;
         }
+        setPartner({
+          id: amUser1 ? myMatch.user2_id : myMatch.user1_id,
+          nickname: altroNick
+        });
+        setRole(amUser1 ? myMatch.user1_role : myMatch.user2_role);
+        setMioNomePartita(amUser1 ? myMatch.user1_nickname : myMatch.user2_nickname);
+        setMatchId(myMatch.id);
+        setSearchingPartner(false);
+        await esciDallaCoda();
+        return;
       }
       const {
         data: queue
@@ -2972,68 +2975,21 @@ function GlobalAwakeningPlatform() {
       if (queueLibera.length > 0) {
         const available = queueLibera[0];
         const {
-          data: precheck
-        } = await supabase.from('telepathy_matches').select('*');
-        const existingForMe = (precheck || []).find(m => (m.user1_id === me || m.user2_id === me) && vivo(m));
-        if (existingForMe) {
-          const amUser1 = existingForMe.user1_id === me;
-          setPartner({
-            id: amUser1 ? existingForMe.user2_id : existingForMe.user1_id,
-            nickname: amUser1 ? existingForMe.user2_nickname : existingForMe.user1_nickname
-          });
-          setRole(amUser1 ? existingForMe.user1_role : existingForMe.user2_role);
-          setMatchId(existingForMe.id);
-          setSearchingPartner(false);
-          await esciDallaCoda();
-          return;
-        }
-        const existingForThem = (precheck || []).find(m => (m.user1_id === available.id || m.user2_id === available.id) && vivo(m));
-        if (existingForThem) {
-          return;
-        }
-        const myRole = Math.random() > 0.5 ? 'sender' : 'receiver';
-        const theirRole = myRole === 'sender' ? 'receiver' : 'sender';
-        const {
-          data: matchData
-        } = await supabase.from('telepathy_matches').insert({
-          user1_id: available.id,
-          user1_nickname: available.nickname,
-          user1_role: theirRole,
-          user2_id: me,
-          user2_nickname: nickname || 'Anonymous',
-          user2_role: myRole,
-          level: 'lvl3'
+          data: r,
+          error: errCrea
+        } = await rpcPartita('partita_crea_da_coda', {
+          p_nickname: nickname || 'Anonymous',
+          p_altro: available.id
         });
-        if (!matchData || matchData.length === 0) {
-          const {
-            data: staleAll
-          } = await supabase.from('telepathy_matches').select('*');
-          for (const m of staleAll || []) {
-            const isPair = m.user1_id === me && m.user2_id === available.id || m.user1_id === available.id && m.user2_id === me;
-            if (isPair && m.ended_at) await supabase.from('telepathy_matches').delete().eq('id', m.id);
-          }
-          return;
-        }
-        const {
-          data: postcheck
-        } = await supabase.from('telepathy_matches').select('*');
-        const pairMatches = (postcheck || []).filter(m => !m.ended_at && (m.user1_id === me && m.user2_id === available.id || m.user2_id === me && m.user1_id === available.id));
-        let winner = matchData[0];
-        if (pairMatches.length > 1) {
-          pairMatches.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-          winner = pairMatches[0];
-          for (const m of pairMatches) {
-            if (m.id !== winner.id) {
-              await supabase.from('telepathy_matches').delete().eq('id', m.id);
-            }
-          }
-        }
+        if (errCrea || !r || !r.ok) return;
+        const winner = r.partita;
         const amUser1 = winner.user1_id === me;
         setPartner({
           id: amUser1 ? winner.user2_id : winner.user1_id,
           nickname: amUser1 ? winner.user2_nickname : winner.user1_nickname
         });
         setRole(amUser1 ? winner.user1_role : winner.user2_role);
+        setMioNomePartita(amUser1 ? winner.user1_nickname : winner.user2_nickname);
         setMatchId(winner.id);
         await esciDallaCoda();
         setSearchingPartner(false);
@@ -3581,44 +3537,57 @@ function GlobalAwakeningPlatform() {
   const sendSymbol = async () => {
     if (!selectedSymbol || !matchId || attesaInvitanteRef.current) return;
     setWaitingForPartner(true);
-    await supabase.from('telepathy_matches').update({
-      sender_symbol: selectedSymbol,
-      level: currentLevel
-    }).eq('id', matchId);
+    const r = await rpcPartita('partita_simbolo', {
+      p_match_id: matchId,
+      p_simbolo: selectedSymbol,
+      p_livello: currentLevel
+    });
+    if (mossaRespinta(r, 'gia_inviato')) setWaitingForPartner(false);
   };
   const submitGuess = async () => {
     if (!guessedSymbol || !matchId || attesaInvitanteRef.current) return;
     setWaitingForPartner(true);
-    await supabase.from('telepathy_matches').update({
-      receiver_guess: guessedSymbol
-    }).eq('id', matchId);
+    const r = await rpcPartita('partita_ipotesi', {
+      p_match_id: matchId,
+      p_ipotesi: guessedSymbol
+    });
+    if (mossaRespinta(r, 'gia_risposto')) setWaitingForPartner(false);
   };
+  function mossaRespinta({
+    data
+  }, motivoGiaFatto) {
+    return !!data && data.ok === false && data.motivo !== motivoGiaFatto;
+  }
   const proposeLevelChange = async choice => {
     const bannerRound = Math.floor(roundCount / 7) * 7;
     const newLevel = choice === 'keep' ? currentLevel : choice;
     setCurrentLevel(newLevel);
     setShowLevelBanner(false);
     lastProcessedRoundRef.current = -1;
-    await supabase.from('telepathy_matches').update({
-      level: newLevel,
-      level_change_choice_sender: 'r' + bannerRound
-    }).eq('id', matchId);
+    await rpcPartita('partita_livello', {
+      p_match_id: matchId,
+      p_livello: newLevel,
+      p_scelta: 'r' + bannerRound
+    });
   };
   useEffect(() => {
     if (!matchId || !waitingForPartner) return;
     const pollResult = async () => {
       const {
-        data
-      } = await supabase.from('telepathy_matches').select('*').eq('id', matchId);
+        data: match,
+        error
+      } = await rpcPartita('partita_stato', {
+        p_match_id: matchId
+      });
       if (matchIdRef.current !== matchId) return;
-      if (!data || data.length === 0) {
+      if (error) return;
+      if (!match) {
         setPartnerDisconnected(true);
         setSessionEnded(true);
         setShowResult(false);
         setWaitingForPartner(false);
         return;
       }
-      const match = data[0];
       if (match.ended_at) {
         if (match.ended_by && match.ended_by !== myPublicIdRef.current) setPartnerDisconnected(true);
         setSessionEnded(true);
@@ -3660,11 +3629,10 @@ function GlobalAwakeningPlatform() {
         setSessionMatches(newSessionMatches);
         if (effectiveRole === 'sender') {
           setTimeout(async () => {
-            await supabase.from('telepathy_matches').update({
-              round_count: newRound,
-              sender_symbol: null,
-              receiver_guess: null
-            }).eq('id', matchId);
+            await rpcPartita('partita_avanza', {
+              p_match_id: matchId,
+              p_round_atteso: dbRound
+            });
           }, 4000);
         }
         if (newRound >= 7 && newRound % 7 === 0) {
@@ -3687,28 +3655,21 @@ function GlobalAwakeningPlatform() {
   useEffect(() => {
     if (!matchId) return;
     const checkPartnerLeft = async () => {
-      let data, error;
-      if (endedColumnsSupportedRef.current) {
-        ({
-          data,
-          error
-        } = await supabase.from('telepathy_matches').select('id, ended_at, ended_by').eq('id', matchId));
-        if (error) endedColumnsSupportedRef.current = false;
-      }
-      if (!endedColumnsSupportedRef.current) {
-        ({
-          data
-        } = await supabase.from('telepathy_matches').select('id').eq('id', matchId));
-      }
+      const {
+        data: match,
+        error
+      } = await rpcPartita('partita_stato', {
+        p_match_id: matchId
+      });
       if (matchIdRef.current !== matchId) return;
-      if (!data || data.length === 0) {
+      if (error) return;
+      if (!match) {
         setPartnerDisconnected(true);
         setSessionEnded(true);
         setShowResult(false);
         setWaitingForPartner(false);
         return;
       }
-      const match = data[0];
       if (match.ended_at) {
         if (match.ended_by && match.ended_by !== myPublicIdRef.current) setPartnerDisconnected(true);
         setSessionEnded(true);
@@ -3735,10 +3696,11 @@ function GlobalAwakeningPlatform() {
     if (!matchId || !showLevelBanner) return;
     const pollLevelChange = async () => {
       const {
-        data
-      } = await supabase.from('telepathy_matches').select('*').eq('id', matchId);
-      if (!data || data.length === 0) return;
-      const match = data[0];
+        data: match
+      } = await rpcPartita('partita_stato', {
+        p_match_id: matchId
+      });
+      if (!match) return;
       if (match.user1_id) setMatchUser1Id(match.user1_id);
       const bannerRound = Math.floor(roundCount / 7) * 7;
       if (match.level_change_choice_sender === 'r' + bannerRound) {
@@ -3755,26 +3717,26 @@ function GlobalAwakeningPlatform() {
     const me = myPublicIdRef.current;
     if (!me) return null;
     const {
-      data,
+      data: e,
       error
-    } = await supabase.from('telepathy_matches').select('*').eq('id', idMatch);
-    if (error || !Array.isArray(data)) return null;
-    const m = data[0];
-    if (!m || m.ended_at || m.user1_id !== me && m.user2_id !== me) {
+    } = await rpcPartita('partita_entra', {
+      p_match_id: idMatch
+    });
+    if (error || !e) return null;
+    const m = e.ok ? e.partita : null;
+    if (!m || m.user1_id !== me && m.user2_id !== me) {
       setDirectInviteTarget(null);
       setInvitoInUscita(null);
       setAvvisoInviti(testoInviti('non_ce_piu'));
       return false;
     }
-    await supabase.from('telepathy_matches').update({
-      round_count: m.round_count || 0
-    }).eq('id', m.id);
     const amUser1 = m.user1_id === me;
     setPartner({
       id: amUser1 ? m.user2_id : m.user1_id,
       nickname: amUser1 ? m.user2_nickname : m.user1_nickname
     });
     setRole(amUser1 ? m.user1_role : m.user2_role);
+    setMioNomePartita(amUser1 ? m.user1_nickname : m.user2_nickname);
     setMatchId(m.id);
     setSessionEnded(false);
     setPartnerDisconnected(false);
@@ -3869,10 +3831,10 @@ function GlobalAwakeningPlatform() {
     const loadChat = async () => {
       const {
         data
-      } = await supabase.from('telepathy_chat').select('*').eq('match_id', matchId).order('created_at', {
-        ascending: true
+      } = await rpcPartita('chat_leggi', {
+        p_match_id: matchId
       });
-      if (data) setTelepathyChatMessages(data.filter(x => !isBlocked(x.sender_name)));
+      if (Array.isArray(data)) setTelepathyChatMessages(data.filter(x => !isBlocked(x.sender_name)));
     };
     loadChat();
     const interval = setInterval(loadChat, 3000);
@@ -3882,11 +3844,13 @@ function GlobalAwakeningPlatform() {
     if (!matchId || effectiveRole !== 'receiver' || waitingForPartner || showResult) return;
     const checkSenderSent = async () => {
       const {
-        data
-      } = await supabase.from('telepathy_matches').select('sender_symbol, round_count').eq('id', matchId);
-      if (data && data.length > 0) {
-        const dbRound = data[0].round_count || 0;
-        setSenderHasSent(!!data[0].sender_symbol && dbRound === roundCount);
+        data: p
+      } = await rpcPartita('partita_stato', {
+        p_match_id: matchId
+      });
+      if (p) {
+        const dbRound = p.round_count || 0;
+        setSenderHasSent(!!p.simbolo_inviato && dbRound === roundCount);
       }
     };
     checkSenderSent();
@@ -3919,8 +3883,9 @@ function GlobalAwakeningPlatform() {
   const resetTelepathy = () => {
     const oldMatchId = matchId;
     if (oldMatchId) {
-      supabase.from('telepathy_matches').delete().eq('id', oldMatchId);
-      supabase.from('telepathy_chat').delete().eq('match_id', oldMatchId);
+      rpcPartita('partita_esci', {
+        p_match_id: oldMatchId
+      });
     }
     if (sessionId) {
       supabase.rpc('coda_esci', {
@@ -3969,9 +3934,8 @@ function GlobalAwakeningPlatform() {
     }
     if (matchId) {
       try {
-        await supabase.rpc('end_telepathy_match', {
-          p_match_id: matchId,
-          p_ended_by: myPublicIdRef.current
+        await rpcPartita('partita_esci', {
+          p_match_id: matchId
         });
       } catch (e) {}
     }
@@ -4048,73 +4012,43 @@ function GlobalAwakeningPlatform() {
     if (matchId || partner) resetTelepathy();
     setSearchingPartner(false);
     const invito = incomingInvite;
-    const {
-      data: staleAccept
-    } = await supabase.from('telepathy_matches').select('*');
-    for (const m of staleAccept || []) {
-      const isPair = m.user1_id === invito.from_id_pubblico && m.user2_id === me || m.user1_id === me && m.user2_id === invito.from_id_pubblico;
-      if (isPair && m.ended_at) await supabase.from('telepathy_matches').delete().eq('id', m.id);
-    }
-    const myRole = Math.random() > 0.5 ? 'sender' : 'receiver';
-    const theirRole = myRole === 'sender' ? 'receiver' : 'sender';
-    const {
-      data: matchData,
-      error: matchError
-    } = await supabase.from('telepathy_matches').insert({
-      user1_id: invito.from_id_pubblico,
-      user1_nickname: invito.from_name,
-      user1_role: theirRole,
-      user2_id: me,
-      user2_nickname: nickname || 'Anonymous',
-      user2_role: myRole,
-      level: 'lvl3',
-      round_count: 0,
-      da_invito: true
-    });
-    if (matchError || !matchData || matchData.length === 0) {
-      const stato = await rpcInviti('get_telepathy_invite', {
-        p_invite_id: invito.invite_id
-      });
-      let motivo = 'match_non_valido';
-      if (stato && stato.ok && stato.invito && stato.invito.status !== 'pending' && IH) motivo = IH.motivoDaStato(stato.invito.status);else if (stato && stato.ok === false && (stato.motivo === 'errore' || stato.motivo === 'auth_fallita')) motivo = stato.motivo;
-      setIncomingInvite(null);
-      setAvvisoInviti(testoInviti(motivo, {
-        nome: invito.from_name
-      }));
-      return;
-    }
-    const nuovo = matchData[0];
-    let r = await rpcInviti('respond_telepathy_invite', {
-      p_invite_id: invito.invite_id,
-      p_accept: true,
-      p_match_id: nuovo.id
+    let r = await rpcInviti('accetta_invito_partita', {
+      p_invite_id: invito.invite_id
     });
     if (r && r.ok === false && r.motivo === 'errore') {
       const stato = await rpcInviti('get_telepathy_invite', {
         p_invite_id: invito.invite_id
       });
-      if (stato && stato.ok && stato.invito && stato.invito.status === 'accepted' && stato.invito.match_id === nuovo.id) {
-        r = {
+      if (stato && stato.ok && stato.invito && stato.invito.status === 'accepted' && stato.invito.match_id) {
+        const {
+          data: p
+        } = await rpcPartita('partita_stato', {
+          p_match_id: stato.invito.match_id
+        });
+        if (p) r = {
           ok: true,
           status: 'accepted',
           responded_at: stato.invito.responded_at,
-          adesso: stato.adesso
+          adesso: stato.adesso,
+          partita: p
         };
       }
     }
-    if (!r || !r.ok) {
-      await supabase.from('telepathy_matches').delete().eq('id', nuovo.id);
+    if (!r || !r.ok || !r.partita) {
       setIncomingInvite(null);
       setAvvisoInviti(testoInviti(r && r.motivo || 'errore', {
         nome: invito.from_name
       }));
       return;
     }
+    const nuovo = r.partita;
+    const myRole = nuovo.user2_role;
     if (IH && r.adesso) setScartoOrologio(IH.scarto(r.adesso, Date.now()));
     invitoInUscitaRef.current = null;
     setInvitoInUscita(null);
     setDirectInviteTarget(null);
     setMatchId(nuovo.id);
+    setMioNomePartita(nuovo.user2_nickname);
     setPartner({
       id: invito.from_id_pubblico,
       nickname: invito.from_name
@@ -4176,9 +4110,11 @@ function GlobalAwakeningPlatform() {
         const {
           data: mm,
           error: errM
-        } = await supabase.from('telepathy_matches').select('giocato').eq('id', matchId);
+        } = await rpcPartita('partita_stato', {
+          p_match_id: matchId
+        });
         if (fermo) return;
-        if (!errM && Array.isArray(mm) && mm.length > 0 && mm[0].giocato === true) {
+        if (!errM && mm && mm.giocato === true) {
           setAttesaInvitante(null);
           return;
         }
@@ -4190,12 +4126,9 @@ function GlobalAwakeningPlatform() {
         if (r && r.ok && r.invito && r.invito.responded_at) rispostoIlRef.current = r.invito.responded_at;
         if (IH && IH.attesaFinita(rispostoIlRef.current, scarto, Date.now())) {
           fermo = true;
-          try {
-            await supabase.rpc('end_telepathy_match', {
-              p_match_id: matchId,
-              p_ended_by: myPublicIdRef.current
-            });
-          } catch (_) {}
+          await rpcPartita('partita_esci', {
+            p_match_id: matchId
+          });
           const nome = attesaInvitante.nome;
           resetTelepathy();
           setAvvisoInviti(testoInviti('non_arrivato', {
@@ -4478,9 +4411,8 @@ function GlobalAwakeningPlatform() {
     }
     if (matchId) {
       try {
-        await supabase.rpc('end_telepathy_match', {
-          p_match_id: matchId,
-          p_ended_by: myPublicIdRef.current
+        await rpcPartita('partita_esci', {
+          p_match_id: matchId
         });
       } catch (_) {}
     }
@@ -4567,10 +4499,9 @@ function GlobalAwakeningPlatform() {
     if (!newTelepathyMessage.trim() || !matchId) return;
     const msg = newTelepathyMessage.trim();
     setNewTelepathyMessage('');
-    await supabase.from('telepathy_chat').insert({
-      match_id: matchId,
-      sender_name: nickname || 'Anonymous',
-      content: msg
+    await rpcPartita('chat_scrivi', {
+      p_match_id: matchId,
+      p_testo: msg
     });
   };
   const getPartnerStatus = () => {
@@ -4631,24 +4562,9 @@ function GlobalAwakeningPlatform() {
         });
       }
       if (matchId) {
-        let flagSet = false;
-        try {
-          const {
-            error: endErr
-          } = await supabase.rpc('end_telepathy_match', {
-            p_match_id: matchId,
-            p_ended_by: myPublicIdRef.current
-          });
-          flagSet = !endErr;
-        } catch (e) {}
-        await supabase.from('telepathy_chat').delete().eq('match_id', matchId);
-        if (flagSet) {
-          setTimeout(() => {
-            supabase.from('telepathy_matches').delete().eq('id', matchId);
-          }, 6000);
-        } else {
-          await supabase.from('telepathy_matches').delete().eq('id', matchId);
-        }
+        await rpcPartita('partita_esci', {
+          p_match_id: matchId
+        });
       }
     } catch (err) {
       console.warn('endSession error:', err);
@@ -7561,11 +7477,11 @@ ${ritual.description || ''}`
     style: {
       padding: '0.3rem 0.5rem',
       borderRadius: '0.5rem',
-      background: msg.sender_name === nickname ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.08)',
-      alignSelf: msg.sender_name === nickname ? 'flex-end' : 'flex-start',
+      background: msg.sender_name === (mioNomePartita || nickname) ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.08)',
+      alignSelf: msg.sender_name === (mioNomePartita || nickname) ? 'flex-end' : 'flex-start',
       maxWidth: '90%'
     }
-  }, msg.sender_name !== nickname && React.createElement("div", {
+  }, msg.sender_name !== (mioNomePartita || nickname) && React.createElement("div", {
     className: "flex items-center gap-1"
   }, React.createElement("p", {
     className: "text-secondary",
@@ -7590,6 +7506,7 @@ ${ritual.description || ''}`
   }, React.createElement("input", {
     type: "text",
     value: newTelepathyMessage,
+    maxLength: 500,
     onChange: e => setNewTelepathyMessage(e.target.value),
     onKeyDown: e => e.key === 'Enter' && sendTelepathyMessage(),
     placeholder: t.telepathy.chatPlaceholder,
