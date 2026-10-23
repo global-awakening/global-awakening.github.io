@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://unpkg.com https://cdn.jsdelivr.net 'sha256-NwHmHfqxALuQcS60/W6pn3jpYZiaiG22vhXvRbXNTBY=' 'sha256-JDl0kpBF58IUuWqwtGcyMFo3rRIAzEjTM5XGw5sqG1Y=' 'sha256-Sb2ryqpOQKnyVxFUrVxNN1RmlEjgfGp23VNw4FjojnE='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://vxzxdkcluyrcftsnxxza.supabase.co; manifest-src 'self'; worker-src 'self'; base-uri 'self'; object-src 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://unpkg.com https://cdn.jsdelivr.net 'sha256-NwHmHfqxALuQcS60/W6pn3jpYZiaiG22vhXvRbXNTBY=' 'sha256-JDl0kpBF58IUuWqwtGcyMFo3rRIAzEjTM5XGw5sqG1Y=' 'sha256-gWZYnBqz33zq3riADU4j4qLedq72sg3RD1K/AoIof7k='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://vxzxdkcluyrcftsnxxza.supabase.co; manifest-src 'self'; worker-src 'self'; base-uri 'self'; object-src 'none'">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Global Awakening Platform</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⭐</text></svg>">
@@ -155,7 +155,7 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         /* Fallback scuro: lo sfondo visibile è dipinto dal canvas starfield (z-index:-1).
            Se il canvas non si disegna, questo evita testo chiaro su bianco (contrasto/robustezza, H1). */
-        html { background: #0c0f14; } /* fallback dietro al canvas starfield */
+        html { background: #140a2e; } /* fallback dietro al canvas del cielo viola */
         body { background: transparent; } /* trasparente: lascia vedere il canvas (z-index:-1) */
         body { font-family: system-ui, -apple-system, sans-serif; overflow-x: hidden; }
         
@@ -619,70 +619,129 @@
 <canvas id="starfield" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;pointer-events:none;"></canvas>
 <script>
 (function() {
-  // Starfield "warp": le stelle sfrecciano dal centro verso i bordi, come volando in avanti
-  // nello spazio. Leggero (requestAnimationFrame), in pausa quando l'app è in background,
-  // e quasi statico se l'utente preferisce ridurre le animazioni.
+  // Cielo viola: fondo viola profondo con nebulose magenta e blu, raggi dorati morbidi
+  // e un bagliore caldo al centro; sopra, coriandoli di luce colorati (rosa, lilla, oro,
+  // bianco, azzurro) che galleggiano piano verso l'alto e brillano. Lo sfondo fisso è
+  // disegnato una volta sola (offscreen) e ridisegnato solo al resize; i coriandoli sono
+  // sprite pre-renderizzati. In pausa quando l'app è in background; quasi fermo se
+  // l'utente preferisce ridurre le animazioni.
   const canvas = document.getElementById('starfield');
   const ctx = canvas.getContext('2d');
-  const BG = '#0c0f14';
-  const STAR_COUNT = 420;
   const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const SPEED = reduce ? 0.0015 : 0.004; // frazione di espansione radiale per frame (verso i bordi)
+  const DOT_COUNT = 220;
+  const COLORS = [
+    [255, 130, 220], // rosa
+    [205, 155, 255], // lilla
+    [255, 205, 120], // oro
+    [255, 255, 255], // bianco
+    [150, 200, 255], // azzurro
+    [175, 95, 255],  // viola
+  ];
+  // pesi: più rosa/lilla/oro, un po' di bianco, pochi azzurri e viola
+  const WEIGHTS = [3, 3, 3, 2, 1, 1];
 
-  let W, H, cx, cy, stars = [], running = false, rafId = null;
+  let W, H, cx, cy, dots = [], running = false, rafId = null, t = 0, bg = null, sprites = [];
+
+  function pickColor() {
+    let tot = 0; for (const w of WEIGHTS) tot += w;
+    let r = Math.random() * tot;
+    for (let k = 0; k < WEIGHTS.length; k++) { r -= WEIGHTS[k]; if (r <= 0) return k; }
+    return 0;
+  }
+
+  // Sprite di un coriandolo: nucleo chiaro, alone del suo colore, bordo trasparente.
+  function makeSprite(col) {
+    const S = 48, c = document.createElement('canvas'); c.width = c.height = S;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(S/2, S/2, 0, S/2, S/2, S/2);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.18, 'rgba(' + col.join(',') + ',0.95)');
+    grad.addColorStop(0.45, 'rgba(' + col.join(',') + ',0.35)');
+    grad.addColorStop(1, 'rgba(' + col.join(',') + ',0)');
+    g.fillStyle = grad; g.fillRect(0, 0, S, S);
+    return c;
+  }
+
+  function blob(c, x, y, r, col, a) {
+    const g = c.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(' + col + ',' + a + ')');
+    g.addColorStop(1, 'rgba(' + col + ',0)');
+    c.fillStyle = g; c.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+
+  // Sfondo fisso: viola profondo + nebulose + raggi dorati + bagliore centrale.
+  function makeBackground() {
+    const off = document.createElement('canvas'); off.width = W; off.height = H;
+    const c = off.getContext('2d');
+    const base = c.createLinearGradient(0, 0, 0, H);
+    base.addColorStop(0, '#1b0f3c');
+    base.addColorStop(0.55, '#140a2e');
+    base.addColorStop(1, '#0a0518');
+    c.fillStyle = base; c.fillRect(0, 0, W, H);
+    const M = Math.max(W, H);
+    blob(c, W * 0.12, H * 0.28, M * 0.55, '165, 60, 205', 0.30); // nebulosa magenta a sinistra
+    blob(c, W * 0.88, H * 0.32, M * 0.55, '75, 90, 225', 0.28);  // nebulosa blu a destra
+    blob(c, W * 0.50, H * 1.00, M * 0.50, '120, 40, 165', 0.22); // viola in basso
+    // raggi dorati morbidi dal centro
+    c.save(); c.translate(cx, cy); c.globalCompositeOperation = 'lighter';
+    const R = Math.hypot(W, H), N = 26;
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2 + ((i * 7) % 5) * 0.04;
+      const w = 0.015 + ((i * 3) % 4) * 0.012;
+      const g = c.createLinearGradient(0, 0, Math.cos(a) * R, Math.sin(a) * R);
+      g.addColorStop(0, 'rgba(255,215,150,0.16)');
+      g.addColorStop(0.45, 'rgba(255,190,225,0.035)');
+      g.addColorStop(1, 'rgba(255,200,150,0)');
+      c.fillStyle = g; c.beginPath(); c.moveTo(0, 0);
+      c.lineTo(Math.cos(a - w) * R, Math.sin(a - w) * R);
+      c.lineTo(Math.cos(a + w) * R, Math.sin(a + w) * R);
+      c.closePath(); c.fill();
+    }
+    c.restore();
+    blob(c, cx, cy, Math.min(W, H) * 0.42, '255, 215, 170', 0.26); // bagliore caldo
+    blob(c, cx, cy, Math.min(W, H) * 0.14, '255, 240, 215', 0.30); // cuore più chiaro
+    return off;
+  }
 
   function resize() {
     W = canvas.width = window.innerWidth;
     H = canvas.height = window.innerHeight;
-    cx = W / 2; cy = H / 2;
+    cx = W / 2; cy = H * 0.46;
+    bg = makeBackground();
   }
 
-  // atCenter=true → rinasce vicino al centro (punto di fuga del viaggio); altrimenti
-  // distribuita su tutto lo schermo (riempimento iniziale → stelle subito ovunque).
-  function place(s, atCenter) {
-    if (atCenter) {
-      const a = Math.random() * Math.PI * 2, d = 1 + Math.random() * 30;
-      s.x = cx + Math.cos(a) * d; s.y = cy + Math.sin(a) * d;
-    } else {
-      s.x = Math.random() * W; s.y = Math.random() * H;
-    }
-    s.b = 0.6 + Math.random() * 0.4;
-    s.col = Math.random() < 0.12 ? '180, 220, 240' : '255, 255, 255';
+  function place(d, anywhere) {
+    d.x = Math.random() * W;
+    d.y = anywhere ? Math.random() * H : H + 12;
+    d.r = 0.9 + Math.random() * Math.random() * 3.2; // tanti piccoli, pochi grandi
+    d.ci = pickColor();
+    d.vy = -(0.06 + Math.random() * 0.22);
+    d.vx = (Math.random() - 0.5) * 0.10;
+    d.ph = Math.random() * Math.PI * 2;
+    d.tw = 0.5 + Math.random() * 1.8;
+    d.b = 0.45 + Math.random() * 0.55;
   }
 
-  function initStars() {
-    stars = [];
-    for (let i = 0; i < STAR_COUNT; i++) { const s = {}; place(s, false); stars.push(s); }
+  function initDots() {
+    sprites = COLORS.map(makeSprite);
+    dots = [];
+    for (let i = 0; i < DOT_COUNT; i++) { const d = {}; place(d, true); dots.push(d); }
   }
 
   function draw() {
-    ctx.fillStyle = BG;
-    ctx.fillRect(0, 0, W, H);
-    ctx.lineCap = 'round';
-    const maxR = Math.hypot(cx, cy);
-    for (const s of stars) {
-      const dx = s.x - cx, dy = s.y - cy;
-      const px = s.x, py = s.y;
-      // espansione radiale dal centro → senso di viaggio in avanti nello spazio
-      s.x += dx * SPEED;
-      s.y += dy * SPEED;
-      if (s.x < -8 || s.x > W + 8 || s.y < -8 || s.y > H + 8) { place(s, true); continue; }
-      const k = Math.min(1, Math.hypot(dx, dy) / maxR); // 0 centro → 1 bordo (più "vicina")
-      const r = 0.5 + k * 2.4;
-      const alpha = Math.min(1, s.b * (0.45 + k * 0.7));
-      // scia: la stella sfreccia verso il bordo
-      ctx.strokeStyle = `rgba(${s.col}, ${alpha * 0.7})`;
-      ctx.lineWidth = r;
-      ctx.beginPath();
-      ctx.moveTo(px, py);
-      ctx.lineTo(s.x, s.y);
-      ctx.stroke();
-      // punto-stella (sempre visibile)
-      ctx.fillStyle = `rgba(${s.col}, ${alpha})`;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
-      ctx.fill();
+    ctx.drawImage(bg, 0, 0);
+    t += 1 / 60;
+    for (const d of dots) {
+      if (!reduce) {
+        d.x += d.vx; d.y += d.vy;
+        if (d.y < -12 || d.x < -12 || d.x > W + 12) place(d, false);
+      }
+      const twinkle = reduce ? 0.8 : 0.55 + 0.45 * Math.sin(t * d.tw + d.ph);
+      const size = d.r * 7;
+      ctx.globalAlpha = d.b * twinkle;
+      ctx.drawImage(sprites[d.ci], d.x - size / 2, d.y - size / 2, size, size);
     }
+    ctx.globalAlpha = 1;
     if (running) rafId = requestAnimationFrame(draw);
   }
 
@@ -690,9 +749,9 @@
   function stop() { running = false; if (rafId) { cancelAnimationFrame(rafId); rafId = null; } }
 
   document.addEventListener('visibilitychange', () => { document.hidden ? stop() : start(); });
-  window.addEventListener('resize', () => { resize(); initStars(); });
+  window.addEventListener('resize', () => { resize(); initDots(); });
   resize();
-  initStars();
+  initDots();
   start();
 })();
 </script>
