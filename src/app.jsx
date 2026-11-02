@@ -4352,7 +4352,9 @@
                 setSavingContent(false);
                 // Gli errori di ricorrenza hanno una frase loro: dicono cosa correggere.
                 const codice = Object.keys(t.rituals.recurrenceErrors).find(k => (error.message || '').includes(k));
-                if (codice) setErrorToast(t.rituals.recurrenceErrors[codice]); else showErrorToast();
+                // Una chiave scaduta («Auth failed») non è un problema di rete: si dice di rientrare.
+                if (codice) setErrorToast(t.rituals.recurrenceErrors[codice]);
+                else setErrorToast(messaggioErroreRituale(error, t.connectionError));
                 return;  // modale resta aperto, form non svuotato
               }
               if (Array.isArray(data) && data[0]) await rileggiRituale(data[0].id);

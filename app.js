@@ -4820,7 +4820,7 @@ function GlobalAwakeningPlatform() {
         console.warn('Supabase RPC create_ritual error:', error);
         setSavingContent(false);
         const codice = Object.keys(t.rituals.recurrenceErrors).find(k => (error.message || '').includes(k));
-        if (codice) setErrorToast(t.rituals.recurrenceErrors[codice]);else showErrorToast();
+        if (codice) setErrorToast(t.rituals.recurrenceErrors[codice]);else setErrorToast(messaggioErroreRituale(error, t.connectionError));
         return;
       }
       if (Array.isArray(data) && data[0]) await rileggiRituale(data[0].id);
