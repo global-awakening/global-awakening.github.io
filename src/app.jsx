@@ -178,6 +178,7 @@
             invalidEmail: "Please enter a valid email address",
             connectionError: "Connection problem. Check your network and try again.",
             reportIssue: "Report a problem",
+            sourceCode: "Source code",
             pwaInstall: "📲 Install app",
             pwaIosTitle: "Install on iPhone",
             pwaIosBody: "Tap Share ⬆️ then \"Add to Home Screen\".",
@@ -563,6 +564,7 @@
             invalidEmail: "Inserisci un indirizzo email valido",
             connectionError: "Problema di connessione. Controlla la rete e riprova.",
             reportIssue: "Segnala un problema",
+            sourceCode: "Codice sorgente",
             pwaInstall: "📲 Installa app",
             pwaIosTitle: "Installa su iPhone",
             pwaIosBody: "Tocca Condividi ⬆️ poi \"Aggiungi alla schermata Home\".",
@@ -948,6 +950,7 @@
             invalidEmail: "Ingresa un correo electrónico válido",
             connectionError: "Problema de conexión. Revisa la red y vuelve a intentarlo.",
             reportIssue: "Reportar un problema",
+            sourceCode: "Código fuente",
             pwaInstall: "📲 Instalar app",
             pwaIosTitle: "Instalar en iPhone",
             pwaIosBody: "Toca Compartir ⬆️ y luego \"Añadir a pantalla de inicio\".",
@@ -1334,6 +1337,7 @@
             invalidEmail: "Saisis une adresse e-mail valide",
             connectionError: "Problème de connexion. Vérifie ton réseau et réessaie.",
             reportIssue: "Signaler un problème",
+            sourceCode: "Code source",
             pwaInstall: "📲 Installer l'app",
             pwaIosTitle: "Installer sur iPhone",
             pwaIosBody: "Touche Partager ⬆️ puis « Sur l'écran d'accueil ».",
@@ -4967,6 +4971,11 @@
               <a href="https://github.com/global-awakening/global-awakening.github.io/issues" target="_blank" rel="noopener noreferrer"
                  style={{color: '#a78bfa', textDecoration: 'underline', cursor: 'pointer', minHeight: '40px', display: 'inline-flex', alignItems: 'center'}}>
                 {t.reportIssue}
+              </a>
+              <span style={{margin: '0 0.4rem'}}>·</span>
+              <a href="https://github.com/global-awakening/global-awakening.github.io" target="_blank" rel="noopener noreferrer"
+                 style={{color: '#a78bfa', textDecoration: 'underline', cursor: 'pointer', minHeight: '40px', display: 'inline-flex', alignItems: 'center'}}>
+                {t.sourceCode}
               </a>
               <span style={{margin: '0 0.4rem'}}>·</span>
               <span>
